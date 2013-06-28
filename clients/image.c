@@ -24,113 +24,81 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
 #include <fcntl.h>
+#include <libgen.h>
 #include <unistd.h>
 #include <math.h>
 #include <time.h>
 #include <cairo.h>
-#include <glib.h>
-#include <gdk-pixbuf/gdk-pixbuf.h>
+#include <assert.h>
+#include <linux/input.h>
 
 #include <wayland-client.h>
 
 #include "window.h"
+#include "../shared/cairo-util.h"
 
 struct image {
 	struct window *window;
 	struct widget *widget;
 	struct display *display;
-	gchar *filename;
+	char *filename;
+	cairo_surface_t *image;
+	int fullscreen;
+	int *image_counter;
+	int32_t width, height;
+
+	struct {
+		double x;
+		double y;
+	} pointer;
+	bool button_pressed;
+
+	bool initialized;
+	cairo_matrix_t matrix;
 };
 
-static void
-set_source_pixbuf(cairo_t         *cr,
-		  const GdkPixbuf *pixbuf,
-		  double           src_x,
-		  double           src_y,
-		  double           src_width,
-		  double           src_height)
+static double
+get_scale(struct image *image)
 {
-	gint width = gdk_pixbuf_get_width (pixbuf);
-	gint height = gdk_pixbuf_get_height (pixbuf);
-	guchar *gdk_pixels = gdk_pixbuf_get_pixels (pixbuf);
-	int gdk_rowstride = gdk_pixbuf_get_rowstride (pixbuf);
-	int n_channels = gdk_pixbuf_get_n_channels (pixbuf);
-	int cairo_stride;
-	guchar *cairo_pixels;
-	cairo_format_t format;
-	cairo_surface_t *surface;
-	int j;
+	assert(image->matrix.xy == 0.0 &&
+	       image->matrix.yx == 0.0 &&
+	       image->matrix.xx == image->matrix.yy);
+	return image->matrix.xx;
+}
 
-	if (n_channels == 3)
-		format = CAIRO_FORMAT_RGB24;
-	else
-		format = CAIRO_FORMAT_ARGB32;
+static void
+clamp_view(struct image *image)
+{
+	struct rectangle allocation;
+	double scale = get_scale(image);
+	double sw, sh;
 
-	surface = cairo_image_surface_create(format, width, height);
-	if (cairo_surface_status(surface)) {
-		cairo_set_source_surface(cr, surface, 0, 0);
-		return;
+	sw = image->width * scale;
+	sh = image->height * scale;
+	widget_get_allocation(image->widget, &allocation);
+
+	if (sw < allocation.width) {
+		image->matrix.x0 =
+			(allocation.width - image->width * scale) / 2;
+	} else {
+		if (image->matrix.x0 > 0.0)
+			image->matrix.x0 = 0.0;
+		if (sw + image->matrix.x0 < allocation.width)
+			image->matrix.x0 = allocation.width - sw;
 	}
 
-	cairo_stride = cairo_image_surface_get_stride(surface);
-	cairo_pixels = cairo_image_surface_get_data(surface);
-
-	for (j = height; j; j--) {
-		guchar *p = gdk_pixels;
-		guchar *q = cairo_pixels;
-
-		if (n_channels == 3) {
-			guchar *end = p + 3 * width;
-
-			while (p < end) {
-#if G_BYTE_ORDER == G_LITTLE_ENDIAN
-				q[0] = p[2];
-				q[1] = p[1];
-				q[2] = p[0];
-#else
-				q[1] = p[0];
-				q[2] = p[1];
-				q[3] = p[2];
-#endif
-				p += 3;
-				q += 4;
-			}
-		} else {
-			guchar *end = p + 4 * width;
-			guint t1,t2,t3;
-
-#define MULT(d,c,a,t) G_STMT_START { t = c * a + 0x7f; d = ((t >> 8) + t) >> 8; } G_STMT_END
-
-			while (p < end) {
-#if G_BYTE_ORDER == G_LITTLE_ENDIAN
-				MULT(q[0], p[2], p[3], t1);
-				MULT(q[1], p[1], p[3], t2);
-				MULT(q[2], p[0], p[3], t3);
-				q[3] = p[3];
-#else
-				q[0] = p[3];
-				MULT(q[1], p[0], p[3], t1);
-				MULT(q[2], p[1], p[3], t2);
-				MULT(q[3], p[2], p[3], t3);
-#endif
-
-				p += 4;
-				q += 4;
-			}
-#undef MULT
-		}
-
-		gdk_pixels += gdk_rowstride;
-		cairo_pixels += cairo_stride;
+	if (sh < allocation.width) {
+		image->matrix.y0 =
+			(allocation.height - image->height * scale) / 2;
+	} else {
+		if (image->matrix.y0 > 0.0)
+			image->matrix.y0 = 0.0;
+		if (sh + image->matrix.y0 < allocation.height)
+			image->matrix.y0 = allocation.height - sh;
 	}
-	cairo_surface_mark_dirty(surface);
-
-	cairo_set_source_surface(cr, surface,
-				 src_x + .5 * (src_width - width),
-				 src_y + .5 * (src_height - height));
-	cairo_surface_destroy(surface);
 }
 
 static void
@@ -138,18 +106,11 @@ redraw_handler(struct widget *widget, void *data)
 {
 	struct image *image = data;
 	struct rectangle allocation;
-	GdkPixbuf *pb;
 	cairo_t *cr;
 	cairo_surface_t *surface;
-
-	widget_get_allocation(image->widget, &allocation);
-
-	pb = gdk_pixbuf_new_from_file_at_size(image->filename,
-					      allocation.width,
-					      allocation.height,
-					      NULL);
-	if (pb == NULL)
-		return;
+	double width, height, doc_aspect, window_aspect, scale;
+	cairo_matrix_t matrix;
+	cairo_matrix_t translate;
 
 	surface = window_get_surface(image->window);
 	cr = cairo_create(surface);
@@ -163,19 +124,49 @@ redraw_handler(struct widget *widget, void *data)
 	cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
 	cairo_set_source_rgba(cr, 0, 0, 0, 1);
 	cairo_paint(cr);
-	set_source_pixbuf(cr, pb,
-			  0, 0,
-			  allocation.width, allocation.height);
+
+	if (!image->initialized) {
+		image->initialized = true;
+		width = cairo_image_surface_get_width(image->image);
+		height = cairo_image_surface_get_height(image->image);
+
+		doc_aspect = width / height;
+		window_aspect = (double) allocation.width / allocation.height;
+		if (doc_aspect < window_aspect)
+			scale = allocation.height / height;
+		else
+			scale = allocation.width / width;
+
+		image->width = width;
+		image->height = height;
+		cairo_matrix_init_scale(&image->matrix, scale, scale);
+
+		clamp_view(image);
+	}
+
+	matrix = image->matrix;
+	cairo_matrix_init_translate(&translate, allocation.x, allocation.y);
+	cairo_matrix_multiply(&matrix, &matrix, &translate);
+	cairo_set_matrix(cr, &matrix);
+
+	cairo_set_source_surface(cr, image->image, 0, 0);
 	cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
 	cairo_paint(cr);
-
-	g_object_unref(pb);
 
 	cairo_pop_group_to_source(cr);
 	cairo_paint(cr);
 	cairo_destroy(cr);
 
 	cairo_surface_destroy(surface);
+}
+
+static void
+resize_handler(struct widget *widget,
+	       int32_t width, int32_t height, void *data)
+{
+	struct image *image = data;
+
+	clamp_view(image);
 }
 
 static void
@@ -187,59 +178,249 @@ keyboard_focus_handler(struct window *window,
 	window_schedule_redraw(image->window);
 }
 
+static int
+enter_handler(struct widget *widget,
+	      struct input *input,
+	      float x, float y, void *data)
+{
+	struct image *image = data;
+	struct rectangle allocation;
+
+	widget_get_allocation(image->widget, &allocation);
+	x -= allocation.x;
+	y -= allocation.y;
+
+	image->pointer.x = x;
+	image->pointer.y = y;
+
+	return 1;
+}
+
+static void
+move_viewport(struct image *image, double dx, double dy)
+{
+	double scale = get_scale(image);
+
+	if (!image->initialized)
+		return;
+
+	cairo_matrix_translate(&image->matrix, -dx/scale, -dy/scale);
+	clamp_view(image);
+
+	window_schedule_redraw(image->window);
+}
+
+static int
+motion_handler(struct widget *widget,
+	       struct input *input, uint32_t time,
+	       float x, float y, void *data)
+{
+	struct image *image = data;
+	struct rectangle allocation;
+
+	widget_get_allocation(image->widget, &allocation);
+	x -= allocation.x;
+	y -= allocation.y;
+
+	if (image->button_pressed)
+		move_viewport(image, image->pointer.x - x,
+			      image->pointer.y - y);
+
+	image->pointer.x = x;
+	image->pointer.y = y;
+
+	return image->button_pressed ? CURSOR_DRAGGING : CURSOR_LEFT_PTR;
+}
+
+static void
+button_handler(struct widget *widget,
+	       struct input *input, uint32_t time,
+	       uint32_t button,
+	       enum wl_pointer_button_state state,
+	       void *data)
+{
+	struct image *image = data;
+
+	if (button == BTN_LEFT) {
+		image->button_pressed =
+			state == WL_POINTER_BUTTON_STATE_PRESSED;
+
+		if (state == WL_POINTER_BUTTON_STATE_PRESSED)
+			input_set_pointer_image(input, CURSOR_DRAGGING);
+		else
+			input_set_pointer_image(input, CURSOR_LEFT_PTR);
+	}
+}
+
+static void
+zoom(struct image *image, double scale)
+{
+	double x = image->pointer.x;
+	double y = image->pointer.y;
+	cairo_matrix_t scale_matrix;
+
+	if (!image->initialized)
+		return;
+
+	if (get_scale(image) * scale > 20.0 ||
+	    get_scale(image) * scale < 0.02)
+		return;
+
+	cairo_matrix_init_identity(&scale_matrix);
+	cairo_matrix_translate(&scale_matrix, x, y);
+	cairo_matrix_scale(&scale_matrix, scale, scale);
+	cairo_matrix_translate(&scale_matrix, -x, -y);
+
+	cairo_matrix_multiply(&image->matrix, &image->matrix, &scale_matrix);
+	clamp_view(image);
+}
+
+static void
+key_handler(struct window *window, struct input *input, uint32_t time,
+	    uint32_t key, uint32_t sym, enum wl_keyboard_key_state state,
+	    void *data)
+{
+	struct image *image = data;
+
+	if (state == WL_KEYBOARD_KEY_STATE_RELEASED)
+		return;
+
+	switch (sym) {
+	case XKB_KEY_minus:
+		zoom(image, 0.8);
+		window_schedule_redraw(image->window);
+		break;
+	case XKB_KEY_equal:
+	case XKB_KEY_plus:
+		zoom(image, 1.2);
+		window_schedule_redraw(image->window);
+		break;
+	case XKB_KEY_1:
+		image->matrix.xx = 1.0;
+		image->matrix.xy = 0.0;
+		image->matrix.yx = 0.0;
+		image->matrix.yy = 1.0;
+		clamp_view(image);
+		window_schedule_redraw(image->window);
+		break;
+	}
+}
+
+static void
+axis_handler(struct widget *widget, struct input *input, uint32_t time,
+	     uint32_t axis, wl_fixed_t value, void *data)
+{
+	struct image *image = data;
+
+	if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL &&
+	    input_get_modifiers(input) == MOD_CONTROL_MASK) {
+		/* set zoom level to 2% per 10 axis units */
+		zoom(image, (1.0 - wl_fixed_to_double(value) / 500.0));
+
+		window_schedule_redraw(image->window);
+	} else if (input_get_modifiers(input) == 0) {
+		if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL)
+			move_viewport(image, 0, wl_fixed_to_double(value));
+		else if (axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL)
+			move_viewport(image, wl_fixed_to_double(value), 0);
+	}
+}
+
+static void
+fullscreen_handler(struct window *window, void *data)
+{
+	struct image *image = data;
+
+	image->fullscreen ^= 1;
+	window_set_fullscreen(window, image->fullscreen);
+}
+
+static void
+close_handler(struct window *window, void *data)
+{
+	struct image *image = data;
+
+	*image->image_counter -= 1;
+
+	if (*image->image_counter == 0)
+		display_exit(image->display);
+
+	widget_destroy(image->widget);
+	window_destroy(image->window);
+
+	free(image);
+}
+
 static struct image *
-image_create(struct display *display, const char *filename)
+image_create(struct display *display, const char *filename,
+	     int *image_counter)
 {
 	struct image *image;
-	gchar *basename;
-	gchar *title;
+	char *b, *copy, title[512];;
 
 	image = malloc(sizeof *image);
 	if (image == NULL)
 		return image;
 	memset(image, 0, sizeof *image);
 
-	basename = g_path_get_basename(filename);
-	title = g_strdup_printf("Wayland Image - %s", basename);
-	g_free(basename);
+	copy = strdup(filename);
+	b = basename(copy);
+	snprintf(title, sizeof title, "Wayland Image - %s", b);
+	free(copy);
 
-	image->filename = g_strdup(filename);
+	image->filename = strdup(filename);
+	image->image = load_cairo_surface(filename);
 
-	image->window = window_create(display, 500, 400);
+	if (!image->image) {
+		fprintf(stderr, "could not find the image %s!\n", b);
+		free(image);
+		return NULL;
+	}
+
+	image->window = window_create(display);
 	image->widget = frame_create(image->window, image);
 	window_set_title(image->window, title);
 	image->display = display;
+	image->image_counter = image_counter;
+	*image_counter += 1;
+	image->initialized = false;
 
 	window_set_user_data(image->window, image);
 	widget_set_redraw_handler(image->widget, redraw_handler);
+	widget_set_resize_handler(image->widget, resize_handler);
 	window_set_keyboard_focus_handler(image->window,
 					  keyboard_focus_handler);
+	window_set_fullscreen_handler(image->window, fullscreen_handler);
+	window_set_close_handler(image->window, close_handler);
 
+	widget_set_enter_handler(image->widget, enter_handler);
+	widget_set_motion_handler(image->widget, motion_handler);
+	widget_set_button_handler(image->widget, button_handler);
+	widget_set_axis_handler(image->widget, axis_handler);
+	window_set_key_handler(image->window, key_handler);
 	widget_schedule_resize(image->widget, 500, 400);
 
 	return image;
 }
-
-static const GOptionEntry option_entries[] = {
-	{ NULL }
-};
 
 int
 main(int argc, char *argv[])
 {
 	struct display *d;
 	int i;
+	int image_counter = 0;
 
-	d = display_create(&argc, &argv, option_entries);
+	d = display_create(&argc, argv);
 	if (d == NULL) {
 		fprintf(stderr, "failed to create display: %m\n");
 		return -1;
 	}
 
 	for (i = 1; i < argc; i++)
-		image_create (d, argv[i]);
+		image_create(d, argv[i], &image_counter);
 
-	display_run(d);
+	if (image_counter > 0)
+		display_run(d);
 
 	return 0;
 }

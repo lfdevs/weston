@@ -31,15 +31,21 @@
 #include <signal.h>
 
 #include <wayland-client.h>
-#include <wayland-egl.h>
+#include "../shared/os-compatibility.h"
 
 struct display {
 	struct wl_display *display;
+	struct wl_registry *registry;
 	struct wl_compositor *compositor;
 	struct wl_shell *shell;
 	struct wl_shm *shm;
 	uint32_t formats;
-	uint32_t mask;
+};
+
+struct buffer {
+	struct wl_buffer *buffer;
+	void *shm_data;
+	int busy;
 };
 
 struct window {
@@ -47,58 +53,94 @@ struct window {
 	int width, height;
 	struct wl_surface *surface;
 	struct wl_shell_surface *shell_surface;
-	struct wl_buffer *buffer;
-	void *shm_data;
+	struct buffer buffers[2];
+	struct buffer *prev_buffer;
 	struct wl_callback *callback;
 };
 
-static struct wl_buffer *
-create_shm_buffer(struct display *display,
-		  int width, int height, uint32_t format, void **data_out)
+static void
+buffer_release(void *data, struct wl_buffer *buffer)
 {
-	char filename[] = "/tmp/wayland-shm-XXXXXX";
-	struct wl_buffer *buffer;
+	struct buffer *mybuf = data;
+
+	mybuf->busy = 0;
+}
+
+static const struct wl_buffer_listener buffer_listener = {
+	buffer_release
+};
+
+static int
+create_shm_buffer(struct display *display, struct buffer *buffer,
+		  int width, int height, uint32_t format)
+{
+	struct wl_shm_pool *pool;
 	int fd, size, stride;
 	void *data;
 
-	fd = mkstemp(filename);
-	if (fd < 0) {
-		fprintf(stderr, "open %s failed: %m\n", filename);
-		return NULL;
-	}
 	stride = width * 4;
 	size = stride * height;
-	if (ftruncate(fd, size) < 0) {
-		fprintf(stderr, "ftruncate failed: %m\n");
-		close(fd);
-		return NULL;
+
+	fd = os_create_anonymous_file(size);
+	if (fd < 0) {
+		fprintf(stderr, "creating a buffer file for %d B failed: %m\n",
+			size);
+		return -1;
 	}
 
 	data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-	unlink(filename);
-
 	if (data == MAP_FAILED) {
 		fprintf(stderr, "mmap failed: %m\n");
 		close(fd);
-		return NULL;
+		return -1;
 	}
 
-	buffer = wl_shm_create_buffer(display->shm, fd,
-				      width, height, stride, format);
-
+	pool = wl_shm_create_pool(display->shm, fd, size);
+	buffer->buffer = wl_shm_pool_create_buffer(pool, 0,
+						   width, height,
+						   stride, format);
+	wl_buffer_add_listener(buffer->buffer, &buffer_listener, buffer);
+	wl_shm_pool_destroy(pool);
 	close(fd);
 
-	*data_out = data;
+	buffer->shm_data = data;
 
-	return buffer;
+	return 0;
 }
+
+static void
+handle_ping(void *data, struct wl_shell_surface *shell_surface,
+							uint32_t serial)
+{
+	wl_shell_surface_pong(shell_surface, serial);
+}
+
+static void
+handle_configure(void *data, struct wl_shell_surface *shell_surface,
+		 uint32_t edges, int32_t width, int32_t height)
+{
+}
+
+static void
+handle_popup_done(void *data, struct wl_shell_surface *shell_surface)
+{
+}
+
+static const struct wl_shell_surface_listener shell_surface_listener = {
+	handle_ping,
+	handle_configure,
+	handle_popup_done
+};
 
 static struct window *
 create_window(struct display *display, int width, int height)
 {
 	struct window *window;
-	
-	window = malloc(sizeof *window);
+
+	window = calloc(1, sizeof *window);
+	if (!window)
+		return NULL;
+
 	window->callback = NULL;
 	window->display = display;
 	window->width = width;
@@ -106,10 +148,12 @@ create_window(struct display *display, int width, int height)
 	window->surface = wl_compositor_create_surface(display->compositor);
 	window->shell_surface = wl_shell_get_shell_surface(display->shell,
 							   window->surface);
-	window->buffer = create_shm_buffer(display,
-					   width, height,
-					   WL_SHM_FORMAT_XRGB8888,
-					   &window->shm_data);
+
+	if (window->shell_surface)
+		wl_shell_surface_add_listener(window->shell_surface,
+					      &shell_surface_listener, window);
+
+	wl_shell_surface_set_title(window->shell_surface, "simple-shm");
 
 	wl_shell_surface_set_toplevel(window->shell_surface);
 
@@ -122,10 +166,89 @@ destroy_window(struct window *window)
 	if (window->callback)
 		wl_callback_destroy(window->callback);
 
-	wl_buffer_destroy(window->buffer);
+	if (window->buffers[0].buffer)
+		wl_buffer_destroy(window->buffers[0].buffer);
+	if (window->buffers[1].buffer)
+		wl_buffer_destroy(window->buffers[1].buffer);
+
 	wl_shell_surface_destroy(window->shell_surface);
 	wl_surface_destroy(window->surface);
 	free(window);
+}
+
+static struct buffer *
+window_next_buffer(struct window *window)
+{
+	struct buffer *buffer;
+	int ret = 0;
+
+	if (!window->buffers[0].busy)
+		buffer = &window->buffers[0];
+	else if (!window->buffers[1].busy)
+		buffer = &window->buffers[1];
+	else
+		return NULL;
+
+	if (!buffer->buffer) {
+		ret = create_shm_buffer(window->display, buffer,
+					window->width, window->height,
+					WL_SHM_FORMAT_XRGB8888);
+
+		if (ret < 0)
+			return NULL;
+
+		/* paint the padding */
+		memset(buffer->shm_data, 0xff,
+		       window->width * window->height * 4);
+	}
+
+	return buffer;
+}
+
+static void
+paint_pixels(void *image, int padding, int width, int height, uint32_t time)
+{
+	const int halfh = padding + (height - padding * 2) / 2;
+	const int halfw = padding + (width  - padding * 2) / 2;
+	int ir, or;
+	uint32_t *pixel = image;
+	int y;
+
+	/* squared radii thresholds */
+	or = (halfw < halfh ? halfw : halfh) - 8;
+	ir = or - 32;
+	or *= or;
+	ir *= ir;
+
+	pixel += padding * width;
+	for (y = padding; y < height - padding; y++) {
+		int x;
+		int y2 = (y - halfh) * (y - halfh);
+
+		pixel += padding;
+		for (x = padding; x < width - padding; x++) {
+			uint32_t v;
+
+			/* squared distance from center */
+			int r2 = (x - halfw) * (x - halfw) + y2;
+
+			if (r2 < ir)
+				v = (r2 / 32 + time / 64) * 0x0080401;
+			else if (r2 < or)
+				v = (y + time / 32) * 0x0080401;
+			else
+				v = (x + time / 16) * 0x0080401;
+			v &= 0x00ffffff;
+
+			/* cross if compositor uses X from XRGB as alpha */
+			if (abs(x - y) > 6 && abs(x + y - height) > 6)
+				v |= 0xff000000;
+
+			*pixel++ = v;
+		}
+
+		pixel += padding;
+	}
 }
 
 static const struct wl_callback_listener frame_listener;
@@ -134,25 +257,29 @@ static void
 redraw(void *data, struct wl_callback *callback, uint32_t time)
 {
 	struct window *window = data;
-	uint32_t *p;
-	int i, end, offset;
+	struct buffer *buffer;
 
-	p = window->shm_data;
-	end = window->width * window->height;
-	offset = time >> 4;
-	for (i = 0; i < end; i++)
-		p[i] = (i + offset) * 0x0080401;
-	wl_buffer_damage(window->buffer, 0, 0, window->width, window->height);
+	buffer = window_next_buffer(window);
+	if (!buffer) {
+		fprintf(stderr,
+			!callback ? "Failed to create the first buffer.\n" :
+			"Both buffers busy at redraw(). Server bug?\n");
+		abort();
+	}
 
-	wl_surface_attach(window->surface, window->buffer, 0, 0);
+	paint_pixels(buffer->shm_data, 20, window->width, window->height, time);
+
+	wl_surface_attach(window->surface, buffer->buffer, 0, 0);
 	wl_surface_damage(window->surface,
-			  0, 0, window->width, window->height);
+			  20, 20, window->width - 40, window->height - 40);
 
 	if (callback)
 		wl_callback_destroy(callback);
 
 	window->callback = wl_surface_frame(window->surface);
 	wl_callback_add_listener(window->callback, &frame_listener, window);
+	wl_surface_commit(window->surface);
+	buffer->busy = 1;
 }
 
 static const struct wl_callback_listener frame_listener = {
@@ -172,31 +299,35 @@ struct wl_shm_listener shm_listenter = {
 };
 
 static void
-display_handle_global(struct wl_display *display, uint32_t id,
-		      const char *interface, uint32_t version, void *data)
+registry_handle_global(void *data, struct wl_registry *registry,
+		       uint32_t id, const char *interface, uint32_t version)
 {
 	struct display *d = data;
 
 	if (strcmp(interface, "wl_compositor") == 0) {
 		d->compositor =
-			wl_display_bind(display, id, &wl_compositor_interface);
+			wl_registry_bind(registry,
+					 id, &wl_compositor_interface, 1);
 	} else if (strcmp(interface, "wl_shell") == 0) {
-		d->shell = wl_display_bind(display, id, &wl_shell_interface);
+		d->shell = wl_registry_bind(registry,
+					    id, &wl_shell_interface, 1);
 	} else if (strcmp(interface, "wl_shm") == 0) {
-		d->shm = wl_display_bind(display, id, &wl_shm_interface);
+		d->shm = wl_registry_bind(registry,
+					  id, &wl_shm_interface, 1);
 		wl_shm_add_listener(d->shm, &shm_listenter, d);
 	}
 }
 
-static int
-event_mask_update(uint32_t mask, void *data)
+static void
+registry_handle_global_remove(void *data, struct wl_registry *registry,
+			      uint32_t name)
 {
-	struct display *d = data;
-
-	d->mask = mask;
-
-	return 0;
 }
+
+static const struct wl_registry_listener registry_listener = {
+	registry_handle_global,
+	registry_handle_global_remove
+};
 
 static struct display *
 create_display(void)
@@ -208,9 +339,15 @@ create_display(void)
 	assert(display->display);
 
 	display->formats = 0;
-	wl_display_add_global_listener(display->display,
-				       display_handle_global, display);
-	wl_display_iterate(display->display, WL_DISPLAY_READABLE);
+	display->registry = wl_display_get_registry(display->display);
+	wl_registry_add_listener(display->registry,
+				 &registry_listener, display);
+	wl_display_roundtrip(display->display);
+	if (display->shm == NULL) {
+		fprintf(stderr, "No wl_shm global\n");
+		exit(1);
+	}
+
 	wl_display_roundtrip(display->display);
 
 	if (!(display->formats & (1 << WL_SHM_FORMAT_XRGB8888))) {
@@ -218,7 +355,7 @@ create_display(void)
 		exit(1);
 	}
 
-	wl_display_get_fd(display->display, event_mask_update, display);
+	wl_display_get_fd(display->display);
 	
 	return display;
 }
@@ -235,8 +372,9 @@ destroy_display(struct display *display)
 	if (display->compositor)
 		wl_compositor_destroy(display->compositor);
 
+	wl_registry_destroy(display->registry);
 	wl_display_flush(display->display);
-	wl_display_destroy(display->display);
+	wl_display_disconnect(display->display);
 	free(display);
 }
 
@@ -254,19 +392,26 @@ main(int argc, char **argv)
 	struct sigaction sigint;
 	struct display *display;
 	struct window *window;
+	int ret = 0;
 
 	display = create_display();
 	window = create_window(display, 250, 250);
+	if (!window)
+		return 1;
 
 	sigint.sa_handler = signal_int;
 	sigemptyset(&sigint.sa_mask);
 	sigint.sa_flags = SA_RESETHAND;
 	sigaction(SIGINT, &sigint, NULL);
 
+	/* Initialise damage to full surface, so the padding gets painted */
+	wl_surface_damage(window->surface, 0, 0,
+			  window->width, window->height);
+
 	redraw(window, NULL, 0);
 
-	while (running)
-		wl_display_iterate(display->display, display->mask);
+	while (running && ret != -1)
+		ret = wl_display_dispatch(display->display);
 
 	fprintf(stderr, "simple-shm exiting\n");
 	destroy_window(window);

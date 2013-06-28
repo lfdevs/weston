@@ -20,6 +20,7 @@
  * OF THIS SOFTWARE.
  */
 
+#include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,9 +33,12 @@
 #include <sys/epoll.h>
 
 #include <wayland-client.h>
+#include <wayland-cursor.h>
 
 #include "window.h"
-#include "cairo-util.h"
+#include "../shared/cairo-util.h"
+
+struct dnd_drag;
 
 struct dnd {
 	struct window *window;
@@ -42,6 +46,8 @@ struct dnd {
 	struct display *display;
 	uint32_t key;
 	struct item *items[16];
+	int self_only;
+	struct dnd_drag *current_drag;
 };
 
 struct dnd_drag {
@@ -53,8 +59,10 @@ struct dnd_drag {
 	uint32_t time;
 	struct item *item;
 	int x_offset, y_offset;
+	int width, height;
 	const char *mime_type;
 
+	struct wl_surface *drag_surface;
 	struct wl_data_source *data_source;
 };
 
@@ -103,7 +111,8 @@ item_create(struct display *display, int x, int y, int seed)
 
 	rect.width = item_width;
 	rect.height = item_height;
-	item->surface = display_create_surface(display, NULL, &rect, 0);
+	item->surface =
+		display_create_surface(display, NULL, &rect, SURFACE_SHM);
 
 	item->x = x;
 	item->y = y;
@@ -166,7 +175,7 @@ dnd_redraw_handler(struct widget *widget, void *data)
 	struct rectangle allocation;
 	cairo_t *cr;
 	cairo_surface_t *surface;
-	int i;
+	unsigned int i;
 
 	surface = window_get_surface(dnd->window);
 	cr = cairo_create(surface);
@@ -178,6 +187,9 @@ dnd_redraw_handler(struct widget *widget, void *data)
 	cairo_set_source_rgba(cr, 0, 0, 0, 0.8);
 	cairo_fill(cr);
 
+	cairo_rectangle(cr, allocation.x, allocation.y,
+			allocation.width, allocation.height);
+	cairo_clip(cr);
 	cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
 	for (i = 0; i < ARRAY_LENGTH(dnd->items); i++) {
 		if (!dnd->items[i])
@@ -204,7 +216,7 @@ keyboard_focus_handler(struct window *window,
 static int
 dnd_add_item(struct dnd *dnd, struct item *item)
 {
-	int i;
+	unsigned int i;
 
 	for (i = 0; i < ARRAY_LENGTH(dnd->items); i++) {
 		if (dnd->items[i] == 0) {
@@ -220,7 +232,7 @@ dnd_get_item(struct dnd *dnd, int32_t x, int32_t y)
 {
 	struct item *item;
 	struct rectangle allocation;
-	int i;
+	unsigned int i;
 
 	widget_get_allocation(dnd->widget, &allocation);
 
@@ -246,9 +258,7 @@ data_source_target(void *data,
 	struct dnd *dnd = dnd_drag->dnd;
 	cairo_surface_t *surface;
 	struct wl_buffer *buffer;
-	struct wl_data_device *device;
 
-	device = input_get_data_device(dnd_drag->input);
 	dnd_drag->mime_type = mime_type;
 	if (mime_type)
 		surface = dnd_drag->opaque;
@@ -256,8 +266,10 @@ data_source_target(void *data,
 		surface = dnd_drag->translucent;
 
 	buffer = display_get_buffer_for_surface(dnd->display, surface);
-	wl_data_device_attach(device, dnd_drag->time, buffer,
-				  dnd_drag->hotspot_x, dnd_drag->hotspot_y);
+	wl_surface_attach(dnd_drag->drag_surface, buffer, 0, 0);
+	wl_surface_damage(dnd_drag->drag_surface, 0, 0,
+			  dnd_drag->width, dnd_drag->height);
+	wl_surface_commit(dnd_drag->drag_surface);
 }
 
 static void
@@ -271,7 +283,9 @@ data_source_send(void *data, struct wl_data_source *source,
 	dnd_flower_message.x_offset = dnd_drag->x_offset;
 	dnd_flower_message.y_offset = dnd_drag->y_offset;
 
-	write(fd, &dnd_flower_message, sizeof dnd_flower_message);
+	if (write(fd, &dnd_flower_message, sizeof dnd_flower_message) < 0)
+		abort();
+
 	close(fd);
 }
 
@@ -289,7 +303,9 @@ data_source_cancelled(void *data, struct wl_data_source *source)
 	/* Destroy the item that has been dragged out */
 	cairo_surface_destroy(dnd_drag->item->surface);
 	free(dnd_drag->item);
-	
+
+	wl_surface_destroy(dnd_drag->drag_surface);
+
 	cairo_surface_destroy(dnd_drag->translucent);
 	cairo_surface_destroy(dnd_drag->opaque);
 	free(dnd_drag);
@@ -306,25 +322,27 @@ create_drag_cursor(struct dnd_drag *dnd_drag,
 		   struct item *item, int32_t x, int32_t y, double opacity)
 {
 	struct dnd *dnd = dnd_drag->dnd;
-	cairo_surface_t *surface, *pointer;
-	int32_t pointer_width, pointer_height, hotspot_x, hotspot_y;
+	cairo_surface_t *surface;
+	struct wl_cursor_image *pointer;
 	struct rectangle rectangle;
 	cairo_pattern_t *pattern;
 	cairo_t *cr;
 
-	pointer = display_get_pointer_surface(dnd->display,
-					      POINTER_DRAGGING,
-					      &pointer_width,
-					      &pointer_height,
-					      &hotspot_x,
-					      &hotspot_y);
+	pointer = display_get_pointer_image(dnd->display, CURSOR_DRAGGING);
+	if (!pointer) {
+		fprintf(stderr, "WARNING: grabbing cursor image not found\n");
+		pointer = display_get_pointer_image(dnd->display,
+						    CURSOR_LEFT_PTR);
+		assert(pointer && "no cursor image found");
+	}
 
-	rectangle.width = item_width + 2 * pointer_width;
-	rectangle.height = item_height + 2 * pointer_height;
-	surface = display_create_surface(dnd->display, NULL, &rectangle, 0);
+	rectangle.width = item_width + 2 * pointer->width;
+	rectangle.height = item_height + 2 * pointer->height;
+	surface = display_create_surface(dnd->display, NULL, &rectangle,
+					 SURFACE_SHM);
 
 	cr = cairo_create(surface);
-	cairo_translate(cr, pointer_width, pointer_height);
+	cairo_translate(cr, pointer->width, pointer->height);
 
 	cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
 	cairo_set_source_rgba(cr, 0, 0, 0, 0);
@@ -336,17 +354,14 @@ create_drag_cursor(struct dnd_drag *dnd_drag,
 	cairo_mask(cr, pattern);
 	cairo_pattern_destroy(pattern);
 
-	cairo_set_source_surface(cr, pointer,
-				 x - item->x - hotspot_x,
-				 y - item->y - hotspot_y);
-	cairo_surface_destroy(pointer);
-	cairo_paint(cr);
 	/* FIXME: more cairo-gl brokeness */
 	surface_flush_device(surface);
 	cairo_destroy(cr);
 
-	dnd_drag->hotspot_x = pointer_width + x - item->x;
-	dnd_drag->hotspot_y = pointer_height + y - item->y;
+	dnd_drag->hotspot_x = pointer->width + x - item->x;
+	dnd_drag->hotspot_y = pointer->height + y - item->y;
+	dnd_drag->width = rectangle.width;
+	dnd_drag->height = rectangle.height;
 
 	return surface;
 }
@@ -354,14 +369,20 @@ create_drag_cursor(struct dnd_drag *dnd_drag,
 static void
 dnd_button_handler(struct widget *widget,
 		   struct input *input, uint32_t time,
-		   int button, int state, void *data)
+		   uint32_t button, enum wl_pointer_button_state state,
+		   void *data)
 {
 	struct dnd *dnd = data;
 	int32_t x, y;
 	struct item *item;
 	struct rectangle allocation;
 	struct dnd_drag *dnd_drag;
-	int i;
+	struct display *display;
+	struct wl_compositor *compositor;
+	struct wl_buffer *buffer;
+	unsigned int i;
+	uint32_t serial;
+	cairo_surface_t *icon;
 
 	widget_get_allocation(dnd->widget, &allocation);
 	input_get_position(input, &x, &y);
@@ -369,7 +390,7 @@ dnd_button_handler(struct widget *widget,
 	x -= allocation.x;
 	y -= allocation.y;
 
-	if (item && state == 1) {
+	if (item && state == WL_POINTER_BUTTON_STATE_PRESSED) {
 		dnd_drag = malloc(sizeof *dnd_drag);
 		dnd_drag->dnd = dnd;
 		dnd_drag->input = input;
@@ -385,27 +406,54 @@ dnd_button_handler(struct widget *widget,
 			}
 		}
 
-		dnd_drag->data_source =
-			display_create_data_source(dnd->display);
-		wl_data_source_add_listener(dnd_drag->data_source,
-					    &data_source_listener,
-					    dnd_drag);
-		wl_data_source_offer(dnd_drag->data_source,
-				     "application/x-wayland-dnd-flower");
-		wl_data_source_offer(dnd_drag->data_source,
-				     "text/plain; charset=utf-8");
+		display = window_get_display(dnd->window);
+		compositor = display_get_compositor(display);
+		serial = display_get_serial(display);
+		dnd_drag->drag_surface =
+			wl_compositor_create_surface(compositor);
+
+		input_ungrab(input);
+
+		if (dnd->self_only) {
+			dnd_drag->data_source = NULL;
+		} else {
+			dnd_drag->data_source =
+				display_create_data_source(dnd->display);
+			wl_data_source_add_listener(dnd_drag->data_source,
+						    &data_source_listener,
+						    dnd_drag);
+			wl_data_source_offer(dnd_drag->data_source,
+					     "application/x-wayland-dnd-flower");
+			wl_data_source_offer(dnd_drag->data_source,
+					     "text/plain; charset=utf-8");
+		}
+
 		wl_data_device_start_drag(input_get_data_device(input),
 					  dnd_drag->data_source,
 					  window_get_wl_surface(dnd->window),
-					  time);
+					  dnd_drag->drag_surface,
+					  serial);
 
-		input_set_pointer_image(input, time, POINTER_DRAGGING);
+		input_set_pointer_image(input, CURSOR_DRAGGING);
 
 		dnd_drag->opaque =
 			create_drag_cursor(dnd_drag, item, x, y, 1);
 		dnd_drag->translucent =
 			create_drag_cursor(dnd_drag, item, x, y, 0.2);
 
+		if (dnd->self_only)
+			icon = dnd_drag->opaque;
+		else
+			icon = dnd_drag->translucent;
+
+		buffer = display_get_buffer_for_surface(dnd->display, icon);
+		wl_surface_attach(dnd_drag->drag_surface, buffer,
+				  -dnd_drag->hotspot_x, -dnd_drag->hotspot_y);
+		wl_surface_damage(dnd_drag->drag_surface, 0, 0,
+				  dnd_drag->width, dnd_drag->height);
+		wl_surface_commit(dnd_drag->drag_surface);
+
+		dnd->current_drag = dnd_drag;
 		window_schedule_redraw(dnd->window);
 	}
 }
@@ -417,38 +465,44 @@ lookup_cursor(struct dnd *dnd, int x, int y)
 
 	item = dnd_get_item(dnd, x, y);
 	if (item)
-		return POINTER_HAND1;
+		return CURSOR_HAND1;
 	else
-		return POINTER_LEFT_PTR;
+		return CURSOR_LEFT_PTR;
 }
 
 static int
 dnd_enter_handler(struct widget *widget,
-		  struct input *input, uint32_t time,
-		  int32_t x, int32_t y, void *data)
+		  struct input *input, float x, float y, void *data)
 {
-	return lookup_cursor(data, x, y);
+	struct dnd *dnd = data;
+
+	dnd->current_drag = NULL;
+
+	return lookup_cursor(dnd, x, y);
 }
 
 static int
 dnd_motion_handler(struct widget *widget,
 		   struct input *input, uint32_t time,
-		   int32_t x, int32_t y, void *data)
+		   float x, float y, void *data)
 {
 	return lookup_cursor(data, x, y);
 }
 
 static void
 dnd_data_handler(struct window *window,
-		 struct input *input, uint32_t time,
-		 int32_t x, int32_t y, const char **types, void *data)
+		 struct input *input,
+		 float x, float y, const char **types, void *data)
 {
 	struct dnd *dnd = data;
 
-	if (!dnd_get_item(dnd, x, y)) {
-		input_accept(input, time, types[0]);
+	if (!types)
+		return;
+
+	if (dnd_get_item(dnd, x, y) || dnd->self_only) {
+		input_accept(input, NULL);
 	} else {
-		input_accept(input, time, NULL);
+		input_accept(input, types[0]);
 	}
 }
 
@@ -463,7 +517,7 @@ dnd_receive_func(void *data, size_t len, int32_t x, int32_t y, void *user_data)
 	if (len == 0) {
 		return;
 	} else if (len != sizeof *message) {
-		fprintf(stderr, "odd message length %ld, expected %ld\n",
+		fprintf(stderr, "odd message length %zu, expected %zu\n",
 			len, sizeof *message);
 		return;
 	}
@@ -483,30 +537,42 @@ dnd_drop_handler(struct window *window, struct input *input,
 		 int32_t x, int32_t y, void *data)
 {
 	struct dnd *dnd = data;
+	struct dnd_flower_message message;
 
 	if (dnd_get_item(dnd, x, y)) {
 		fprintf(stderr, "got 'drop', but no target\n");
 		return;
 	}
 
-	input_receive_drag_data(input, 
-				"application/x-wayland-dnd-flower",
-				dnd_receive_func, dnd);
+	if (!dnd->self_only) {
+		input_receive_drag_data(input,
+					"application/x-wayland-dnd-flower",
+					dnd_receive_func, dnd);
+	} else if (dnd->current_drag) {
+		message.seed = dnd->current_drag->item->seed;
+		message.x_offset = dnd->current_drag->x_offset;
+		message.y_offset = dnd->current_drag->y_offset;
+		dnd_receive_func(&message, sizeof message, x, y, dnd);
+		dnd->current_drag = NULL;
+	} else {
+		fprintf(stderr, "ignoring drop from another client\n");
+	}
 }
 
 static struct dnd *
 dnd_create(struct display *display)
 {
 	struct dnd *dnd;
-	int i, x, y;
+	int x, y;
 	int32_t width, height;
+	unsigned int i;
 
 	dnd = malloc(sizeof *dnd);
 	if (dnd == NULL)
 		return dnd;
 	memset(dnd, 0, sizeof *dnd);
 
-	dnd->window = window_create(display, 400, 400);
+	dnd->window = window_create(display);
 	dnd->widget = frame_create(dnd->window, dnd);
 	window_set_title(dnd->window, "Wayland Drag and Drop Demo");
 
@@ -536,7 +602,7 @@ dnd_create(struct display *display)
 	width = 4 * (item_width + item_padding) + item_padding;
 	height = 4 * (item_height + item_padding) + item_padding;
 
-	widget_schedule_resize(dnd->widget, width, height);
+	frame_set_child_size(dnd->widget, width, height);
 
 	return dnd;
 }
@@ -545,14 +611,20 @@ int
 main(int argc, char *argv[])
 {
 	struct display *d;
+	struct dnd *dnd;
+	int i;
 
-	d = display_create(&argc, &argv, NULL);
+	d = display_create(&argc, argv);
 	if (d == NULL) {
 		fprintf(stderr, "failed to create display: %m\n");
 		return -1;
 	}
 
-	dnd_create(d);
+	dnd = dnd_create(d);
+
+	for (i = 1; i < argc; i++)
+		if (strcmp("--self-only", argv[i]) == 0)
+			dnd->self_only = 1;
 
 	display_run(d);
 

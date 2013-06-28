@@ -26,16 +26,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <fcntl.h>
-#include <unistd.h>
 #include <math.h>
 #include <time.h>
-#include <glib.h>
 
 #include <GL/gl.h>
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 
+#include <linux/input.h>
 #include <wayland-client.h>
 
 #include "window.h"
@@ -51,7 +49,18 @@ struct gears {
 	EGLContext context;
 	GLfloat angle;
 
+	struct {
+		GLfloat rotx;
+		GLfloat roty;
+	} view;
+
+	int button_down;
+	int last_x, last_y;
+
 	GLint gear_list[3];
+	int fullscreen;
+	int frames;
+	uint32_t last_fps;
 };
 
 struct gear_template {
@@ -63,7 +72,7 @@ struct gear_template {
 	GLfloat tooth_depth;
 };
 
-const static struct gear_template gear_templates[] = {
+static const struct gear_template gear_templates[] = {
 	{ { 0.8, 0.1, 0.0, 1.0 }, 1.0, 4.0, 1.0, 20, 0.7 },
 	{ { 0.0, 0.8, 0.2, 1.0 }, 0.5, 2.0, 2.0, 10, 0.7 },
 	{ { 0.2, 0.2, 1.0, 1.0 }, 1.3, 2.0, 0.5, 10, 0.7 }, 
@@ -196,9 +205,32 @@ make_gear(const struct gear_template *t)
 }
 
 static void
+update_fps(struct gears *gears, uint32_t time)
+{
+	long diff_ms;
+
+	gears->frames++;
+
+	diff_ms = time - gears->last_fps;
+
+	if (diff_ms > 5000) {
+		float seconds = diff_ms / 1000.0;
+		float fps = gears->frames / seconds;
+
+		printf("%d frames in %6.3f seconds = %6.3f FPS\n", gears->frames, seconds, fps);
+		fflush(stdout);
+
+		gears->frames = 0;
+		gears->last_fps = time;
+	}
+}
+
+static void
 frame_callback(void *data, struct wl_callback *callback, uint32_t time)
 {
 	struct gears *gears = data;
+
+	update_fps(gears, time);
 
 	gears->angle = (GLfloat) (time % 8192) * 360 / 8192.0;
 
@@ -212,10 +244,55 @@ static const struct wl_callback_listener listener = {
 	frame_callback
 };
 
+static int
+motion_handler(struct widget *widget, struct input *input,
+		uint32_t time, float x, float y, void *data)
+{
+	struct gears *gears = data;
+	int offset_x, offset_y;
+	float step = 0.5;
+
+	if (gears->button_down) {
+		offset_x = x - gears->last_x;
+		offset_y = y - gears->last_y;
+		gears->last_x = x;
+		gears->last_y = y;
+		gears->view.roty += offset_x * step;
+		gears->view.rotx += offset_y * step;
+		if (gears->view.roty >= 360)
+			gears->view.roty = gears->view.roty - 360;
+		if (gears->view.roty <= 0)
+			gears->view.roty = gears->view.roty + 360;
+		if (gears->view.rotx >= 360)
+			gears->view.rotx = gears->view.rotx - 360;
+		if (gears->view.rotx <= 0)
+			gears->view.rotx = gears->view.rotx + 360;
+	}
+
+	return CURSOR_LEFT_PTR;
+}
+
+static void
+button_handler(struct widget *widget, struct input *input,
+		uint32_t time, uint32_t button,
+		enum wl_pointer_button_state state, void *data)
+{
+	struct gears *gears = data;
+
+	if (button == BTN_LEFT) {
+		if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
+			gears->button_down = 1;
+			input_get_position(input,
+					&gears->last_x, &gears->last_y);
+		} else {
+			gears->button_down = 0;
+		}
+	}
+}
+
 static void
 redraw_handler(struct widget *widget, void *data)
 {
-	GLfloat view_rotx = 20.0, view_roty = 30.0, view_rotz = 0.0;
 	struct rectangle window_allocation;
 	struct rectangle allocation;
 	struct wl_callback *callback;
@@ -245,9 +322,8 @@ redraw_handler(struct widget *widget, void *data)
 
 	glTranslatef(0.0, 0.0, -50);
 
-	glRotatef(view_rotx, 1.0, 0.0, 0.0);
-	glRotatef(view_roty, 0.0, 1.0, 0.0);
-	glRotatef(view_rotz, 0.0, 0.0, 1.0);
+	glRotatef(gears->view.rotx, 1.0, 0.0, 0.0);
+	glRotatef(gears->view.roty, 0.0, 1.0, 0.0);
 
 	glPushMatrix();
 	glTranslatef(-3.0, -2.0, 0.0);
@@ -282,18 +358,23 @@ resize_handler(struct widget *widget,
 	       int32_t width, int32_t height, void *data)
 {
 	struct gears *gears = data;
+	int32_t size, big, small;
 
 	/* Constrain child size to be square and at least 300x300 */
-	if (width > height)
-		height = width;
-	else
-		width = height;
-	if (width < 300) {
-		width = 300;
-		height = 300;
+	if (width < height) {
+		small = width;
+		big = height;
+	} else {
+		small = height;
+		big = width;
 	}
 
-	widget_set_size(gears->widget, width, height);
+	if (gears->fullscreen)
+		size = small;
+	else
+		size = big;
+
+	widget_set_size(gears->widget, size, size);
 }
 
 static void
@@ -303,19 +384,28 @@ keyboard_focus_handler(struct window *window,
 	window_schedule_redraw(window);
 }
 
+static void
+fullscreen_handler(struct window *window, void *data)
+{
+	struct gears *gears = data;
+
+	gears->fullscreen ^= 1;
+	window_set_fullscreen(window, gears->fullscreen);
+}
+
 static struct gears *
 gears_create(struct display *display)
 {
 	const int width = 450, height = 500;
 	struct gears *gears;
+	struct timeval tv;
 	int i;
 
 	gears = malloc(sizeof *gears);
 	memset(gears, 0, sizeof *gears);
 	gears->d = display;
-	gears->window = window_create(display, width, height);
+	gears->window = window_create(display);
 	gears->widget = frame_create(gears->window, gears);
-	window_set_transparent(gears->window, 1);
 	window_set_title(gears->window, "Wayland Gears");
 
 	gears->display = display_get_egl_display(gears->d);
@@ -332,7 +422,7 @@ gears_create(struct display *display)
 		die("failed to create context\n");
 
 	if (!eglMakeCurrent(gears->display, NULL, NULL, gears->context))
-		die("faile to make context current\n");
+		die("failed to make context current\n");
 
 	for (i = 0; i < 3; i++) {
 		gears->gear_list[i] = glGenLists(1);
@@ -340,6 +430,17 @@ gears_create(struct display *display)
 		make_gear(&gear_templates[i]);
 		glEndList();
 	}
+
+	gears->button_down = 0;
+	gears->last_x = 0;
+	gears->last_y = 0;
+
+	gears->view.rotx = 20.0;
+	gears->view.roty = 30.0;
+
+	gettimeofday(&tv, NULL);
+	gears->last_fps = tv.tv_sec * 1000 + tv.tv_usec / 1000;
+	printf("Warning: FPS count is limited by the wayland compositor or monitor refresh rate\n");
 
 	glEnable(GL_NORMALIZE);
 
@@ -358,8 +459,11 @@ gears_create(struct display *display)
 	window_set_user_data(gears->window, gears);
 	widget_set_resize_handler(gears->widget, resize_handler);
 	widget_set_redraw_handler(gears->widget, redraw_handler);
+	widget_set_button_handler(gears->widget, button_handler);
+	widget_set_motion_handler(gears->widget, motion_handler);
 	window_set_keyboard_focus_handler(gears->window,
 					  keyboard_focus_handler);
+	window_set_fullscreen_handler(gears->window, fullscreen_handler);
 
 	window_schedule_resize(gears->window, width, height);
 
@@ -370,7 +474,7 @@ int main(int argc, char *argv[])
 {
 	struct display *d;
 
-	d = display_create(&argc, &argv, NULL);
+	d = display_create(&argc, argv);
 	if (d == NULL) {
 		fprintf(stderr, "failed to create display: %m\n");
 		return -1;

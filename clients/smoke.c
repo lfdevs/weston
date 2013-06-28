@@ -25,12 +25,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <fcntl.h>
-#include <unistd.h>
 #include <math.h>
 #include <time.h>
 #include <cairo.h>
-#include <glib.h>
 
 #include <wayland-client.h>
 #include "window.h"
@@ -40,7 +37,7 @@ struct smoke {
 	struct window *window;
 	struct widget *widget;
 	int width, height;
-	int offset, current;
+	int current;
 	uint32_t time;
 	struct { float *d, *u, *v; } b[2];
 };
@@ -220,19 +217,18 @@ redraw_handler(struct widget *widget, void *data)
 
 	render(smoke, surface);
 
-	display_surface_damage(smoke->display, surface,
-			       0, 0, smoke->width, smoke->height);
 	window_damage(smoke->window, 0, 0, smoke->width, smoke->height);
 
 	cairo_surface_destroy(surface);
 
 	callback = wl_surface_frame(window_get_wl_surface(smoke->window));
 	wl_callback_add_listener(callback, &listener, smoke);
+	wl_surface_commit(window_get_wl_surface(smoke->window));
 }
 
 static int
 smoke_motion_handler(struct widget *widget, struct input *input,
-		     uint32_t time, int32_t x, int32_t y, void *data)
+		     uint32_t time, float x, float y, void *data)
 {
 	struct smoke *smoke = data;
 	int i, i0, i1, j, j0, j1, k, d = 5;
@@ -263,7 +259,7 @@ smoke_motion_handler(struct widget *widget, struct input *input,
 			smoke->b[0].d[k] += 1;
 		}
 
-	return POINTER_HAND1;
+	return CURSOR_HAND1;
 }
 
 static void
@@ -283,7 +279,7 @@ int main(int argc, char *argv[])
 	struct display *d;
 	int size;
 
-	d = display_create(&argc, &argv, NULL);
+	d = display_create(&argc, argv);
 	if (d == NULL) {
 		fprintf(stderr, "failed to create display: %m\n");
 		return -1;
@@ -292,14 +288,13 @@ int main(int argc, char *argv[])
 	smoke.width = 200;
 	smoke.height = 200;
 	smoke.display = d;
-	smoke.window = window_create(d, smoke.width, smoke.height);
+	smoke.window = window_create(d);
 	smoke.widget = window_add_widget(smoke.window, &smoke);
 	window_set_title(smoke.window, "smoke");
 
 	window_set_buffer_type(smoke.window, WINDOW_BUFFER_TYPE_SHM);
 	clock_gettime(CLOCK_MONOTONIC, &ts);
 	srandom(ts.tv_nsec);
-	smoke.offset = random();
 
 	smoke.current = 0;
 	size = smoke.height * smoke.width;

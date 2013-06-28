@@ -30,19 +30,24 @@
 #include <sys/mman.h>
 
 #include <wayland-client.h>
-#include <wayland-egl.h>
+#include "../shared/os-compatibility.h"
+
+#define ARRAY_LENGTH(a) (sizeof (a) / sizeof (a)[0])
 
 struct touch {
 	struct wl_display *display;
+	struct wl_registry *registry;
 	struct wl_compositor *compositor;
 	struct wl_shell *shell;
 	struct wl_shm *shm;
-	struct wl_input_device *input_device;
+	struct wl_seat *seat;
+	struct wl_touch *wl_touch;
+	struct wl_pointer *pointer;
+	struct wl_keyboard *keyboard;
 	struct wl_surface *surface;
 	struct wl_shell_surface *shell_surface;
 	struct wl_buffer *buffer;
 	int has_argb;
-	uint32_t mask;
 	int width, height;
 	void *data;
 };
@@ -50,36 +55,33 @@ struct touch {
 static void
 create_shm_buffer(struct touch *touch)
 {
-	char filename[] = "/tmp/wayland-shm-XXXXXX";
+	struct wl_shm_pool *pool;
 	int fd, size, stride;
 
-	fd = mkstemp(filename);
-	if (fd < 0) {
-		fprintf(stderr, "open %s failed: %m\n", filename);
-		exit(1);
-	}
 	stride = touch->width * 4;
 	size = stride * touch->height;
-	if (ftruncate(fd, size) < 0) {
-		fprintf(stderr, "ftruncate failed: %m\n");
-		close(fd);
+
+	fd = os_create_anonymous_file(size);
+	if (fd < 0) {
+		fprintf(stderr, "creating a buffer file for %d B failed: %m\n",
+			size);
 		exit(1);
 	}
 
 	touch->data =
 		mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-	unlink(filename);
-
 	if (touch->data == MAP_FAILED) {
 		fprintf(stderr, "mmap failed: %m\n");
 		close(fd);
 		exit(1);
 	}
 
+	pool = wl_shm_create_pool(touch->shm, fd, size);
 	touch->buffer =
-		wl_shm_create_buffer(touch->shm, fd,
-				     touch->width, touch->height, stride,
-				     WL_SHM_FORMAT_ARGB8888);
+		wl_shm_pool_create_buffer(pool, 0,
+					  touch->width, touch->height, stride,
+					  WL_SHM_FORMAT_ARGB8888);
+	wl_shm_pool_destroy(pool);
 
 	close(fd);
 }
@@ -99,43 +101,6 @@ struct wl_shm_listener shm_listenter = {
 
 
 static void
-input_device_handle_motion(void *data, struct wl_input_device *input_device,
-			   uint32_t time,
-			   int32_t x, int32_t y, int32_t sx, int32_t sy)
-{
-}
-
-static void
-input_device_handle_button(void *data,
-			   struct wl_input_device *input_device,
-			   uint32_t time, uint32_t button, uint32_t state)
-{
-}
-
-static void
-input_device_handle_key(void *data, struct wl_input_device *input_device,
-			uint32_t time, uint32_t key, uint32_t state)
-{
-}
-
-static void
-input_device_handle_pointer_focus(void *data,
-				  struct wl_input_device *input_device,
-				  uint32_t time, struct wl_surface *surface,
-				  int32_t x, int32_t y, int32_t sx, int32_t sy)
-{
-}
-
-static void
-input_device_handle_keyboard_focus(void *data,
-				   struct wl_input_device *input_device,
-				   uint32_t time,
-				   struct wl_surface *surface,
-				   struct wl_array *keys)
-{
-}
-
-static void
 touch_paint(struct touch *touch, int32_t x, int32_t y, int32_t id)
 {
 	uint32_t *p, c;
@@ -144,118 +109,170 @@ touch_paint(struct touch *touch, int32_t x, int32_t y, int32_t id)
 		0xffffff00,
 		0xff0000ff,
 		0xffff00ff,
+		0xff00ff00,
+		0xff00ffff,
 	};
 
-	if (id < ARRAY_LENGTH(colors))
+	if (id < (int32_t) ARRAY_LENGTH(colors))
 		c = colors[id];
 	else
 		c = 0xffffffff;
 
-	if (x < 1 || touch->width - 1 < x ||
-	    y < 1 || touch->height - 1 < y)
+	if (x < 2 || x >= touch->width - 2 ||
+	    y < 2 || y >= touch->height - 2)
 		return;
 
-	p = (uint32_t *) touch->data + (x - 1) + (y -1 ) * touch->width;
+	p = (uint32_t *) touch->data + (x - 2) + (y - 2) * touch->width;
+	p[2] = c;
+	p += touch->width;
 	p[1] = c;
+	p[2] = c;
+	p[3] = c;
 	p += touch->width;
 	p[0] = c;
 	p[1] = c;
 	p[2] = c;
+	p[3] = c;
+	p[4] = c;
 	p += touch->width;
 	p[1] = c;
+	p[2] = c;
+	p[3] = c;
+	p += touch->width;
+	p[2] = c;
 
-	wl_buffer_damage(touch->buffer, 0, 0, touch->width, touch->height);
-	wl_surface_damage(touch->surface,
-			  0, 0, touch->width, touch->height);
+	wl_surface_damage(touch->surface, x - 2, y - 2, 5, 5);
+	/* todo: We could queue up more damage before committing, if there
+	 * are more input events to handle.
+	 */
+	wl_surface_commit(touch->surface);
 }
 
 static void
-input_device_handle_touch_down(void *data,
-			       struct wl_input_device *wl_input_device,
-			       uint32_t time, struct wl_surface *surface,
-			       int32_t id, int32_t x, int32_t y)
+touch_handle_down(void *data, struct wl_touch *wl_touch,
+		  uint32_t serial, uint32_t time, struct wl_surface *surface,
+		  int32_t id, wl_fixed_t x_w, wl_fixed_t y_w)
 {
 	struct touch *touch = data;
+	float x = wl_fixed_to_double(x_w);
+	float y = wl_fixed_to_double(y_w);
 
 	touch_paint(touch, x, y, id);
 }
 
 static void
-input_device_handle_touch_up(void *data,
-			     struct wl_input_device *wl_input_device,
-			     uint32_t time, int32_t id)
+touch_handle_up(void *data, struct wl_touch *wl_touch,
+		uint32_t serial, uint32_t time, int32_t id)
 {
 }
 
 static void
-input_device_handle_touch_motion(void *data,
-				 struct wl_input_device *wl_input_device,
-				 uint32_t time,
-				 int32_t id, int32_t x, int32_t y)
+touch_handle_motion(void *data, struct wl_touch *wl_touch,
+		    uint32_t time, int32_t id, wl_fixed_t x_w, wl_fixed_t y_w)
 {
 	struct touch *touch = data;
+	float x = wl_fixed_to_double(x_w);
+	float y = wl_fixed_to_double(y_w);
 
 	touch_paint(touch, x, y, id);
 }
 
 static void
-input_device_handle_touch_frame(void *data,
-				struct wl_input_device *wl_input_device)
+touch_handle_frame(void *data, struct wl_touch *wl_touch)
 {
 }
 
 static void
-input_device_handle_touch_cancel(void *data,
-				 struct wl_input_device *wl_input_device)
+touch_handle_cancel(void *data, struct wl_touch *wl_touch)
 {
 }
 
-static const struct wl_input_device_listener input_device_listener = {
-	input_device_handle_motion,
-	input_device_handle_button,
-	input_device_handle_key,
-	input_device_handle_pointer_focus,
-	input_device_handle_keyboard_focus,
-	input_device_handle_touch_down,
-	input_device_handle_touch_up,
-	input_device_handle_touch_motion,
-	input_device_handle_touch_frame,
-	input_device_handle_touch_cancel,
+static const struct wl_touch_listener touch_listener = {
+	touch_handle_down,
+	touch_handle_up,
+	touch_handle_motion,
+	touch_handle_frame,
+	touch_handle_cancel,
 };
 
 static void
-handle_global(struct wl_display *display, uint32_t id,
-	      const char *interface, uint32_t version, void *data)
+seat_handle_capabilities(void *data, struct wl_seat *seat,
+			 enum wl_seat_capability caps)
+{
+	struct touch *touch = data;
+
+	if ((caps & WL_SEAT_CAPABILITY_TOUCH) && !touch->wl_touch) {
+		touch->wl_touch = wl_seat_get_touch(seat);
+		wl_touch_set_user_data(touch->wl_touch, touch);
+		wl_touch_add_listener(touch->wl_touch, &touch_listener, touch);
+	} else if (!(caps & WL_SEAT_CAPABILITY_TOUCH) && touch->wl_touch) {
+		wl_touch_destroy(touch->wl_touch);
+		touch->wl_touch = NULL;
+	}
+}
+
+static const struct wl_seat_listener seat_listener = {
+	seat_handle_capabilities,
+};
+
+static void
+handle_ping(void *data, struct wl_shell_surface *shell_surface,
+	    uint32_t serial)
+{
+	wl_shell_surface_pong(shell_surface, serial);
+}
+
+static void
+handle_configure(void *data, struct wl_shell_surface *shell_surface,
+		 uint32_t edges, int32_t width, int32_t height)
+{
+}
+
+static void
+handle_popup_done(void *data, struct wl_shell_surface *shell_surface)
+{
+}
+
+static const struct wl_shell_surface_listener shell_surface_listener = {
+	handle_ping,
+	handle_configure,
+	handle_popup_done
+};
+
+static void
+handle_global(void *data, struct wl_registry *registry,
+	      uint32_t name, const char *interface, uint32_t version)
 {
 	struct touch *touch = data;
 
 	if (strcmp(interface, "wl_compositor") == 0) {
 		touch->compositor =
-			wl_display_bind(display, id, &wl_compositor_interface);
+			wl_registry_bind(registry, name,
+					 &wl_compositor_interface, 1);
 	} else if (strcmp(interface, "wl_shell") == 0) {
 		touch->shell =
-			wl_display_bind(display, id, &wl_shell_interface);
+			wl_registry_bind(registry, name,
+					 &wl_shell_interface, 1);
 	} else if (strcmp(interface, "wl_shm") == 0) {
-		touch->shm = wl_display_bind(display, id, &wl_shm_interface);
+		touch->shm = wl_registry_bind(registry, name,
+					      &wl_shm_interface, 1);
 		wl_shm_add_listener(touch->shm, &shm_listenter, touch);
-	} else if (strcmp(interface, "wl_input_device") == 0) {
-		touch->input_device =
-			wl_display_bind(display, id,
-					&wl_input_device_interface);
-		wl_input_device_add_listener(touch->input_device,
-					     &input_device_listener, touch);
+	} else if (strcmp(interface, "wl_seat") == 0) {
+		touch->seat = wl_registry_bind(registry, name,
+					       &wl_seat_interface, 1);
+		wl_seat_add_listener(touch->seat, &seat_listener, touch);
 	}
 }
 
-static int
-event_mask_update(uint32_t mask, void *data)
+static void
+handle_global_remove(void *data, struct wl_registry *registry, uint32_t name)
 {
-	struct touch *touch = data;
-
-	touch->mask = mask;
-
-	return 0;
 }
+
+static const struct wl_registry_listener registry_listener = {
+	handle_global,
+	handle_global_remove
+};
 
 static struct touch *
 touch_create(int width, int height)
@@ -267,8 +284,9 @@ touch_create(int width, int height)
 	assert(touch->display);
 
 	touch->has_argb = 0;
-	wl_display_add_global_listener(touch->display, handle_global, touch);
-	wl_display_iterate(touch->display, WL_DISPLAY_READABLE);
+	touch->registry = wl_display_get_registry(touch->display);
+	wl_registry_add_listener(touch->registry, &registry_listener, touch);
+	wl_display_dispatch(touch->display);
 	wl_display_roundtrip(touch->display);
 
 	if (!touch->has_argb) {
@@ -276,7 +294,7 @@ touch_create(int width, int height)
 		exit(1);
 	}
 
-	wl_display_get_fd(touch->display, event_mask_update, touch);
+	wl_display_get_fd(touch->display);
 	
 	touch->width = width;
 	touch->height = height;
@@ -285,13 +303,19 @@ touch_create(int width, int height)
 							  touch->surface);
 	create_shm_buffer(touch);
 
-	wl_shell_surface_set_toplevel(touch->shell_surface);
+	if (touch->shell_surface) {
+		wl_shell_surface_add_listener(touch->shell_surface,
+					      &shell_surface_listener, touch);
+		wl_shell_surface_set_toplevel(touch->shell_surface);
+	}
+
 	wl_surface_set_user_data(touch->surface, touch);
+	wl_shell_surface_set_title(touch->shell_surface, "simple-touch");
 
 	memset(touch->data, 64, width * height * 4);
-	wl_buffer_damage(touch->buffer, 0, 0, width, height);
 	wl_surface_attach(touch->surface, touch->buffer, 0, 0);
 	wl_surface_damage(touch->surface, 0, 0, width, height);
+	wl_surface_commit(touch->surface);
 
 	return touch;
 }
@@ -300,11 +324,12 @@ int
 main(int argc, char **argv)
 {
 	struct touch *touch;
+	int ret = 0;
 
 	touch = touch_create(600, 500);
 
-	while (true)
-		wl_display_iterate(touch->display, touch->mask);
+	while (ret != -1)
+		ret = wl_display_dispatch(touch->display);
 
 	return 0;
 }

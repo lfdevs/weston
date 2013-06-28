@@ -2,9 +2,11 @@ Source: weston
 Section: x11
 Priority: optional
 Maintainer: Debian X Strike Force <debian-x@lists.debian.org>
-Uploaders: Cyril Brulebois <kibi@debian.org>
+Uploaders:
+ Cyril Brulebois <kibi@debian.org>,
+ Mike Gabriel <sunweaver@debian.org>,
 Build-Depends:
- debhelper (>= 8),
+ debhelper (>= 9),
  quilt,
  dh-autoreconf,
  pkg-config,
@@ -12,9 +14,10 @@ Build-Depends:
  libpng-dev,
  libjpeg-dev,
  mesa-common-dev,
- libegl1-mesa-dev (>= 8.0-2),
- libegl1-mesa-drivers (>= 8.0-2),
- libgles2-mesa-dev (>= 8.0-2),
+ libglu1-mesa-dev,
+ libegl1-mesa-dev (>= 9.0~),
+ libegl1-mesa-drivers (>= 9.0~),
+ libgles2-mesa-dev (>= 9.0~),
  libwayland-dev (>= 0.85),
  libxcb1-dev,
  libxcb-xfixes0-dev,
@@ -22,10 +25,16 @@ Build-Depends:
  libx11-dev,
  libudev-dev,
  libgbm-dev,
- libxkbcommon-dev,
+ libxkbcommon-dev (>= 0.1.0~2),
  libcairo2-dev,
  libgdk-pixbuf2.0-dev,
-Standards-Version: 3.9.2
+ libxcursor-dev,
+ libmtdev-dev,
+ libpam0g-dev,
+ libvpx-dev,
+ libsystemd-login-dev,
+Standards-Version: 3.9.4
+Homepage: http://wayland.freedesktop.org/
 Vcs-Git: git://git.debian.org/git/pkg-xorg/wayland/weston
 Vcs-Browser: http://git.debian.org/?p=pkg-xorg/wayland/weston.git
 
@@ -37,6 +46,8 @@ Depends:
  libgles2-mesa (>= 8.0-2),
  ${shlibs:Depends},
  ${misc:Depends},
+Recommends:
+ libgl1-mesa-dri,
 Description: reference implementation of a wayland compositor
  Part of the Wayland project is also the Weston reference implementation
  of a Wayland compositor. Weston can run as an X client or under Linux

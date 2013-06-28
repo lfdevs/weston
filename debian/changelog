@@ -1,3 +1,33 @@
+weston (1.1.1-1) experimental; urgency=low
+
+  [ Timo Aaltonen ]
+  * New upstream release (Closes: #675138, #699045).
+  * Add a watch file.
+  * control: Add missing build-depends: libmtdev-dev, libxcursor-dev,
+    libpam0g-dev, libvpx-dev.
+  * Use source format 1.0.
+  * control: Bump the build-depends on libxkbcommon-dev to (>= 0.1.0~2).
+  * rules: Make the test run failure non-fatal, since it doesn't work
+    properly in headless-mode.
+  * weston.install: Add new files.
+  * control: Bump build-depends on mesa derived components to 9.0~.
+  * control, compat: Switch to debhelper 9.
+  * control: Bump policy to 3.9.4, no changes.
+  * control: Added homepage (Closes: #687571).
+  * Add README.source.
+  * patches/series: Add a placeholder file.
+
+  [ Sven Joachim ]
+  * Configure with --disable-libunwind until libunwind starts shipping
+    pkg-config files (see #711854).
+  * Add build-dependencies on libsystemd-login-dev and libglu1-mesa-dev.
+
+  [ Mike Gabriel ]
+  * control: add libgl1-mesa-dri to Recommends: field. (Closes: #714351).
+  * control: add myself to Uploaders: field.
+
+ -- Mike Gabriel <sunweaver@debian.org>  Fri, 28 Jun 2013 14:31:18 +0200
+
 weston (0.85.0-1) experimental; urgency=low
 
   * Initial release (Closes: #630809).

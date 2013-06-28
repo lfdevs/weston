@@ -25,14 +25,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <fcntl.h>
-#include <unistd.h>
 #include <math.h>
 #include <time.h>
 #include <cairo.h>
 #include <sys/time.h>
-#include <glib.h>
 
+#include <linux/input.h>
 #include <wayland-client.h>
 #include "window.h"
 
@@ -105,6 +103,16 @@ draw_stuff(cairo_surface_t *surface, int width, int height)
 }
 
 static void
+resize_handler(struct widget *widget,
+	       int32_t width, int32_t height, void *data)
+{
+	struct flower *flower = data;
+
+	/* Dont resize me */
+	widget_set_size(flower->widget, flower->width, flower->height);
+}
+
+static void
 redraw_handler(struct widget *widget, void *data)
 {
 	struct flower *flower = data;
@@ -121,22 +129,28 @@ redraw_handler(struct widget *widget, void *data)
 	cairo_surface_destroy(surface);
 }
 
-static int
-motion_handler(struct widget *widget, struct input *input,
-	       uint32_t time, int32_t x, int32_t y, void *data)
-{
-	return POINTER_HAND1;
-}
-
 static void
 button_handler(struct widget *widget,
 	       struct input *input, uint32_t time,
-	       int button, int state, void *data)
+	       uint32_t button, enum wl_pointer_button_state state, void *data)
 {
 	struct flower *flower = data;
 
-	if (state)
-		window_move(flower->window, input, time);
+	switch (button) {
+	case BTN_LEFT:
+		if (state == WL_POINTER_BUTTON_STATE_PRESSED)
+			window_move(flower->window, input,
+				    display_get_serial(flower->display));
+		break;
+	case BTN_MIDDLE:
+		if (state == WL_POINTER_BUTTON_STATE_PRESSED)
+			widget_schedule_redraw(widget);
+		break;
+	case BTN_RIGHT:
+		if (state == WL_POINTER_BUTTON_STATE_PRESSED)
+			window_show_frame_menu(flower->window, input, time);
+		break;
+	}
 }
 
 int main(int argc, char *argv[])
@@ -145,7 +159,7 @@ int main(int argc, char *argv[])
 	struct display *d;
 	struct timeval tv;
 
-	d = display_create(&argc, &argv, NULL);
+	d = display_create(&argc, argv);
 	if (d == NULL) {
 		fprintf(stderr, "failed to create display: %m\n");
 		return -1;
@@ -157,14 +171,16 @@ int main(int argc, char *argv[])
 	flower.width = 200;
 	flower.height = 200;
 	flower.display = d;
-	flower.window = window_create(d, flower.width, flower.height);
+	flower.window = window_create(d);
 	flower.widget = window_add_widget(flower.window, &flower);
+	window_set_title(flower.window, "Flower");
 
+	widget_set_resize_handler(flower.widget, resize_handler);
 	widget_set_redraw_handler(flower.widget, redraw_handler);
-	widget_set_motion_handler(flower.widget, motion_handler);
 	widget_set_button_handler(flower.widget, button_handler);
+	widget_set_default_cursor(flower.widget, CURSOR_HAND1);
 
-	window_schedule_redraw(flower.window);
+	window_schedule_resize(flower.window, flower.width, flower.height);
 
 	display_run(d);
 

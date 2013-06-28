@@ -181,21 +181,23 @@ create_wscreensaver_instance(struct wscreensaver *screensaver,
 	if (!mi)
 		return NULL;
 
-	mi->window = window_create(screensaver->display, width, height);
+	if (demo_mode)
+		mi->window = window_create(screensaver->display);
+	else
+		mi->window = window_create_custom(screensaver->display);
+
 	if (!mi->window) {
 		fprintf(stderr, "%s: creating a window failed.\n", progname);
 		free(mi);
 		return NULL;
 	}
 
-	window_set_transparent(mi->window, 0);
 	window_set_title(mi->window, progname);
 
-	if (screensaver->interface) {
-		window_set_custom(mi->window);
+	if (screensaver->interface && !demo_mode) {
 		mi->widget = window_add_widget(mi->window, mi);
 		screensaver_set_surface(screensaver->interface,
-					window_get_wl_shell_surface(mi->window),
+					window_get_wl_surface(mi->window),
 					output);
 	} else {
 		mi->widget = frame_create(mi->window, mi);
@@ -269,7 +271,7 @@ init_wscreensaver(struct wscreensaver *wscr, struct display *display)
 	}
 
 	eglBindAPI(EGL_OPENGL_API);
-	wscr->egl.config = display_get_rgb_egl_config(wscr->display);
+	wscr->egl.config = display_get_argb_egl_config(wscr->display);
 
 	if (demo_mode) {
 		struct wl_output *o =
@@ -286,21 +288,19 @@ init_wscreensaver(struct wscreensaver *wscr, struct display *display)
 }
 
 static void
-global_handler(struct wl_display *display, uint32_t id,
+global_handler(struct display *display, uint32_t name,
 	       const char *interface, uint32_t version, void *data)
 {
 	struct wscreensaver *screensaver = data;
 
 	if (!strcmp(interface, "screensaver")) {
 		screensaver->interface =
-			wl_display_bind(display, id, &screensaver_interface);
+			display_bind(display, name, &screensaver_interface, 1);
 	}
 }
 
-static const GOptionEntry option_entries[] = {
-	{ "demo", 0, 0, G_OPTION_ARG_NONE, &demo_mode,
-		"Run as a regular application, not a screensaver.", NULL },
-	{ NULL }
+static const struct weston_option wscreensaver_options[] = {
+	{ WESTON_OPTION_BOOLEAN, "demo", 0, &demo_mode },
 };
 
 int main(int argc, char *argv[])
@@ -310,7 +310,10 @@ int main(int argc, char *argv[])
 
 	init_frand();
 
-	d = display_create(&argc, &argv, option_entries);
+	parse_options(wscreensaver_options,
+		      ARRAY_LENGTH(wscreensaver_options), &argc, argv);
+
+	d = display_create(&argc, argv);
 	if (d == NULL) {
 		fprintf(stderr, "failed to create display: %m\n");
 		return EXIT_FAILURE;
@@ -318,8 +321,8 @@ int main(int argc, char *argv[])
 
 	if (!demo_mode) {
 		/* iterates already known globals immediately */
-		wl_display_add_global_listener(display_get_display(d),
-					       global_handler, &screensaver);
+		display_set_user_data(d, &screensaver);
+		display_set_global_handler(d, global_handler);
 		if (!screensaver.interface) {
 			fprintf(stderr,
 				"Server did not offer screensaver interface,"

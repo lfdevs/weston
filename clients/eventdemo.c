@@ -34,7 +34,6 @@
 #include <stdlib.h>
 
 #include <cairo.h>
-#include <glib.h>
 
 #include "window.h"
 
@@ -71,6 +70,9 @@ static int log_key = 0;
 /** set to log button events */
 static int log_button = 0;
 
+/** set to log axis events */
+static int log_axis = 0;
+
 /** set to log motion events */
 static int log_motion = 0;
 
@@ -86,12 +88,12 @@ struct eventdemo {
 	struct widget *widget;
 	struct display *display;
 
-	unsigned int x, y, w, h;
+	int x, y, w, h;
 };
 
 /**
  * \brief CALLBACK function, Wayland requests the window to redraw.
- * \param window window to be redrawn
+ * \param widget widget to be redrawn
  * \param data user data associated to the window
  *
  * Draws a red rectangle as demonstration of per-window data.
@@ -127,7 +129,7 @@ redraw_handler(struct widget *widget, void *data)
 
 /**
  * \brief CALLBACK function, Wayland requests the window to resize.
- * \param window window to be resized
+ * \param widget widget to be resized
  * \param width desired width
  * \param height desired height
  * \param data user data associated to the window
@@ -189,29 +191,33 @@ keyboard_focus_handler(struct window *window,
  */
 static void
 key_handler(struct window *window, struct input *input, uint32_t time,
-            uint32_t key, uint32_t unicode, uint32_t state, void *data)
+            uint32_t key, uint32_t unicode, enum wl_keyboard_key_state state,
+	    void *data)
 {
 	uint32_t modifiers = input_get_modifiers(input);
 
 	if(!log_key)
 		return;
 
-	printf("key key: %d, unicode: %d, state: %d, modifiers: %d\n",
-	       key, unicode, state, modifiers);
+	printf("key key: %d, unicode: %d, state: %s, modifiers: 0x%x\n",
+	       key, unicode,
+	       (state == WL_KEYBOARD_KEY_STATE_PRESSED) ? "pressed" :
+							  "released",
+	       modifiers);
 }
 
 /**
  * \brief CALLBACK function, Wayland informs about button event
- * \param window window
+ * \param widget widget
  * \param input input device that caused the button event
- * \param time time the event happend
+ * \param time time the event happened
  * \param button button
  * \param state pressed or released
  * \param data user data associated to the window
  */
 static void
 button_handler(struct widget *widget, struct input *input, uint32_t time,
-	       int button, int state, void *data)
+	       uint32_t button, enum wl_pointer_button_state state, void *data)
 {
 	int32_t x, y;
 
@@ -219,15 +225,41 @@ button_handler(struct widget *widget, struct input *input, uint32_t time,
 		return;
 
 	input_get_position(input, &x, &y);
-	printf("button time: %d, button: %d, state: %d, x: %d, y: %d\n",
-	       time, button, state, x, y);
+	printf("button time: %d, button: %d, state: %s, x: %d, y: %d\n",
+	       time, button,
+	       (state == WL_POINTER_BUTTON_STATE_PRESSED) ? "pressed" :
+							    "released",
+	       x, y);
+}
+
+/**
+ * \brief CALLBACK function, Wayland informs about axis event
+ * \param widget widget
+ * \param input input device that caused the axis event
+ * \param time time the event happened
+ * \param axis vertical or horizontal
+ * \param value amount of scrolling
+ * \param data user data associated to the widget
+ */
+static void
+axis_handler(struct widget *widget, struct input *input, uint32_t time,
+	     uint32_t axis, wl_fixed_t value, void *data)
+{
+	if (!log_axis)
+		return;
+
+	printf("axis time: %d, axis: %s, value: %f\n",
+	       time,
+	       axis == WL_POINTER_AXIS_VERTICAL_SCROLL ? "vertical" :
+							 "horizontal",
+	       wl_fixed_to_double(value));
 }
 
 /**
  * \brief CALLBACK function, Waylands informs about pointer motion
- * \param window window
+ * \param widget widget
  * \param input input device that caused the motion event
- * \param time time the event happend
+ * \param time time the event happened
  * \param x absolute x position
  * \param y absolute y position
  * \param sx x position relative to the window
@@ -238,23 +270,24 @@ button_handler(struct widget *widget, struct input *input, uint32_t time,
  */
 static int
 motion_handler(struct widget *widget, struct input *input, uint32_t time,
-	       int32_t x, int32_t y, void *data)
+	       float x, float y, void *data)
 {
 	struct eventdemo *e = data;
 
 	if (log_motion) {
-		printf("motion time: %d, x: %d, y: %d\n", time, x, y);
+		printf("motion time: %d, x: %f, y: %f\n", time, x, y);
 	}
 
 	if (x > e->x && x < e->x + e->w)
 		if (y > e->y && y < e->y + e->h)
-			return POINTER_HAND1;
+			return CURSOR_HAND1;
 
-	return POINTER_LEFT_PTR;
+	return CURSOR_LEFT_PTR;
 }
 
 /**
  * \brief Create and initialise a new eventdemo window.
+ * The returned eventdemo instance should be destroyed using \c eventdemo_destroy().
  * \param d associated display
  */
 static struct eventdemo *
@@ -266,9 +299,17 @@ eventdemo_create(struct display *d)
 	if(e == NULL)
 		return NULL;
 
-	e->window = window_create(d, width, height);
-	e->widget = frame_create(e->window, e);
-	window_set_title(e->window, title);
+	e->window = window_create(d);
+
+	if (noborder) {
+		/* Demonstrate how to create a borderless window.
+		 * Move windows with META + left mouse button.
+		 */
+		e->widget = window_add_widget(e->window, e);
+	} else {
+		e->widget = frame_create(e->window, e);
+		window_set_title(e->window, title);
+	}
 	e->display = d;
 
 	/* The eventdemo window draws a red rectangle as a demonstration
@@ -302,49 +343,41 @@ eventdemo_create(struct display *d)
 	/* Set the callback motion handler for the window */
 	widget_set_motion_handler(e->widget, motion_handler);
 
-	/* Demonstrate how to create a borderless window.
-	   Move windows with META + left mouse button.
-	 */
-	if (noborder) {
-	}
+	/* Set the callback axis handler for the window */
+	widget_set_axis_handler(e->widget, axis_handler);
 
 	/* Initial drawing of the window */
-	window_schedule_redraw(e->window);
+	window_schedule_resize(e->window, width, height);
 
 	return e;
 }
 /**
- * \brief command line options for eventdemo
- *
- * see
- * http://developer.gimp.org/api/2.0/glib/glib-Commandline-option-parser.html
+ * \brief Destroy eventdemo instance previously created by \c eventdemo_create().
+ * \param eventdemo eventdemo instance to destroy
  */
-static const GOptionEntry option_entries[] = {
-	{"title", 0, 0, G_OPTION_ARG_STRING,
-	 &title, "Set the window title to TITLE", "TITLE"},
-	{"width", 'w', 0, G_OPTION_ARG_INT,
-	 &width, "Set the window's width to W", "W"},
-	{"height", 'h', 0, G_OPTION_ARG_INT,
-	 &height, "Set the window's height to H", "H"},
-	{"maxwidth", 0, 0, G_OPTION_ARG_INT,
-	 &width_max, "Set the window's maximum width to W", "W"},
-	{"maxheight", 0, 0, G_OPTION_ARG_INT,
-	 &height_max, "Set the window's maximum height to H", "H"},
-	{"noborder", 'b', 0, G_OPTION_ARG_NONE,
-	 &noborder, "Don't draw window borders", 0},
-	{"log-redraw", 0, 0, G_OPTION_ARG_NONE,
-	 &log_redraw, "Log redraw events to stdout", 0},
-	{"log-resize", 0, 0, G_OPTION_ARG_NONE,
-	 &log_resize, "Log resize events to stdout", 0},
-	{"log-focus", 0, 0, G_OPTION_ARG_NONE,
-	 &log_focus, "Log keyboard focus events to stdout", 0},
-	{"log-key", 0, 0, G_OPTION_ARG_NONE,
-	 &log_key, "Log key events to stdout", 0},
-	{"log-button", 0, 0, G_OPTION_ARG_NONE,
-	 &log_button, "Log button events to stdout", 0},
-	{"log-motion", 0, 0, G_OPTION_ARG_NONE,
-	 &log_motion, "Log motion events to stdout", 0},
-	{NULL}
+static void eventdemo_destroy(struct eventdemo * eventdemo)
+{
+	widget_destroy(eventdemo->widget);
+	window_destroy(eventdemo->window);
+	free(eventdemo);
+}
+/**
+ * \brief command line options for eventdemo
+ */
+static const struct weston_option eventdemo_options[] = {
+	{ WESTON_OPTION_STRING, "title", 0, &title },
+	{ WESTON_OPTION_INTEGER, "width", 'w', &width },
+	{ WESTON_OPTION_INTEGER, "height", 'h', &height },
+	{ WESTON_OPTION_INTEGER, "max-width", 0, &width_max },
+	{ WESTON_OPTION_INTEGER, "max-height", 0, &height_max },
+	{ WESTON_OPTION_BOOLEAN, "no-border", 'b', &noborder },
+	{ WESTON_OPTION_BOOLEAN, "log-redraw", '0', &log_redraw },
+	{ WESTON_OPTION_BOOLEAN, "log-resize", '0', &log_resize },
+	{ WESTON_OPTION_BOOLEAN, "log-focus", '0', &log_focus },
+	{ WESTON_OPTION_BOOLEAN, "log-key", '0', &log_key },
+	{ WESTON_OPTION_BOOLEAN, "log-button", '0', &log_button },
+	{ WESTON_OPTION_BOOLEAN, "log-axis", '0', &log_axis },
+	{ WESTON_OPTION_BOOLEAN, "log-motion", '0', &log_motion },
 };
 
 /**
@@ -357,8 +390,11 @@ main(int argc, char *argv[])
 	struct display *d;
 	struct eventdemo *e;
 
+	parse_options(eventdemo_options,
+		      ARRAY_LENGTH(eventdemo_options), &argc, argv);
+
 	/* Connect to the display and have the arguments parsed */
-	d = display_create(&argc, &argv, option_entries);
+	d = display_create(&argc, argv);
 	if (d == NULL) {
 		fprintf(stderr, "failed to create display: %m\n");
 		return -1;
@@ -372,6 +408,10 @@ main(int argc, char *argv[])
 	}
 
 	display_run(d);
+
+	/* Release resources */
+	eventdemo_destroy(e);
+	display_destroy(d);
 
 	return 0;
 }

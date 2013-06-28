@@ -1,7 +1,11 @@
 #!/usr/bin/make -f
 
 override_dh_auto_configure:
-	dh_auto_configure -- --disable-setuid-install
+	dh_auto_configure -- --disable-setuid-install --disable-libunwind
+
+override_dh_auto_test:
+	# the test suite does not 100% pass in headless mode
+	dh_auto_test || true
 
 override_dh_auto_install:
 	dh_auto_install --destdir=debian/tmp
@@ -19,4 +23,4 @@ override_dh_makeshlibs:
 gentarball: SOURCE=$(shell dpkg-parsechangelog|awk '/^Source:/ {print $$2}')
 gentarball: UV=$(shell dpkg-parsechangelog|awk '/^Version:/ {print $$2}'|sed 's/-.*$$//')
 gentarball:
-	git archive --format=tar upstream-experimental --prefix=$(SOURCE)-$(UV)/ | gzip -9 > ../$(SOURCE)_$(UV).orig.tar.gz
+	git archive --format=tar upstream-unstable --prefix=$(SOURCE)-$(UV)/ | gzip -9 > ../$(SOURCE)_$(UV).orig.tar.gz

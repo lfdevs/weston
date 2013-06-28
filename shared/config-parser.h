@@ -23,6 +23,10 @@
 #ifndef CONFIGPARSER_H
 #define CONFIGPARSER_H
 
+#ifdef  __cplusplus
+extern "C" {
+#endif
+
 enum config_key_type {
 	CONFIG_KEY_INTEGER,		/* typeof data = int */
 	CONFIG_KEY_UNSIGNED_INTEGER,	/* typeof data = unsigned int */
@@ -50,6 +54,28 @@ parse_config_file(const char *path,
 
 char *
 config_file_path(const char *name);
+
+enum weston_option_type {
+	WESTON_OPTION_INTEGER,
+	WESTON_OPTION_UNSIGNED_INTEGER,
+	WESTON_OPTION_STRING,
+	WESTON_OPTION_BOOLEAN
+};
+
+struct weston_option {
+	enum weston_option_type type;
+	const char *name;
+	int short_name;
+	void *data;
+};
+
+int
+parse_options(const struct weston_option *options,
+	      int count, int *argc, char *argv[]);
+
+#ifdef  __cplusplus
+}
+#endif
 
 #endif /* CONFIGPARSER_H */
 

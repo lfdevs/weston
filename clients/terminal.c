@@ -20,6 +20,7 @@
  * OF THIS SOFTWARE.
  */
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,16 +32,27 @@
 #include <pty.h>
 #include <ctype.h>
 #include <cairo.h>
-#include <glib.h>
 #include <sys/epoll.h>
-
-#include <X11/keysym.h>
 
 #include <wayland-client.h>
 
+#include "../shared/config-parser.h"
 #include "window.h"
 
 static int option_fullscreen;
+static char *option_font = "mono";
+static int option_font_size = 14;
+static char *option_term = "xterm";
+static char *option_shell;
+
+static struct wl_list terminal_list;
+
+static struct terminal *
+terminal_create(struct display *display);
+static void
+terminal_destroy(struct terminal *terminal);
+static int
+terminal_run(struct terminal *terminal, const char *path);
 
 #define MOD_SHIFT	0x01
 #define MOD_ALT		0x02
@@ -95,7 +107,7 @@ init_state_machine(struct utf8_state_machine *machine)
 }
 
 static enum utf8_state
-utf8_next_char(struct utf8_state_machine *machine, char c)
+utf8_next_char(struct utf8_state_machine *machine, unsigned char c)
 {
 	switch(machine->state) {
 	case utf8state_start:
@@ -179,41 +191,41 @@ struct char_sub CS_US[] = {
 	{{{0, }}, {{0, }}}
 };
 static struct char_sub CS_UK[] = {
-	{{{'#', 0, }}, {{0xC2, 0xA3, 0, }}},
+	{{{'#', 0, }}, {{0xC2, 0xA3, 0, }}}, /* POUND: £ */
 	{{{0, }}, {{0, }}}
 };
 static struct char_sub CS_SPECIAL[] = {
-	{{{'`', 0, }}, {{0xE2, 0x99, 0xA6, 0}}}, /* diamond */
-	{{{'a', 0, }}, {{0xE2, 0x96, 0x92, 0}}}, /* 50% cell */
-	{{{'b', 0, }}, {{0xE2, 0x90, 0x89, 0}}}, /* HT */
-	{{{'c', 0, }}, {{0xE2, 0x90, 0x8C, 0}}}, /* FF */
-	{{{'d', 0, }}, {{0xE2, 0x90, 0x8D, 0}}}, /* CR */
-	{{{'e', 0, }}, {{0xE2, 0x90, 0x8A, 0}}}, /* LF */
-	{{{'f', 0, }}, {{0xC2, 0xB0, 0, }}}, /* Degree */
-	{{{'g', 0, }}, {{0xC2, 0xB1, 0, }}}, /* Plus/Minus */
-	{{{'h', 0, }}, {{0xE2, 0x90, 0xA4, 0}}}, /* NL */
-	{{{'i', 0, }}, {{0xE2, 0x90, 0x8B, 0}}}, /* VT */
-	{{{'j', 0, }}, {{0xE2, 0x94, 0x98, 0}}}, /* CN_RB */
-	{{{'k', 0, }}, {{0xE2, 0x94, 0x90, 0}}}, /* CN_RT */
-	{{{'l', 0, }}, {{0xE2, 0x94, 0x8C, 0}}}, /* CN_LT */
-	{{{'m', 0, }}, {{0xE2, 0x94, 0x94, 0}}}, /* CN_RB */
-	{{{'n', 0, }}, {{0xE2, 0x94, 0xBC, 0}}}, /* CROSS */
-	{{{'o', 0, }}, {{0xE2, 0x94, 0x80, 0}}}, /* H */
-	{{{'p', 0, }}, {{0xE2, 0x94, 0x80, 0}}}, /* H */
-	{{{'q', 0, }}, {{0xE2, 0x94, 0x80, 0}}}, /* H */
-	{{{'r', 0, }}, {{0xE2, 0x94, 0x80, 0}}}, /* H */
-	{{{'s', 0, }}, {{0xE2, 0x94, 0x80, 0}}}, /* H */
-	{{{'t', 0, }}, {{0xE2, 0x94, 0x9C, 0}}}, /* TR */
-	{{{'u', 0, }}, {{0xE2, 0x94, 0xA4, 0}}}, /* TL */
-	{{{'v', 0, }}, {{0xE2, 0x94, 0xB4, 0}}}, /* TU */
-	{{{'w', 0, }}, {{0xE2, 0x94, 0xAC, 0}}}, /* TD */
-	{{{'x', 0, }}, {{0xE2, 0x94, 0x82, 0}}}, /* V */
-	{{{'y', 0, }}, {{0xE2, 0x89, 0xA4, 0}}}, /* LE */
-	{{{'z', 0, }}, {{0xE2, 0x89, 0xA5, 0}}}, /* GE */
-	{{{'{', 0, }}, {{0xCF, 0x80, 0, }}}, /* PI */
-	{{{'|', 0, }}, {{0xE2, 0x89, 0xA0, 0}}}, /* NEQ */
-	{{{'}', 0, }}, {{0xC2, 0xA3, 0, }}}, /* POUND */
-	{{{'~', 0, }}, {{0xE2, 0x8B, 0x85, 0}}}, /* DOT */
+	{{{'`', 0, }}, {{0xE2, 0x99, 0xA6, 0}}}, /* diamond: ♦ */
+	{{{'a', 0, }}, {{0xE2, 0x96, 0x92, 0}}}, /* 50% cell: ▒ */
+	{{{'b', 0, }}, {{0xE2, 0x90, 0x89, 0}}}, /* HT: ␉ */
+	{{{'c', 0, }}, {{0xE2, 0x90, 0x8C, 0}}}, /* FF: ␌ */
+	{{{'d', 0, }}, {{0xE2, 0x90, 0x8D, 0}}}, /* CR: ␍ */
+	{{{'e', 0, }}, {{0xE2, 0x90, 0x8A, 0}}}, /* LF: ␊ */
+	{{{'f', 0, }}, {{0xC2, 0xB0, 0, }}}, /* Degree: ° */
+	{{{'g', 0, }}, {{0xC2, 0xB1, 0, }}}, /* Plus/Minus: ± */
+	{{{'h', 0, }}, {{0xE2, 0x90, 0xA4, 0}}}, /* NL: ␤ */
+	{{{'i', 0, }}, {{0xE2, 0x90, 0x8B, 0}}}, /* VT: ␋ */
+	{{{'j', 0, }}, {{0xE2, 0x94, 0x98, 0}}}, /* CN_RB: ┘ */
+	{{{'k', 0, }}, {{0xE2, 0x94, 0x90, 0}}}, /* CN_RT: ┐ */
+	{{{'l', 0, }}, {{0xE2, 0x94, 0x8C, 0}}}, /* CN_LT: ┌ */
+	{{{'m', 0, }}, {{0xE2, 0x94, 0x94, 0}}}, /* CN_LB: └ */
+	{{{'n', 0, }}, {{0xE2, 0x94, 0xBC, 0}}}, /* CROSS: ┼ */
+	{{{'o', 0, }}, {{0xE2, 0x8E, 0xBA, 0}}}, /* Horiz. Scan Line 1: ⎺ */
+	{{{'p', 0, }}, {{0xE2, 0x8E, 0xBB, 0}}}, /* Horiz. Scan Line 3: ⎻ */
+	{{{'q', 0, }}, {{0xE2, 0x94, 0x80, 0}}}, /* Horiz. Scan Line 5: ─ */
+	{{{'r', 0, }}, {{0xE2, 0x8E, 0xBC, 0}}}, /* Horiz. Scan Line 7: ⎼ */
+	{{{'s', 0, }}, {{0xE2, 0x8E, 0xBD, 0}}}, /* Horiz. Scan Line 9: ⎽ */
+	{{{'t', 0, }}, {{0xE2, 0x94, 0x9C, 0}}}, /* TR: ├ */
+	{{{'u', 0, }}, {{0xE2, 0x94, 0xA4, 0}}}, /* TL: ┤ */
+	{{{'v', 0, }}, {{0xE2, 0x94, 0xB4, 0}}}, /* TU: ┴ */
+	{{{'w', 0, }}, {{0xE2, 0x94, 0xAC, 0}}}, /* TD: ┬ */
+	{{{'x', 0, }}, {{0xE2, 0x94, 0x82, 0}}}, /* V: │ */
+	{{{'y', 0, }}, {{0xE2, 0x89, 0xA4, 0}}}, /* LE: ≤ */
+	{{{'z', 0, }}, {{0xE2, 0x89, 0xA5, 0}}}, /* GE: ≥ */
+	{{{'{', 0, }}, {{0xCF, 0x80, 0, }}}, /* PI: π */
+	{{{'|', 0, }}, {{0xE2, 0x89, 0xA0, 0}}}, /* NEQ: ≠ */
+	{{{'}', 0, }}, {{0xC2, 0xA3, 0, }}}, /* POUND: £ */
+	{{{'~', 0, }}, {{0xE2, 0x8B, 0x85, 0}}}, /* DOT: ⋅ */
 	{{{0, }}, {{0, }}}
 };
 
@@ -241,28 +253,28 @@ struct key_map {
 typedef struct key_map *keyboard_mode;
 
 static struct key_map KM_NORMAL[] = {
-	{XK_Left,  1, '[', 'D'},
-	{XK_Right, 1, '[', 'C'},
-	{XK_Up,    1, '[', 'A'},
-	{XK_Down,  1, '[', 'B'},
-	{XK_Home,  1, '[', 'H'},
-	{XK_End,   1, '[', 'F'},
-	{0, 0, 0, 0}
+	{ XKB_KEY_Left,  1, '[', 'D' },
+	{ XKB_KEY_Right, 1, '[', 'C' },
+	{ XKB_KEY_Up,    1, '[', 'A' },
+	{ XKB_KEY_Down,  1, '[', 'B' },
+	{ XKB_KEY_Home,  1, '[', 'H' },
+	{ XKB_KEY_End,   1, '[', 'F' },
+	{ 0, 0, 0, 0 }
 };
 static struct key_map KM_APPLICATION[] = {
-	{XK_Left,          1, 'O', 'D'},
-	{XK_Right,         1, 'O', 'C'},
-	{XK_Up,            1, 'O', 'A'},
-	{XK_Down,          1, 'O', 'B'},
-	{XK_Home,          1, 'O', 'H'},
-	{XK_End,           1, 'O', 'F'},
-	{XK_KP_Enter,      1, 'O', 'M'},
-	{XK_KP_Multiply,   1, 'O', 'j'},
-	{XK_KP_Add,        1, 'O', 'k'},
-	{XK_KP_Separator,  1, 'O', 'l'},
-	{XK_KP_Subtract,   1, 'O', 'm'},
-	{XK_KP_Divide,     1, 'O', 'o'},
-	{0, 0, 0, 0}
+	{ XKB_KEY_Left,          1, 'O', 'D' },
+	{ XKB_KEY_Right,         1, 'O', 'C' },
+	{ XKB_KEY_Up,            1, 'O', 'A' },
+	{ XKB_KEY_Down,          1, 'O', 'B' },
+	{ XKB_KEY_Home,          1, 'O', 'H' },
+	{ XKB_KEY_End,           1, 'O', 'F' },
+	{ XKB_KEY_KP_Enter,      1, 'O', 'M' },
+	{ XKB_KEY_KP_Multiply,   1, 'O', 'j' },
+	{ XKB_KEY_KP_Add,        1, 'O', 'k' },
+	{ XKB_KEY_KP_Separator,  1, 'O', 'l' },
+	{ XKB_KEY_KP_Subtract,   1, 'O', 'm' },
+	{ XKB_KEY_KP_Divide,     1, 'O', 'o' },
+	{ 0, 0, 0, 0 }
 };
 
 static int
@@ -272,9 +284,9 @@ function_key_response(char escape, int num, uint32_t modifiers,
 	int mod_num = 0;
 	int len;
 
-	if (modifiers & XKB_COMMON_SHIFT_MASK) mod_num   |= 1;
-	if (modifiers & XKB_COMMON_MOD1_MASK) mod_num    |= 2;
-	if (modifiers & XKB_COMMON_CONTROL_MASK) mod_num |= 4;
+	if (modifiers & MOD_SHIFT_MASK) mod_num   |= 1;
+	if (modifiers & MOD_ALT_MASK) mod_num    |= 2;
+	if (modifiers & MOD_CONTROL_MASK) mod_num |= 4;
 
 	if (mod_num != 0)
 		len = snprintf(response, MAX_RESPONSE, "\e[%d;%d%c",
@@ -354,6 +366,13 @@ enum escape_state {
 #define ESC_FLAG_DQUOTE	0x20
 #define ESC_FLAG_SPACE	0x40
 
+enum {
+	SELECT_NONE,
+	SELECT_CHAR,
+	SELECT_WORD,
+	SELECT_LINE
+};
+
 struct terminal {
 	struct window *window;
 	struct widget *widget;
@@ -375,6 +394,7 @@ struct terminal {
 	int data_pitch, attr_pitch;  /* The width in bytes of a line */
 	int width, height, start, row, column;
 	int saved_row, saved_column;
+	int send_cursor_position;
 	int fd, master;
 	uint32_t modifiers;
 	char escape[MAX_ESCAPE+1];
@@ -384,17 +404,20 @@ struct terminal {
 	int escape_flags;
 	struct utf8_state_machine state_machine;
 	int margin;
-	int fullscreen;
-	int focused;
 	struct color_scheme *color_scheme;
 	struct terminal_color color_table[256];
 	cairo_font_extents_t extents;
 	cairo_scaled_font_t *font_normal, *font_bold;
+	uint32_t hide_cursor_serial;
 
 	struct wl_data_source *selection;
-	int32_t dragging;
+	uint32_t button_time;
+	int dragging, click_count;
 	int selection_start_x, selection_start_y;
 	int selection_end_x, selection_end_y;
+	int selection_start_row, selection_start_col;
+	int selection_end_row, selection_end_col;
+	struct wl_list link;
 };
 
 /* Create default tab stops, every 8 characters */
@@ -492,57 +515,20 @@ union decoded_attr {
 	uint32_t key;
 };
 
-static int
-terminal_compare_position(struct terminal *terminal,
-			  int x, int y, int32_t ref_row, int32_t ref_col)
-{
-	struct rectangle allocation;
-	int top_margin, side_margin, col, row, ref_x;
-
-	widget_get_allocation(terminal->widget, &allocation);
-	side_margin = allocation.x + (allocation.width - terminal->width * terminal->extents.max_x_advance) / 2;
-	top_margin = allocation.y + (allocation.height - terminal->height * terminal->extents.height) / 2;
-
-	col = (x - side_margin) / terminal->extents.max_x_advance;
-	row = (y - top_margin) / terminal->extents.height;
-
-	ref_x = side_margin + ref_col * terminal->extents.max_x_advance +
-		terminal->extents.max_x_advance / 2;
-
-	if (row < ref_row)
-		return -1;
-	if (row == ref_row) {
-		if (col < ref_col)
-			return -1;
-		if (col == ref_col && x < ref_x)
-			return -1;
-	}
-
-	return 1;
-}
-
 static void
 terminal_decode_attr(struct terminal *terminal, int row, int col,
 		     union decoded_attr *decoded)
 {
 	struct attr attr;
 	int foreground, background, tmp;
-	int start_cmp, end_cmp;
 
-	start_cmp =
-		terminal_compare_position(terminal,
-					  terminal->selection_start_x,
-					  terminal->selection_start_y,
-					  row, col);
-	end_cmp =
-		terminal_compare_position(terminal,
-					  terminal->selection_end_x,
-					  terminal->selection_end_y,
-					  row, col);
 	decoded->attr.s = 0;
-	if (start_cmp < 0 && end_cmp > 0)
-		decoded->attr.s = 1;
-	else if (end_cmp < 0 && start_cmp > 0)
+	if (((row == terminal->selection_start_row &&
+	      col >= terminal->selection_start_col) ||
+	     row > terminal->selection_start_row) &&
+	    ((row == terminal->selection_end_row &&
+	      col < terminal->selection_end_col) ||
+	     row < terminal->selection_end_row))
 		decoded->attr.s = 1;
 
 	/* get the attributes for this character cell */
@@ -550,7 +536,7 @@ terminal_decode_attr(struct terminal *terminal, int row, int col,
 	if ((attr.a & ATTRMASK_INVERSE) ||
 	    decoded->attr.s ||
 	    ((terminal->mode & MODE_SHOW_CURSOR) &&
-	     terminal->focused && terminal->row == row &&
+	     window_has_focus(terminal->window) && terminal->row == row &&
 	     terminal->column == col)) {
 		foreground = attr.bg;
 		background = attr.fg;
@@ -601,6 +587,9 @@ terminal_scroll_buffer(struct terminal *terminal, int d)
 			    terminal->curr_attr, terminal->width);
 		}
 	}
+
+	terminal->selection_start_row -= d;
+	terminal->selection_end_row -= d;
 }
 
 static void
@@ -705,10 +694,6 @@ terminal_resize_cells(struct terminal *terminal, int width, int height)
 	struct rectangle allocation;
 	struct winsize ws;
 
-	if (width < 1)
-		width = 1;
-	if (height < 1)
-		height = 1;
 	if (terminal->width == width && terminal->height == height)
 		return;
 
@@ -778,7 +763,8 @@ resize_handler(struct widget *widget,
 	columns = (width - m) / (int32_t) terminal->extents.max_x_advance;
 	rows = (height - m) / (int32_t) terminal->extents.height;
 
-	if (!terminal->fullscreen) {
+	if (!window_is_fullscreen(terminal->window) &&
+	    !window_is_maximized(terminal->window)) {
 		width = columns * terminal->extents.max_x_advance + m;
 		height = rows * terminal->extents.height + m;
 		widget_set_size(terminal->widget, width, height);
@@ -792,13 +778,15 @@ terminal_resize(struct terminal *terminal, int columns, int rows)
 {
 	int32_t width, height, m;
 
-	if (terminal->fullscreen)
+	if (window_is_fullscreen(terminal->window) ||
+	    window_is_maximized(terminal->window))
 		return;
 
 	m = 2 * terminal->margin;
 	width = columns * terminal->extents.max_x_advance + m;
 	height = rows * terminal->extents.height + m;
-	widget_schedule_resize(terminal->widget, width, height);
+
+	frame_set_child_size(terminal->widget, width, height);
 }
 
 struct color_scheme DEFAULT_COLORS = {
@@ -852,7 +840,12 @@ terminal_send_selection(struct terminal *terminal, int fd)
 			if (!attr.attr.s)
 				continue;
 			len = strnlen((char *) p_row[col].byte, 4);
-			fwrite(p_row[col].byte, 1, len, fp);
+			if (len > 0)
+				fwrite(p_row[col].byte, 1, len, fp);
+			if (len == 0 || col == terminal->width - 1) {
+				fwrite("\n", 1, 1, fp);
+				break;
+			}
 		}
 	}
 	fclose(fp);
@@ -861,7 +854,7 @@ terminal_send_selection(struct terminal *terminal, int fd)
 struct glyph_run {
 	struct terminal *terminal;
 	cairo_t *cr;
-	int count;
+	unsigned int count;
 	union decoded_attr attr;
 	cairo_glyph_t glyphs[256], *g;
 };
@@ -929,7 +922,7 @@ redraw_handler(struct widget *widget, void *data)
 	struct rectangle allocation;
 	cairo_t *cr;
 	int top_margin, side_margin;
-	int row, col;
+	int row, col, cursor_x, cursor_y;
 	union utf8_char *p_row;
 	union decoded_attr attr;
 	int text_x, text_y;
@@ -1007,7 +1000,8 @@ redraw_handler(struct widget *widget, void *data)
 	attr.key = ~0;
 	glyph_run_flush(&run, attr);
 
-	if ((terminal->mode & MODE_SHOW_CURSOR) && !terminal->focused) {
+	if ((terminal->mode & MODE_SHOW_CURSOR) &&
+	    !window_has_focus(terminal->window)) {
 		d = 0.5;
 
 		cairo_set_line_width(cr, 1);
@@ -1025,6 +1019,16 @@ redraw_handler(struct widget *widget, void *data)
 	cairo_paint(cr);
 	cairo_destroy(cr);
 	cairo_surface_destroy(surface);
+
+	if (terminal->send_cursor_position) {
+		cursor_x = side_margin + allocation.x +
+				terminal->column * extents.max_x_advance;
+		cursor_y = top_margin + allocation.y +
+				terminal->row * extents.height;
+		window_set_text_cursor_position(terminal->window,
+						cursor_x, cursor_y);
+		terminal->send_cursor_position = 0;
+	}
 }
 
 static void
@@ -1032,6 +1036,7 @@ terminal_write(struct terminal *terminal, const char *data, size_t length)
 {
 	if (write(terminal->master, data, length) < 0)
 		abort();
+	terminal->send_cursor_position = 1;
 }
 
 static void
@@ -1095,9 +1100,15 @@ handle_term_parameter(struct terminal *terminal, int code, int sr)
 			if (sr)	terminal->mode |=  MODE_AUTOREPEAT;
 			else	terminal->mode &= ~MODE_AUTOREPEAT;
 			break;
+		case 12:  /* Very visible cursor (CVVIS) */
+			/* FIXME: What do we do here. */
+			break;
 		case 25:
 			if (sr)	terminal->mode |=  MODE_SHOW_CURSOR;
 			else	terminal->mode &= ~MODE_SHOW_CURSOR;
+			break;
+		case 1034:   /* smm/rmm, meta mode on/off */
+			/* ignore */
 			break;
 		case 1037:   /* deleteSendsDel */
 			if (sr)	terminal->mode |=  MODE_DELETE_SENDS_DEL;
@@ -1106,6 +1117,10 @@ handle_term_parameter(struct terminal *terminal, int code, int sr)
 		case 1039:   /* altSendsEscape */
 			if (sr)	terminal->mode |=  MODE_ALT_SENDS_ESC;
 			else	terminal->mode &= ~MODE_ALT_SENDS_ESC;
+			break;
+		case 1049:   /* rmcup/smcup, alternate screen */
+			/* Ignore.  Should be possible to implement,
+			 * but it's kind of annoying. */
 			break;
 		default:
 			fprintf(stderr, "Unknown parameter: ?%d\n", code);
@@ -1724,10 +1739,10 @@ handle_special_char(struct terminal *terminal, char c)
 {
 	union utf8_char *row;
 	struct attr *attr_row;
-	
+
 	row = terminal_get_row(terminal, terminal->row);
 	attr_row = terminal_get_attr_row(terminal, terminal->row);
-	
+
 	switch(c) {
 	case '\r':
 		terminal->column = 0;
@@ -1748,13 +1763,17 @@ handle_special_char(struct terminal *terminal, char c)
 		break;
 	case '\t':
 		while (terminal->column < terminal->width) {
-			if (terminal->tab_ruler[terminal->column]) break;
 			if (terminal->mode & MODE_IRM)
 				terminal_shift_line(terminal, +1);
-			row[terminal->column].byte[0] = ' ';
-			row[terminal->column].byte[1] = '\0';
-			attr_row[terminal->column] = terminal->curr_attr;
+
+			if (row[terminal->column].byte[0] == '\0') {
+				row[terminal->column].byte[0] = ' ';
+				row[terminal->column].byte[1] = '\0';
+				attr_row[terminal->column] = terminal->curr_attr;
+			}
+
 			terminal->column++;
+			if (terminal->tab_ruler[terminal->column]) break;
 		}
 		if (terminal->column >= terminal->width) {
 			terminal->column = terminal->width - 1;
@@ -1784,6 +1803,8 @@ handle_special_char(struct terminal *terminal, char c)
 		break;
 	case '\x0F': /* SI */
 		terminal->cs = terminal->g0;
+		break;
+	case '\0':
 		break;
 	default:
 		return 0;
@@ -1864,7 +1885,7 @@ escape_append_utf8(struct terminal *terminal, union utf8_char utf8)
 static void
 terminal_data(struct terminal *terminal, const char *data, size_t length)
 {
-	int i;
+	unsigned int i;
 	union utf8_char utf8;
 	enum utf8_state parser_state;
 
@@ -2040,29 +2061,56 @@ static const struct wl_data_source_listener data_source_listener = {
 	data_source_cancelled
 };
 
+static void
+fullscreen_handler(struct window *window, void *data)
+{
+	struct terminal *terminal = data;
+
+	window_set_fullscreen(window, !window_is_fullscreen(terminal->window));
+}
+
+static void
+close_handler(struct window *window, void *data)
+{
+	struct terminal *terminal = data;
+
+	terminal_destroy(terminal);
+}
+
 static int
 handle_bound_key(struct terminal *terminal,
 		 struct input *input, uint32_t sym, uint32_t time)
 {
+	struct terminal *new_terminal;
+
 	switch (sym) {
-	case XK_X:
+	case XKB_KEY_X:
 		/* Cut selection; terminal doesn't do cut, fall
 		 * through to copy. */
-	case XK_C:
+	case XKB_KEY_C:
 		terminal->selection =
 			display_create_data_source(terminal->display);
 		wl_data_source_offer(terminal->selection,
 				     "text/plain;charset=utf-8");
 		wl_data_source_add_listener(terminal->selection,
 					    &data_source_listener, terminal);
-		input_set_selection(input, terminal->selection, time);
+		input_set_selection(input, terminal->selection,
+				    display_get_serial(terminal->display));
 		return 1;
-	case XK_V:
+	case XKB_KEY_V:
 		input_receive_selection_data_to_fd(input,
 						   "text/plain;charset=utf-8",
 						   terminal->master);
 
 		return 1;
+
+	case XKB_KEY_N:
+		new_terminal = terminal_create(terminal->display);
+		if (terminal_run(new_terminal, option_shell))
+			terminal_destroy(new_terminal);
+
+		return 1;
+
 	default:
 		return 0;
 	}
@@ -2070,40 +2118,102 @@ handle_bound_key(struct terminal *terminal,
 
 static void
 key_handler(struct window *window, struct input *input, uint32_t time,
-	    uint32_t key, uint32_t sym, uint32_t state, void *data)
+	    uint32_t key, uint32_t sym, enum wl_keyboard_key_state state,
+	    void *data)
 {
 	struct terminal *terminal = data;
 	char ch[MAX_RESPONSE];
-	uint32_t modifiers;
-	int len = 0;
+	uint32_t modifiers, serial;
+	int ret, len = 0;
+	bool convert_utf8 = true;
 
 	modifiers = input_get_modifiers(input);
-	if ((modifiers & XKB_COMMON_CONTROL_MASK) &&
-	    (modifiers & XKB_COMMON_SHIFT_MASK) &&
-	    state && handle_bound_key(terminal, input, sym, time))
+	if ((modifiers & MOD_CONTROL_MASK) &&
+	    (modifiers & MOD_SHIFT_MASK) &&
+	    state == WL_KEYBOARD_KEY_STATE_PRESSED &&
+	    handle_bound_key(terminal, input, sym, time))
 		return;
 
+	/* Map keypad symbols to 'normal' equivalents before processing */
 	switch (sym) {
-	case XK_F11:
-		if (!state)
-			break;
-		terminal->fullscreen ^= 1;
-		window_set_fullscreen(window, terminal->fullscreen);
-		window_schedule_redraw(terminal->window);
+	case XKB_KEY_KP_Space:
+		sym = XKB_KEY_space;
 		break;
+	case XKB_KEY_KP_Tab:
+		sym = XKB_KEY_Tab;
+		break;
+	case XKB_KEY_KP_Enter:
+		sym = XKB_KEY_Return;
+		break;
+	case XKB_KEY_KP_Left:
+		sym = XKB_KEY_Left;
+		break;
+	case XKB_KEY_KP_Up:
+		sym = XKB_KEY_Up;
+		break;
+	case XKB_KEY_KP_Right:
+		sym = XKB_KEY_Right;
+		break;
+	case XKB_KEY_KP_Down:
+		sym = XKB_KEY_Down;
+		break;
+	case XKB_KEY_KP_Equal:
+		sym = XKB_KEY_equal;
+		break;
+	case XKB_KEY_KP_Multiply:
+		sym = XKB_KEY_asterisk;
+		break;
+	case XKB_KEY_KP_Add:
+		sym = XKB_KEY_plus;
+		break;
+	case XKB_KEY_KP_Separator:
+		/* Note this is actually locale-dependent and should mostly be
+		 * a comma.  But leave it as period until we one day start
+		 * doing the right thing. */
+		sym = XKB_KEY_period;
+		break;
+	case XKB_KEY_KP_Subtract:
+		sym = XKB_KEY_minus;
+		break;
+	case XKB_KEY_KP_Decimal:
+		sym = XKB_KEY_period;
+		break;
+	case XKB_KEY_KP_Divide:
+		sym = XKB_KEY_slash;
+		break;
+	case XKB_KEY_KP_0:
+	case XKB_KEY_KP_1:
+	case XKB_KEY_KP_2:
+	case XKB_KEY_KP_3:
+	case XKB_KEY_KP_4:
+	case XKB_KEY_KP_5:
+	case XKB_KEY_KP_6:
+	case XKB_KEY_KP_7:
+	case XKB_KEY_KP_8:
+	case XKB_KEY_KP_9:
+		sym = (sym - XKB_KEY_KP_0) + XKB_KEY_0;
+		break;
+	default:
+		break;
+	}
 
-	case XK_BackSpace:
-	case XK_Tab:
-	case XK_Linefeed:
-	case XK_Clear:
-	case XK_Pause:
-	case XK_Scroll_Lock:
-	case XK_Sys_Req:
-	case XK_Escape:
+	switch (sym) {
+	case XKB_KEY_BackSpace:
+		if (modifiers & MOD_ALT_MASK)
+			ch[len++] = 0x1b;
+		ch[len++] = 0x7f;
+		break;
+	case XKB_KEY_Tab:
+	case XKB_KEY_Linefeed:
+	case XKB_KEY_Clear:
+	case XKB_KEY_Pause:
+	case XKB_KEY_Scroll_Lock:
+	case XKB_KEY_Sys_Req:
+	case XKB_KEY_Escape:
 		ch[len++] = sym & 0x7f;
 		break;
 
-	case XK_Return:
+	case XKB_KEY_Return:
 		if (terminal->mode & MODE_LF_NEWLINE) {
 			ch[len++] = 0x0D;
 			ch[len++] = 0x0A;
@@ -2112,61 +2222,67 @@ key_handler(struct window *window, struct input *input, uint32_t time,
 		}
 		break;
 
-	case XK_Shift_L:
-	case XK_Shift_R:
-	case XK_Control_L:
-	case XK_Control_R:
-	case XK_Alt_L:
-	case XK_Alt_R:
+	case XKB_KEY_Shift_L:
+	case XKB_KEY_Shift_R:
+	case XKB_KEY_Control_L:
+	case XKB_KEY_Control_R:
+	case XKB_KEY_Alt_L:
+	case XKB_KEY_Alt_R:
+	case XKB_KEY_Meta_L:
+	case XKB_KEY_Meta_R:
+	case XKB_KEY_Super_L:
+	case XKB_KEY_Super_R:
+	case XKB_KEY_Hyper_L:
+	case XKB_KEY_Hyper_R:
 		break;
 
-	case XK_Insert:
+	case XKB_KEY_Insert:
 		len = function_key_response('[', 2, modifiers, '~', ch);
 		break;
-	case XK_Delete:
+	case XKB_KEY_Delete:
 		if (terminal->mode & MODE_DELETE_SENDS_DEL) {
 			ch[len++] = '\x04';
 		} else {
 			len = function_key_response('[', 3, modifiers, '~', ch);
 		}
 		break;
-	case XK_Page_Up:
+	case XKB_KEY_Page_Up:
 		len = function_key_response('[', 5, modifiers, '~', ch);
 		break;
-	case XK_Page_Down:
+	case XKB_KEY_Page_Down:
 		len = function_key_response('[', 6, modifiers, '~', ch);
 		break;
-	case XK_F1:
+	case XKB_KEY_F1:
 		len = function_key_response('O', 1, modifiers, 'P', ch);
 		break;
-	case XK_F2:
+	case XKB_KEY_F2:
 		len = function_key_response('O', 1, modifiers, 'Q', ch);
 		break;
-	case XK_F3:
+	case XKB_KEY_F3:
 		len = function_key_response('O', 1, modifiers, 'R', ch);
 		break;
-	case XK_F4:
+	case XKB_KEY_F4:
 		len = function_key_response('O', 1, modifiers, 'S', ch);
 		break;
-	case XK_F5:
+	case XKB_KEY_F5:
 		len = function_key_response('[', 15, modifiers, '~', ch);
 		break;
-	case XK_F6:
+	case XKB_KEY_F6:
 		len = function_key_response('[', 17, modifiers, '~', ch);
 		break;
-	case XK_F7:
+	case XKB_KEY_F7:
 		len = function_key_response('[', 18, modifiers, '~', ch);
 		break;
-	case XK_F8:
+	case XKB_KEY_F8:
 		len = function_key_response('[', 19, modifiers, '~', ch);
 		break;
-	case XK_F9:
+	case XKB_KEY_F9:
 		len = function_key_response('[', 20, modifiers, '~', ch);
 		break;
-	case XK_F10:
+	case XKB_KEY_F10:
 		len = function_key_response('[', 21, modifiers, '~', ch);
 		break;
-	case XK_F12:
+	case XKB_KEY_F12:
 		len = function_key_response('[', 24, modifiers, '~', ch);
 		break;
 	default:
@@ -2174,7 +2290,7 @@ key_handler(struct window *window, struct input *input, uint32_t time,
 		len = apply_key_map(terminal->key_mode, sym, modifiers, ch);
 		if (len != 0) break;
 		
-		if (modifiers & XKB_COMMON_CONTROL_MASK) {
+		if (modifiers & MOD_CONTROL_MASK) {
 			if (sym >= '3' && sym <= '7')
 				sym = (sym & 0x1f) + 8;
 
@@ -2184,21 +2300,44 @@ key_handler(struct window *window, struct input *input, uint32_t time,
 			else if (sym == '2') sym = 0x00;
 			else if (sym == '/') sym = 0x1F;
 			else if (sym == '8' || sym == '?') sym = 0x7F;
-		} else if ((terminal->mode & MODE_ALT_SENDS_ESC) && 
-			   (modifiers & XKB_COMMON_MOD1_MASK))
-		{
-			ch[len++] = 0x1b;
-		} else if (modifiers & XKB_COMMON_MOD1_MASK) {
-			sym = sym | 0x80;
+		}
+		if (modifiers & MOD_ALT_MASK) {
+			if (terminal->mode & MODE_ALT_SENDS_ESC) {
+				ch[len++] = 0x1b;
+			} else {
+				sym = sym | 0x80;
+				convert_utf8 = false;
+			}
 		}
 
-		if (sym < 256)
+		if ((sym < 128) ||
+		    (!convert_utf8 && sym < 256)) {
 			ch[len++] = sym;
+		} else {
+			ret = xkb_keysym_to_utf8(sym, ch + len,
+						 MAX_RESPONSE - len);
+			if (ret < 0)
+				fprintf(stderr,
+					"Warning: buffer too small to encode "
+					"UTF8 character\n");
+			else
+				len += ret;
+		}
+
 		break;
 	}
 
-	if (state && len > 0)
+	if (state == WL_KEYBOARD_KEY_STATE_PRESSED && len > 0) {
 		terminal_write(terminal, ch, len);
+
+		/* Hide cursor, except if this was coming from a
+		 * repeating key press. */
+		serial = display_get_serial(terminal->display);
+		if (terminal->hide_cursor_serial != serial) {
+			input_set_pointer_image(input, CURSOR_BLANK);
+			terminal->hide_cursor_serial = serial;
+		}
+	}
 }
 
 static void
@@ -2207,38 +2346,162 @@ keyboard_focus_handler(struct window *window,
 {
 	struct terminal *terminal = data;
 
-	terminal->focused = (device != NULL);
 	window_schedule_redraw(terminal->window);
+}
+
+static int wordsep(int ch)
+{
+	const char extra[] = "-,./?%&#:_=+@~";
+
+	if (ch > 127)
+		return 1;
+
+	return ch == 0 || !(isalpha(ch) || isdigit(ch) || strchr(extra, ch));
+}
+
+static int
+recompute_selection(struct terminal *terminal)
+{
+	struct rectangle allocation;
+	int col, x, width, height;
+	int start_row, end_row;
+	int word_start, eol;
+	int side_margin, top_margin;
+	int start_x, end_x;
+	int cw, ch;
+	union utf8_char *data;
+
+	cw = terminal->extents.max_x_advance;
+	ch = terminal->extents.height;
+	widget_get_allocation(terminal->widget, &allocation);
+	width = terminal->width * cw;
+	height = terminal->height * ch;
+	side_margin = allocation.x + (allocation.width - width) / 2;
+	top_margin = allocation.y + (allocation.height - height) / 2;
+
+	start_row = (terminal->selection_start_y - top_margin + ch) / ch - 1;
+	end_row = (terminal->selection_end_y - top_margin + ch) / ch - 1;
+
+	if (start_row < end_row ||
+	    (start_row == end_row &&
+	     terminal->selection_start_x < terminal->selection_end_x)) {
+		terminal->selection_start_row = start_row;
+		terminal->selection_end_row = end_row;
+		start_x = terminal->selection_start_x;
+		end_x = terminal->selection_end_x;
+	} else {
+		terminal->selection_start_row = end_row;
+		terminal->selection_end_row = start_row;
+		start_x = terminal->selection_end_x;
+		end_x = terminal->selection_start_x;
+	}
+
+	eol = 0;
+	if (terminal->selection_start_row < 0) {
+		terminal->selection_start_row = 0;
+		terminal->selection_start_col = 0;
+	} else {
+		x = side_margin + cw / 2;
+		data = terminal_get_row(terminal,
+					terminal->selection_start_row);
+		word_start = 0;
+		for (col = 0; col < terminal->width; col++, x += cw) {
+			if (col == 0 || wordsep(data[col - 1].ch))
+				word_start = col;
+			if (data[col].ch != 0)
+				eol = col + 1;
+			if (start_x < x)
+				break;
+		}
+
+		switch (terminal->dragging) {
+		case SELECT_LINE:
+			terminal->selection_start_col = 0;
+			break;
+		case SELECT_WORD:
+			terminal->selection_start_col = word_start;
+			break;
+		case SELECT_CHAR:
+			terminal->selection_start_col = col;
+			break;
+		}
+	}
+
+	if (terminal->selection_end_row >= terminal->height) {
+		terminal->selection_end_row = terminal->height;
+		terminal->selection_end_col = 0;
+	} else {
+		x = side_margin + cw / 2;
+		data = terminal_get_row(terminal, terminal->selection_end_row);
+		for (col = 0; col < terminal->width; col++, x += cw) {
+			if (terminal->dragging == SELECT_CHAR && end_x < x)
+				break;
+			if (terminal->dragging == SELECT_WORD &&
+			    end_x < x && wordsep(data[col].ch))
+				break;
+		}
+		terminal->selection_end_col = col;
+	}
+
+	if (terminal->selection_end_col != terminal->selection_start_col ||
+	    terminal->selection_start_row != terminal->selection_end_row) {
+		col = terminal->selection_end_col;
+		if (col > 0 && data[col - 1].ch == 0)
+			terminal->selection_end_col = terminal->width;
+		data = terminal_get_row(terminal, terminal->selection_start_row);
+		if (data[terminal->selection_start_col].ch == 0)
+			terminal->selection_start_col = eol;
+	}
+
+	return 1;
 }
 
 static void
 button_handler(struct widget *widget,
 	       struct input *input, uint32_t time,
-	       int button, int state, void *data)
+	       uint32_t button,
+	       enum wl_pointer_button_state state, void *data)
 {
 	struct terminal *terminal = data;
 
 	switch (button) {
 	case 272:
-		if (state) {
-			terminal->dragging = 1;
+		if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
+
+			if (time - terminal->button_time < 500)
+				terminal->click_count++;
+			else
+				terminal->click_count = 1;
+
+			terminal->button_time = time;
+			terminal->dragging =
+				(terminal->click_count - 1) % 3 + SELECT_CHAR;
+
 			input_get_position(input,
 					   &terminal->selection_start_x,
 					   &terminal->selection_start_y);
 			terminal->selection_end_x = terminal->selection_start_x;
 			terminal->selection_end_y = terminal->selection_start_y;
-			widget_schedule_redraw(widget);
+			if (recompute_selection(terminal))
+				widget_schedule_redraw(widget);
 		} else {
-			terminal->dragging = 0;
+			terminal->dragging = SELECT_NONE;
 		}
 		break;
 	}
 }
 
 static int
+enter_handler(struct widget *widget,
+	      struct input *input, float x, float y, void *data)
+{
+	return CURSOR_IBEAM;
+}
+
+static int
 motion_handler(struct widget *widget,
 	       struct input *input, uint32_t time,
-	       int32_t x, int32_t y, void *data)
+	       float x, float y, void *data)
 {
 	struct terminal *terminal = data;
 
@@ -2246,14 +2509,16 @@ motion_handler(struct widget *widget,
 		input_get_position(input,
 				   &terminal->selection_end_x,
 				   &terminal->selection_end_y);
-		widget_schedule_redraw(widget);
+
+		if (recompute_selection(terminal))
+			widget_schedule_redraw(widget);
 	}
 
-	return POINTER_IBEAM;
+	return CURSOR_IBEAM;
 }
 
 static struct terminal *
-terminal_create(struct display *display, int fullscreen)
+terminal_create(struct display *display)
 {
 	struct terminal *terminal;
 	cairo_surface_t *surface;
@@ -2264,14 +2529,14 @@ terminal_create(struct display *display, int fullscreen)
 		return terminal;
 
 	memset(terminal, 0, sizeof *terminal);
-	terminal->fullscreen = fullscreen;
 	terminal->color_scheme = &DEFAULT_COLORS;
 	terminal_init(terminal);
 	terminal->margin_top = 0;
 	terminal->margin_bottom = -1;
-	terminal->window = window_create(display, 500, 400);
+	terminal->window = window_create(display);
 	terminal->widget = frame_create(terminal->window, terminal);
 	window_set_title(terminal->window, "Wayland Terminal");
+	widget_set_transparent(terminal->widget, 0);
 
 	init_state_machine(&terminal->state_machine);
 	init_color_table(terminal);
@@ -2283,21 +2548,25 @@ terminal_create(struct display *display, int fullscreen)
 	window_set_key_handler(terminal->window, key_handler);
 	window_set_keyboard_focus_handler(terminal->window,
 					  keyboard_focus_handler);
+	window_set_fullscreen_handler(terminal->window, fullscreen_handler);
+	window_set_close_handler(terminal->window, close_handler);
+
 	widget_set_redraw_handler(terminal->widget, redraw_handler);
 	widget_set_resize_handler(terminal->widget, resize_handler);
 	widget_set_button_handler(terminal->widget, button_handler);
+	widget_set_enter_handler(terminal->widget, enter_handler);
 	widget_set_motion_handler(terminal->widget, motion_handler);
 
 	surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 0, 0);
 	cr = cairo_create(surface);
-	cairo_set_font_size(cr, 14);
-	cairo_select_font_face (cr, "mono",
+	cairo_set_font_size(cr, option_font_size);
+	cairo_select_font_face (cr, option_font,
 				CAIRO_FONT_SLANT_NORMAL,
 				CAIRO_FONT_WEIGHT_BOLD);
 	terminal->font_bold = cairo_get_scaled_font (cr);
 	cairo_scaled_font_reference(terminal->font_bold);
 
-	cairo_select_font_face (cr, "mono",
+	cairo_select_font_face (cr, option_font,
 				CAIRO_FONT_SLANT_NORMAL,
 				CAIRO_FONT_WEIGHT_NORMAL);
 	terminal->font_normal = cairo_get_scaled_font (cr);
@@ -2307,7 +2576,26 @@ terminal_create(struct display *display, int fullscreen)
 	cairo_destroy(cr);
 	cairo_surface_destroy(surface);
 
+	terminal_resize(terminal, 20, 5); /* Set minimum size first */
+	terminal_resize(terminal, 80, 25);
+
+	wl_list_insert(terminal_list.prev, &terminal->link);
+
 	return terminal;
+}
+
+static void
+terminal_destroy(struct terminal *terminal)
+{
+	display_unwatch_fd(terminal->display, terminal->master);
+	window_destroy(terminal->window);
+	close(terminal->master);
+	wl_list_remove(&terminal->link);
+
+	if (wl_list_empty(&terminal_list))
+		display_exit(terminal->display);
+
+	free(terminal);
 }
 
 static void
@@ -2318,14 +2606,16 @@ io_handler(struct task *task, uint32_t events)
 	char buffer[256];
 	int len;
 
-	if (events & EPOLLHUP)
-		exit(0);
+	if (events & EPOLLHUP) {
+		terminal_destroy(terminal);
+		return;
+	}
 
 	len = read(terminal->master, buffer, sizeof buffer);
 	if (len < 0)
-		exit(0);
-
-	terminal_data(terminal, buffer, len);
+		terminal_destroy(terminal);
+	else
+		terminal_data(terminal, buffer, len);
 }
 
 static int
@@ -2336,8 +2626,8 @@ terminal_run(struct terminal *terminal, const char *path)
 
 	pid = forkpty(&master, NULL, NULL, NULL);
 	if (pid == 0) {
-		setenv("TERM", "xterm-256color", 1);
-		setenv("COLORTERM", "xterm-256color", 1);
+		setenv("TERM", option_term, 1);
+		setenv("COLORTERM", option_term, 1);
 		if (execl(path, path, NULL)) {
 			printf("exec failed: %m\n");
 			exit(EXIT_FAILURE);
@@ -2353,37 +2643,58 @@ terminal_run(struct terminal *terminal, const char *path)
 	display_watch_fd(terminal->display, terminal->master,
 			 EPOLLIN | EPOLLHUP, &terminal->io_task);
 
-	window_set_fullscreen(terminal->window, terminal->fullscreen);
-	if (!terminal->fullscreen)
+	window_set_fullscreen(terminal->window, option_fullscreen);
+	if (!window_is_fullscreen(terminal->window))
 		terminal_resize(terminal, 80, 24);
 
 	return 0;
 }
 
-static const GOptionEntry option_entries[] = {
-	{ "fullscreen", 'f', 0, G_OPTION_ARG_NONE,
-	  &option_fullscreen, "Run in fullscreen mode" },
-	{ NULL }
+static const struct config_key terminal_config_keys[] = {
+	{ "font", CONFIG_KEY_STRING, &option_font },
+	{ "font-size", CONFIG_KEY_INTEGER, &option_font_size },
+	{ "term", CONFIG_KEY_STRING, &option_term },
+};
+
+static const struct config_section config_sections[] = {
+	{ "terminal",
+	  terminal_config_keys, ARRAY_LENGTH(terminal_config_keys) },
+};
+
+static const struct weston_option terminal_options[] = {
+	{ WESTON_OPTION_BOOLEAN, "fullscreen", 'f', &option_fullscreen },
+	{ WESTON_OPTION_STRING, "font", 0, &option_font },
+	{ WESTON_OPTION_STRING, "shell", 0, &option_shell },
 };
 
 int main(int argc, char *argv[])
 {
 	struct display *d;
 	struct terminal *terminal;
-	const char *shell;
+	char *config_file;
 
-	d = display_create(&argc, &argv, option_entries);
+	option_shell = getenv("SHELL");
+	if (!option_shell)
+		option_shell = "/bin/bash";
+
+	config_file = config_file_path("weston.ini");
+	parse_config_file(config_file,
+			  config_sections, ARRAY_LENGTH(config_sections),
+			  NULL);
+	free(config_file);
+
+	parse_options(terminal_options,
+		      ARRAY_LENGTH(terminal_options), &argc, argv);
+
+	d = display_create(&argc, argv);
 	if (d == NULL) {
 		fprintf(stderr, "failed to create display: %m\n");
 		return -1;
 	}
 
-	shell = getenv("SHELL");
-	if (!shell)
-		shell = "/bin/bash";
-
-	terminal = terminal_create(d, option_fullscreen);
-	if (terminal_run(terminal, shell))
+	wl_list_init(&terminal_list);
+	terminal = terminal_create(d);
+	if (terminal_run(terminal, option_shell))
 		exit(EXIT_FAILURE);
 
 	display_run(d);
