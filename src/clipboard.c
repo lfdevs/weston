@@ -20,7 +20,7 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#define _GNU_SOURCE
+#include "config.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -32,12 +32,13 @@
 #include "compositor.h"
 
 struct clipboard_source {
-	struct wl_data_source base;
+	struct weston_data_source base;
 	struct wl_array contents;
 	struct clipboard *clipboard;
 	struct wl_event_source *event_source;
 	uint32_t serial;
 	int refcount;
+	int fd;
 };
 
 struct clipboard {
@@ -58,10 +59,12 @@ clipboard_source_unref(struct clipboard_source *source)
 	if (source->refcount > 0)
 		return;
 
-	if (source->event_source)
+	if (source->event_source) {
 		wl_event_source_remove(source->event_source);
-	wl_signal_emit(&source->base.resource.destroy_signal,
-		       &source->base.resource);
+		close(source->fd);
+	}
+	wl_signal_emit(&source->base.destroy_signal,
+		       &source->base);
 	s = source->base.mime_types.data;
 	free(*s);
 	wl_array_release(&source->base.mime_types);
@@ -87,6 +90,7 @@ clipboard_source_data(int fd, uint32_t mask, void *data)
 	len = read(fd, p, size);
 	if (len == 0) {
 		wl_event_source_remove(source->event_source);
+		close(fd);
 		source->event_source = NULL;
 	} else if (len < 0) {
 		clipboard_source_unref(source);
@@ -99,13 +103,13 @@ clipboard_source_data(int fd, uint32_t mask, void *data)
 }
 
 static void
-clipboard_source_accept(struct wl_data_source *source,
+clipboard_source_accept(struct weston_data_source *source,
 			uint32_t time, const char *mime_type)
 {
 }
 
 static void
-clipboard_source_send(struct wl_data_source *base,
+clipboard_source_send(struct weston_data_source *base,
 		      const char *mime_type, int32_t fd)
 {
 	struct clipboard_source *source =
@@ -120,7 +124,7 @@ clipboard_source_send(struct wl_data_source *base,
 }
 
 static void
-clipboard_source_cancel(struct wl_data_source *source)
+clipboard_source_cancel(struct weston_data_source *source)
 {
 }
 
@@ -134,25 +138,42 @@ clipboard_source_create(struct clipboard *clipboard,
 	char **s;
 
 	source = malloc(sizeof *source);
+	if (source == NULL)
+		return NULL;
+
 	wl_array_init(&source->contents);
 	wl_array_init(&source->base.mime_types);
+	source->base.resource = NULL;
 	source->base.accept = clipboard_source_accept;
 	source->base.send = clipboard_source_send;
 	source->base.cancel = clipboard_source_cancel;
-	source->base.resource.data = &source->base;
-	wl_signal_init(&source->base.resource.destroy_signal);
+	wl_signal_init(&source->base.destroy_signal);
 	source->refcount = 1;
 	source->clipboard = clipboard;
 	source->serial = serial;
 
 	s = wl_array_add(&source->base.mime_types, sizeof *s);
+	if (s == NULL)
+		goto err_add;
 	*s = strdup(mime_type);
-
+	if (*s == NULL)
+		goto err_strdup;
 	source->event_source =
 		wl_event_loop_add_fd(loop, fd, WL_EVENT_READABLE,
 				     clipboard_source_data, source);
+	if (source->event_source == NULL)
+		goto err_source;
 
 	return source;
+
+ err_source:
+	free(*s);
+ err_strdup:
+	wl_array_release(&source->base.mime_types);
+ err_add:
+	free(source);
+
+	return NULL;
 }
 
 struct clipboard_client {
@@ -209,15 +230,15 @@ clipboard_set_selection(struct wl_listener *listener, void *data)
 	struct clipboard *clipboard =
 		container_of(listener, struct clipboard, selection_listener);
 	struct weston_seat *seat = data;
-	struct wl_data_source *source = seat->seat.selection_data_source;
+	struct weston_data_source *source = seat->selection_data_source;
 	const char **mime_types;
 	int p[2];
 
 	if (source == NULL) {
 		if (clipboard->source)
-			wl_seat_set_selection(&seat->seat,
-					      &clipboard->source->base,
-					      clipboard->source->serial);
+			weston_seat_set_selection(seat,
+						  &clipboard->source->base,
+						  clipboard->source->serial);
 		return;
 	} else if (source->accept == clipboard_source_accept) {
 		/* Callback for our data source. */
@@ -238,9 +259,11 @@ clipboard_set_selection(struct wl_listener *listener, void *data)
 
 	clipboard->source =
 		clipboard_source_create(clipboard, mime_types[0],
-					seat->seat.selection_serial, p[0]);
-	if (clipboard->source == NULL)
+					seat->selection_serial, p[0]);
+	if (clipboard->source == NULL) {
+		close(p[0]);
 		return;
+	}
 }
 
 static void
@@ -250,6 +273,7 @@ clipboard_destroy(struct wl_listener *listener, void *data)
 		container_of(listener, struct clipboard, destroy_listener);
 
 	wl_list_remove(&clipboard->selection_listener.link);
+	wl_list_remove(&clipboard->destroy_listener.link);
 
 	free(clipboard);
 }
@@ -259,18 +283,17 @@ clipboard_create(struct weston_seat *seat)
 {
 	struct clipboard *clipboard;
 
-	clipboard = malloc(sizeof *clipboard);
+	clipboard = zalloc(sizeof *clipboard);
 	if (clipboard == NULL)
 		return NULL;
-	memset(clipboard, 0, sizeof *clipboard);
 
 	clipboard->seat = seat;
 	clipboard->selection_listener.notify = clipboard_set_selection;
 	clipboard->destroy_listener.notify = clipboard_destroy;
 
-	wl_signal_add(&seat->seat.selection_signal,
+	wl_signal_add(&seat->selection_signal,
 		      &clipboard->selection_listener);
-	wl_signal_add(&seat->seat.destroy_signal,
+	wl_signal_add(&seat->destroy_signal,
 		      &clipboard->destroy_listener);
 
 	return clipboard;

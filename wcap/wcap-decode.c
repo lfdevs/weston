@@ -20,6 +20,8 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <config.h>
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -144,6 +146,7 @@ void
 wcap_decoder_destroy(struct wcap_decoder *decoder)
 {
 	munmap(decoder->map, decoder->size);
+	close(decoder->fd);
 	free(decoder->frame);
 	free(decoder);
 }

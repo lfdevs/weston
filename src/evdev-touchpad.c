@@ -20,14 +20,18 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include "config.h"
+
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
 #include <stdbool.h>
+#include <unistd.h>
 #include <linux/input.h>
 
 #include "filter.h"
 #include "evdev.h"
+#include "../shared/config-parser.h"
 
 /* Default values */
 #define DEFAULT_CONSTANT_ACCEL_NUMERATOR 50
@@ -486,10 +490,9 @@ touchpad_update_state(struct touchpad_dispatch *touchpad, uint32_t time)
 		filter_motion(touchpad, &dx, &dy, time);
 
 		if (touchpad->finger_state == TOUCHPAD_FINGERS_ONE) {
-			touchpad->device->rel.dx = wl_fixed_from_double(dx);
-			touchpad->device->rel.dy = wl_fixed_from_double(dy);
-			touchpad->device->pending_events |=
-				EVDEV_RELATIVE_MOTION | EVDEV_SYN;
+			notify_motion(touchpad->device->seat, time,
+				      wl_fixed_from_double(dx),
+				      wl_fixed_from_double(dy));
 		} else if (touchpad->finger_state == TOUCHPAD_FINGERS_TWO) {
 			if (dx != 0.0)
 				notify_axis(touchpad->device->seat,
@@ -569,6 +572,8 @@ process_key(struct touchpad_dispatch *touchpad,
 	    struct input_event *e,
 	    uint32_t time)
 {
+	uint32_t code;
+
 	switch (e->code) {
 	case BTN_TOUCH:
 		if (!touchpad->has_pressure) {
@@ -586,8 +591,12 @@ process_key(struct touchpad_dispatch *touchpad,
 	case BTN_FORWARD:
 	case BTN_BACK:
 	case BTN_TASK:
-		notify_button(device->seat,
-			      time, e->code,
+		if (!touchpad->fsm.enable && e->code == BTN_LEFT &&
+		    touchpad->finger_state == TOUCHPAD_FINGERS_TWO)
+			code = BTN_RIGHT;
+		else
+			code = e->code;
+		notify_button(device->seat, time, code,
 			      e->value ? WL_POINTER_BUTTON_STATE_PRESSED :
 			                 WL_POINTER_BUTTON_STATE_RELEASED);
 		break;
@@ -662,6 +671,34 @@ struct evdev_dispatch_interface touchpad_interface = {
 	touchpad_destroy
 };
 
+static void
+touchpad_parse_config(struct touchpad_dispatch *touchpad, double diagonal)
+{
+	struct weston_compositor *compositor =
+		touchpad->device->seat->compositor;
+	struct weston_config_section *s;
+	double constant_accel_factor;
+	double min_accel_factor;
+	double max_accel_factor;
+
+	s = weston_config_get_section(compositor->config,
+				      "touchpad", NULL, NULL);
+	weston_config_section_get_double(s, "constant_accel_factor",
+					 &constant_accel_factor,
+					 DEFAULT_CONSTANT_ACCEL_NUMERATOR);
+	weston_config_section_get_double(s, "min_accel_factor",
+					 &min_accel_factor,
+					 DEFAULT_MIN_ACCEL_FACTOR);
+	weston_config_section_get_double(s, "max_accel_factor",
+					 &max_accel_factor,
+					 DEFAULT_MAX_ACCEL_FACTOR);
+
+	touchpad->constant_accel_factor =
+		constant_accel_factor / diagonal;
+	touchpad->min_accel_factor = min_accel_factor;
+	touchpad->max_accel_factor = max_accel_factor;
+}
+
 static int
 touchpad_init(struct touchpad_dispatch *touchpad,
 	      struct evdev_device *device)
@@ -702,11 +739,7 @@ touchpad_init(struct touchpad_dispatch *touchpad,
 	height = abs(device->abs.max_y - device->abs.min_y);
 	diagonal = sqrt(width*width + height*height);
 
-	touchpad->constant_accel_factor =
-		DEFAULT_CONSTANT_ACCEL_NUMERATOR / diagonal;
-
-	touchpad->min_accel_factor = DEFAULT_MIN_ACCEL_FACTOR;
-	touchpad->max_accel_factor = DEFAULT_MAX_ACCEL_FACTOR;
+	touchpad_parse_config(touchpad, diagonal);
 
 	touchpad->hysteresis.margin_x =
 		diagonal / DEFAULT_HYSTERESIS_MARGIN_DENOMINATOR;

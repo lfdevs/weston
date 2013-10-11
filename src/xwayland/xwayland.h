@@ -27,6 +27,9 @@
 
 #include "../compositor.h"
 
+#define SEND_EVENT_MASK (0x80)
+#define EVENT_TYPE(event) ((event)->response_type & ~SEND_EVENT_MASK)
+
 struct weston_xserver {
 	struct wl_display *wl_display;
 	struct wl_event_loop *loop;
@@ -53,7 +56,6 @@ struct weston_wm {
 	struct weston_xserver *server;
 	xcb_window_t wm_window;
 	struct weston_wm_window *focus_window;
-	struct weston_wm_window *focus_latest;
 	struct theme *theme;
 	xcb_cursor_t *cursors;
 	int last_cursor;
@@ -61,6 +63,7 @@ struct weston_wm {
 	xcb_visualid_t visual_id;
 	xcb_colormap_t colormap;
 	struct wl_listener activate_listener;
+	struct wl_listener transform_listener;
 	struct wl_listener kill_listener;
 
 	xcb_window_t selection_window;
@@ -78,13 +81,18 @@ struct weston_wm {
 	int flush_property_on_delete;
 	struct wl_listener selection_listener;
 
+	xcb_window_t dnd_window;
+	xcb_window_t dnd_owner;
+
 	struct {
 		xcb_atom_t		 wm_protocols;
+		xcb_atom_t		 wm_normal_hints;
 		xcb_atom_t		 wm_take_focus;
 		xcb_atom_t		 wm_delete_window;
 		xcb_atom_t		 wm_state;
 		xcb_atom_t		 wm_s0;
 		xcb_atom_t		 wm_client_machine;
+		xcb_atom_t		 net_wm_cm_s0;
 		xcb_atom_t		 net_wm_name;
 		xcb_atom_t		 net_wm_pid;
 		xcb_atom_t		 net_wm_icon;
@@ -124,6 +132,15 @@ struct weston_wm {
 		xcb_atom_t		 string;
 		xcb_atom_t		 text_plain_utf8;
 		xcb_atom_t		 text_plain;
+		xcb_atom_t		 xdnd_selection;
+		xcb_atom_t		 xdnd_aware;
+		xcb_atom_t		 xdnd_enter;
+		xcb_atom_t		 xdnd_leave;
+		xcb_atom_t		 xdnd_drop;
+		xcb_atom_t		 xdnd_status;
+		xcb_atom_t		 xdnd_finished;
+		xcb_atom_t		 xdnd_type_list;
+		xcb_atom_t		 xdnd_action_copy;
 	} atom;
 };
 
@@ -149,3 +166,9 @@ weston_wm_destroy(struct weston_wm *wm);
 
 struct weston_seat *
 weston_wm_pick_seat(struct weston_wm *wm);
+
+int
+weston_wm_handle_dnd_event(struct weston_wm *wm,
+			   xcb_generic_event_t *event);
+void
+weston_wm_dnd_init(struct weston_wm *wm);

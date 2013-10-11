@@ -20,6 +20,8 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include "config.h"
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -34,7 +36,6 @@
 #include "../wcap/wcap-decode.h"
 
 struct screenshooter {
-	struct wl_object base;
 	struct weston_compositor *ec;
 	struct wl_global *global;
 	struct wl_client *client;
@@ -44,7 +45,7 @@ struct screenshooter {
 
 struct screenshooter_frame_listener {
 	struct wl_listener listener;
-	struct wl_buffer *buffer;
+	struct weston_buffer *buffer;
 	struct wl_resource *resource;
 };
 
@@ -59,6 +60,13 @@ copy_bgra_yflip(uint8_t *dst, uint8_t *src, int height, int stride)
 		dst += stride;
 		src -= stride;
 	}
+}
+
+static void
+copy_bgra(uint8_t *dst, uint8_t *src, int height, int stride)
+{
+	/* TODO: optimize this out */
+	memcpy(dst, src, height * stride);
 }
 
 static void
@@ -92,18 +100,32 @@ copy_rgba_yflip(uint8_t *dst, uint8_t *src, int height, int stride)
 }
 
 static void
+copy_rgba(uint8_t *dst, uint8_t *src, int height, int stride)
+{
+	uint8_t *end;
+
+	end = dst + height * stride;
+	while (dst < end) {
+		copy_row_swap_RB(dst, src, stride);
+		dst += stride;
+		src += stride;
+	}
+}
+
+static void
 screenshooter_frame_notify(struct wl_listener *listener, void *data)
 {
 	struct screenshooter_frame_listener *l =
 		container_of(listener,
 			     struct screenshooter_frame_listener, listener);
 	struct weston_output *output = data;
+	struct weston_compositor *compositor = output->compositor;
 	int32_t stride;
 	uint8_t *pixels, *d, *s;
 
 	output->disable_planes--;
 	wl_list_remove(&listener->link);
-	stride = l->buffer->width * (PIXMAN_FORMAT_BPP(output->compositor->read_format) / 8);
+	stride = l->buffer->width * (PIXMAN_FORMAT_BPP(compositor->read_format) / 8);
 	pixels = malloc(stride * l->buffer->height);
 
 	if (pixels == NULL) {
@@ -112,24 +134,30 @@ screenshooter_frame_notify(struct wl_listener *listener, void *data)
 		return;
 	}
 
-	output->compositor->renderer->read_pixels(output,
-			     output->compositor->read_format, pixels,
-			     0, 0, output->current->width,
-			     output->current->height);
+	compositor->renderer->read_pixels(output,
+			     compositor->read_format, pixels,
+			     0, 0, output->current_mode->width,
+			     output->current_mode->height);
 
-	stride = wl_shm_buffer_get_stride(l->buffer);
+	stride = wl_shm_buffer_get_stride(l->buffer->shm_buffer);
 
-	d = wl_shm_buffer_get_data(l->buffer);
+	d = wl_shm_buffer_get_data(l->buffer->shm_buffer);
 	s = pixels + stride * (l->buffer->height - 1);
 
-	switch (output->compositor->read_format) {
+	switch (compositor->read_format) {
 	case PIXMAN_a8r8g8b8:
 	case PIXMAN_x8r8g8b8:
-		copy_bgra_yflip(d, s, output->current->height, stride);
+		if (compositor->capabilities & WESTON_CAP_CAPTURE_YFLIP)
+			copy_bgra_yflip(d, s, output->current_mode->height, stride);
+		else
+			copy_bgra(d, pixels, output->current_mode->height, stride);
 		break;
 	case PIXMAN_x8b8g8r8:
 	case PIXMAN_a8b8g8r8:
-		copy_rgba_yflip(d, s, output->current->height, stride);
+		if (compositor->capabilities & WESTON_CAP_CAPTURE_YFLIP)
+			copy_rgba_yflip(d, s, output->current_mode->height, stride);
+		else
+			copy_rgba(d, pixels, output->current_mode->height, stride);
 		break;
 	default:
 		break;
@@ -146,15 +174,25 @@ screenshooter_shoot(struct wl_client *client,
 		    struct wl_resource *output_resource,
 		    struct wl_resource *buffer_resource)
 {
-	struct weston_output *output = output_resource->data;
+	struct weston_output *output =
+		wl_resource_get_user_data(output_resource);
 	struct screenshooter_frame_listener *l;
-	struct wl_buffer *buffer = buffer_resource->data;
+	struct weston_buffer *buffer =
+		weston_buffer_from_resource(buffer_resource);
 
-	if (!wl_buffer_is_shm(buffer))
+	if (buffer == NULL) {
+		wl_resource_post_no_memory(resource);
 		return;
+	}
+	if (!wl_shm_buffer_get(buffer->resource))
+		return;
+	
+	buffer->shm_buffer = wl_shm_buffer_get(buffer->resource);
+	buffer->width = wl_shm_buffer_get_width(buffer->shm_buffer);
+	buffer->height = wl_shm_buffer_get_height(buffer->shm_buffer);
 
-	if (buffer->width < output->current->width ||
-	    buffer->height < output->current->height)
+	if (buffer->width < output->current_mode->width ||
+	    buffer->height < output->current_mode->height)
 		return;
 
 	l = malloc(sizeof *l);
@@ -183,14 +221,17 @@ bind_shooter(struct wl_client *client,
 	struct screenshooter *shooter = data;
 	struct wl_resource *resource;
 
-	resource = wl_client_add_object(client, &screenshooter_interface,
-			     &screenshooter_implementation, id, data);
+	resource = wl_resource_create(client,
+				      &screenshooter_interface, 1, id);
 
 	if (client != shooter->client) {
 		wl_resource_post_error(resource, WL_DISPLAY_ERROR_INVALID_OBJECT,
 				       "screenshooter failed: permission denied");
 		wl_resource_destroy(resource);
 	}
+
+	wl_resource_set_implementation(resource, &screenshooter_implementation,
+				       data, NULL);
 }
 
 static void
@@ -203,7 +244,7 @@ screenshooter_sigchld(struct weston_process *process, int status)
 }
 
 static void
-screenshooter_binding(struct wl_seat *seat, uint32_t time, uint32_t key,
+screenshooter_binding(struct weston_seat *seat, uint32_t time, uint32_t key,
 		      void *data)
 {
 	struct screenshooter *shooter = data;
@@ -218,6 +259,7 @@ screenshooter_binding(struct wl_seat *seat, uint32_t time, uint32_t key,
 struct weston_recorder {
 	struct weston_output *output;
 	uint32_t *frame, *rect;
+	uint32_t *tmpbuf;
 	uint32_t total;
 	int fd;
 	struct wl_listener frame_listener;
@@ -260,7 +302,7 @@ transform_rect(struct weston_output *output, pixman_box32_t *r)
 {
 	pixman_box32_t s = *r;
 
-	switch(output->transform) {
+	switch (output->transform) {
 	case WL_OUTPUT_TRANSFORM_FLIPPED:
 	case WL_OUTPUT_TRANSFORM_FLIPPED_90:
 	case WL_OUTPUT_TRANSFORM_FLIPPED_180:
@@ -272,7 +314,7 @@ transform_rect(struct weston_output *output, pixman_box32_t *r)
 		break;
 	}
 
-        switch(output->transform) {
+	switch (output->transform) {
         case WL_OUTPUT_TRANSFORM_NORMAL:
         case WL_OUTPUT_TRANSFORM_FLIPPED:
 		r->x1 = s.x1;
@@ -280,28 +322,33 @@ transform_rect(struct weston_output *output, pixman_box32_t *r)
                 break;
         case WL_OUTPUT_TRANSFORM_90:
         case WL_OUTPUT_TRANSFORM_FLIPPED_90:
-		r->x1 = output->current->width - s.y2;
+		r->x1 = output->current_mode->width - s.y2;
 		r->y1 = s.x1;
-		r->x2 = output->current->width - s.y1;
+		r->x2 = output->current_mode->width - s.y1;
 		r->y2 = s.x2;
                 break;
         case WL_OUTPUT_TRANSFORM_180:
         case WL_OUTPUT_TRANSFORM_FLIPPED_180:
-		r->x1 = output->current->width - s.x2;
-		r->y1 = output->current->height - s.y2;
-		r->x2 = output->current->width - s.x1;
-		r->y2 = output->current->height - s.y1;
+		r->x1 = output->current_mode->width - s.x2;
+		r->y1 = output->current_mode->height - s.y2;
+		r->x2 = output->current_mode->width - s.x1;
+		r->y2 = output->current_mode->height - s.y1;
                 break;
         case WL_OUTPUT_TRANSFORM_270:
         case WL_OUTPUT_TRANSFORM_FLIPPED_270:
 		r->x1 = s.y1; 
-		r->y1 = output->current->height - s.x2;
+		r->y1 = output->current_mode->height - s.x2;
 		r->x2 = s.y2; 
-		r->y2 = output->current->height - s.x1;
+		r->y2 = output->current_mode->height - s.x1;
                 break;
         default:
                 break;
         }
+
+	r->x1 *= output->current_scale;
+	r->y1 *= output->current_scale;
+	r->x2 *= output->current_scale;
+	r->y2 *= output->current_scale;
 }
 
 static void
@@ -310,6 +357,7 @@ weston_recorder_frame_notify(struct wl_listener *listener, void *data)
 	struct weston_recorder *recorder =
 		container_of(listener, struct weston_recorder, frame_listener);
 	struct weston_output *output = data;
+	struct weston_compositor *compositor = output->compositor;
 	uint32_t msecs = output->frame_time;
 	pixman_box32_t *r;
 	pixman_region32_t damage;
@@ -320,6 +368,15 @@ weston_recorder_frame_notify(struct wl_listener *listener, void *data)
 		uint32_t nrects;
 	} header;
 	struct iovec v[2];
+	int do_yflip;
+	int y_orig;
+	uint32_t *outbuf;
+
+	do_yflip = !!(compositor->capabilities & WESTON_CAP_CAPTURE_YFLIP);
+	if (do_yflip)
+		outbuf = recorder->rect;
+	else
+		outbuf = recorder->tmpbuf;
 
 	pixman_region32_init(&damage);
 	pixman_region32_intersect(&damage, &output->region,
@@ -339,22 +396,31 @@ weston_recorder_frame_notify(struct wl_listener *listener, void *data)
 	v[1].iov_base = r;
 	v[1].iov_len = n * sizeof *r;
 	recorder->total += writev(recorder->fd, v, 2);
-	stride = output->current->width;
+	stride = output->current_mode->width;
 
 	for (i = 0; i < n; i++) {
 		width = r[i].x2 - r[i].x1;
 		height = r[i].y2 - r[i].y1;
-		output->compositor->renderer->read_pixels(output,
-			     output->compositor->read_format, recorder->rect,
-			     r[i].x1, output->current->height - r[i].y2,
-			     width, height);
+
+		if (do_yflip)
+			y_orig = output->current_mode->height - r[i].y2;
+		else
+			y_orig = r[i].y1;
+
+		compositor->renderer->read_pixels(output,
+				compositor->read_format, recorder->rect,
+				r[i].x1, y_orig, width, height);
 
 		s = recorder->rect;
-		p = recorder->rect;
+		p = outbuf;
 		run = prev = 0; /* quiet gcc */
 		for (j = 0; j < height; j++) {
-			d = recorder->frame +
-				stride * (r[i].y2 - j - 1) + r[i].x1;
+			if (do_yflip)
+				y_orig = r[i].y2 - j - 1;
+			else
+				y_orig = r[i].y1 + j;
+			d = recorder->frame + stride * y_orig + r[i].x1;
+
 			for (k = 0; k < width; k++) {
 				next = *s++;
 				delta = component_delta(next, *d);
@@ -372,43 +438,52 @@ weston_recorder_frame_notify(struct wl_listener *listener, void *data)
 		p = output_run(p, prev, run);
 
 		recorder->total += write(recorder->fd,
-					 recorder->rect,
-					 (p - recorder->rect) * 4);
+					 outbuf, (p - outbuf) * 4);
 
 #if 0
 		fprintf(stderr,
 			"%dx%d at %d,%d rle from %d to %d bytes (%f) total %dM\n",
 			width, height, r[i].x1, r[i].y1,
-			width * height * 4, (int) (p - recorder->rect) * 4,
-			(float) (p - recorder->rect) / (width * height),
+			width * height * 4, (int) (p - outbuf) * 4,
+			(float) (p - outbuf) / (width * height),
 			recorder->total / 1024 / 1024);
 #endif
 	}
 
 	pixman_region32_fini(&damage);
+	recorder->count++;
 }
 
 static void
 weston_recorder_create(struct weston_output *output, const char *filename)
 {
+	struct weston_compositor *compositor = output->compositor;
 	struct weston_recorder *recorder;
 	int stride, size;
 	struct { uint32_t magic, format, width, height; } header;
+	int do_yflip;
+
+	do_yflip = !!(compositor->capabilities & WESTON_CAP_CAPTURE_YFLIP);
 
 	recorder = malloc(sizeof *recorder);
 
-	stride = output->current->width;
-	size = stride * 4 * output->current->height;
-	recorder->frame = malloc(size);
+	stride = output->current_mode->width;
+	size = stride * 4 * output->current_mode->height;
+	recorder->frame = zalloc(size);
 	recorder->rect = malloc(size);
 	recorder->total = 0;
 	recorder->count = 0;
 	recorder->output = output;
-	memset(recorder->frame, 0, size);
+
+	if (do_yflip)
+		recorder->tmpbuf = NULL;
+	else
+		recorder->tmpbuf = malloc(size);
 
 	header.magic = WCAP_HEADER_MAGIC;
 
-	switch (output->compositor->read_format) {
+	switch (compositor->read_format) {
+	case PIXMAN_x8r8g8b8:
 	case PIXMAN_a8r8g8b8:
 		header.format = WCAP_FORMAT_XRGB8888;
 		break;
@@ -430,8 +505,8 @@ weston_recorder_create(struct weston_output *output, const char *filename)
 		return;
 	}
 
-	header.width = output->current->width;
-	header.height = output->current->height;
+	header.width = output->current_mode->width;
+	header.height = output->current_mode->height;
 	recorder->total += write(recorder->fd, &header, sizeof header);
 
 	recorder->frame_listener.notify = weston_recorder_frame_notify;
@@ -445,6 +520,7 @@ weston_recorder_destroy(struct weston_recorder *recorder)
 {
 	wl_list_remove(&recorder->frame_listener.link);
 	close(recorder->fd);
+	free(recorder->tmpbuf);
 	free(recorder->frame);
 	free(recorder->rect);
 	recorder->output->disable_planes--;
@@ -452,7 +528,7 @@ weston_recorder_destroy(struct weston_recorder *recorder)
 }
 
 static void
-recorder_binding(struct wl_seat *seat, uint32_t time, uint32_t key, void *data)
+recorder_binding(struct weston_seat *seat, uint32_t time, uint32_t key, void *data)
 {
 	struct weston_seat *ws = (struct weston_seat *) seat;
 	struct weston_compositor *ec = ws->compositor;
@@ -469,13 +545,13 @@ recorder_binding(struct wl_seat *seat, uint32_t time, uint32_t key, void *data)
 		recorder = container_of(listener, struct weston_recorder,
 					frame_listener);
 
-		fprintf(stderr,
+		weston_log(
 			"stopping recorder, total file size %dM, %d frames\n",
 			recorder->total / (1024 * 1024), recorder->count);
 
 		weston_recorder_destroy(recorder);
 	} else {
-		fprintf(stderr, "starting recorder, file %s\n", filename);
+		weston_log("starting recorder, file %s\n", filename);
 		weston_recorder_create(output, filename);
 	}
 }
@@ -486,7 +562,7 @@ screenshooter_destroy(struct wl_listener *listener, void *data)
 	struct screenshooter *shooter =
 		container_of(listener, struct screenshooter, destroy_listener);
 
-	wl_display_remove_global(shooter->ec->wl_display, shooter->global);
+	wl_global_destroy(shooter->global);
 	free(shooter);
 }
 
@@ -499,15 +575,12 @@ screenshooter_create(struct weston_compositor *ec)
 	if (shooter == NULL)
 		return;
 
-	shooter->base.interface = &screenshooter_interface;
-	shooter->base.implementation =
-		(void(**)(void)) &screenshooter_implementation;
 	shooter->ec = ec;
 	shooter->client = NULL;
 
-	shooter->global = wl_display_add_global(ec->wl_display,
-						&screenshooter_interface,
-						shooter, bind_shooter);
+	shooter->global = wl_global_create(ec->wl_display,
+					   &screenshooter_interface, 1,
+					   shooter, bind_shooter);
 	weston_compositor_add_key_binding(ec, KEY_S, MODIFIER_SUPER,
 					  screenshooter_binding, shooter);
 	weston_compositor_add_key_binding(ec, KEY_R, MODIFIER_SUPER,

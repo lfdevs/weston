@@ -27,6 +27,8 @@
 #include <wayland-client.h>
 #include <cairo.h>
 #include "../shared/config-parser.h"
+#include "../shared/zalloc.h"
+#include "subsurface-client-protocol.h"
 
 #define ARRAY_LENGTH(a) (sizeof (a) / sizeof (a)[0])
 
@@ -52,6 +54,15 @@ struct rectangle {
 	int32_t height;
 };
 
+void *
+fail_on_null(void *p);
+void *
+xmalloc(size_t s);
+void *
+xzalloc(size_t s);
+char *
+xstrdup(const char *s);
+
 struct display *
 display_create(int *argc, char *argv[]);
 
@@ -66,6 +77,12 @@ display_get_user_data(struct display *display);
 
 struct wl_display *
 display_get_display(struct display *display);
+
+int
+display_has_subcompositor(struct display *display);
+
+cairo_device_t *
+display_get_cairo_device(struct display *display);
 
 struct wl_compositor *
 display_get_compositor(struct display *display);
@@ -127,6 +144,8 @@ display_release_window_surface(struct display *display,
 #define SURFACE_SHM    0x02
 
 #define SURFACE_HINT_RESIZE 0x10
+
+#define SURFACE_HINT_RGB565 0x100
 
 cairo_surface_t *
 display_create_surface(struct display *display,
@@ -216,6 +235,31 @@ typedef void (*widget_button_handler_t)(struct widget *widget,
 					uint32_t button,
 					enum wl_pointer_button_state state,
 					void *data);
+typedef void (*widget_touch_down_handler_t)(struct widget *widget,
+					    struct input *input,
+					    uint32_t serial,
+					    uint32_t time,
+					    int32_t id,
+					    float x,
+					    float y,
+					    void *data);
+typedef void (*widget_touch_up_handler_t)(struct widget *widget,
+					  struct input *input,
+					  uint32_t serial,
+					  uint32_t time,
+					  int32_t id,
+					  void *data);
+typedef void (*widget_touch_motion_handler_t)(struct widget *widget,
+					      struct input *input,
+					      uint32_t time,
+					      int32_t id,
+					      float x,
+					      float y,
+					      void *data);
+typedef void (*widget_touch_frame_handler_t)(struct widget *widget, 
+					     struct input *input, void *data);
+typedef void (*widget_touch_cancel_handler_t)(struct widget *widget, 
+					      struct input *input, void *data);
 typedef void (*widget_axis_handler_t)(struct widget *widget,
 				      struct input *input, uint32_t time,
 				      uint32_t axis,
@@ -252,11 +296,30 @@ void
 window_set_buffer_transform(struct window *window,
 			    enum wl_output_transform transform);
 
+uint32_t
+window_get_buffer_scale(struct window *window);
+
+void
+window_set_buffer_scale(struct window *window,
+                        int32_t scale);
+
+uint32_t
+window_get_output_scale(struct window *window);
+
 void
 window_destroy(struct window *window);
 
 struct widget *
 window_add_widget(struct window *window, void *data);
+
+enum subsurface_mode {
+	SUBSURFACE_SYNCHRONIZED,
+	SUBSURFACE_DESYNCHRONIZED
+};
+
+struct widget *
+window_add_subsurface(struct window *window, void *data,
+		      enum subsurface_mode default_mode);
 
 typedef void (*data_func_t)(void *data, size_t len,
 			    int32_t x, int32_t y, void *user_data);
@@ -265,6 +328,8 @@ struct display *
 window_get_display(struct window *window);
 void
 window_move(struct window *window, struct input *input, uint32_t time);
+void
+window_touch_move(struct window *window, struct input *input, uint32_t time);
 void
 window_get_allocation(struct window *window, struct rectangle *allocation);
 void
@@ -353,6 +418,15 @@ window_get_title(struct window *window);
 void
 window_set_text_cursor_position(struct window *window, int32_t x, int32_t y);
 
+enum preferred_format {
+	WINDOW_PREFERRED_FORMAT_NONE,
+	WINDOW_PREFERRED_FORMAT_RGB565
+};
+
+void
+window_set_preferred_format(struct window *window,
+			    enum preferred_format format);
+
 int
 widget_set_tooltip(struct widget *parent, char *entry, float x, float y);
 
@@ -385,6 +459,15 @@ widget_get_user_data(struct widget *widget);
 cairo_t *
 widget_cairo_create(struct widget *widget);
 
+struct wl_surface *
+widget_get_wl_surface(struct widget *widget);
+
+uint32_t
+widget_get_last_time(struct widget *widget);
+
+void
+widget_input_region_add(struct widget *widget, const struct rectangle *rect);
+
 void
 widget_set_redraw_handler(struct widget *widget,
 			  widget_redraw_handler_t handler);
@@ -404,9 +487,23 @@ void
 widget_set_button_handler(struct widget *widget,
 			  widget_button_handler_t handler);
 void
+widget_set_touch_down_handler(struct widget *widget,
+			      widget_touch_down_handler_t handler);
+void
+widget_set_touch_up_handler(struct widget *widget,
+			    widget_touch_up_handler_t handler);
+void
+widget_set_touch_motion_handler(struct widget *widget,
+				widget_touch_motion_handler_t handler);
+void
+widget_set_touch_frame_handler(struct widget *widget,
+			       widget_touch_frame_handler_t handler);
+void
+widget_set_touch_cancel_handler(struct widget *widget,
+				widget_touch_cancel_handler_t handler);
+void
 widget_set_axis_handler(struct widget *widget,
 			widget_axis_handler_t handler);
-
 void
 widget_schedule_redraw(struct widget *widget);
 
@@ -458,6 +555,9 @@ input_accept(struct input *input, const char *type);
 void
 input_receive_drag_data(struct input *input, const char *mime_type,
 			data_func_t func, void *user_data);
+int
+input_receive_drag_data_to_fd(struct input *input,
+			      const char *mime_type, int fd);
 
 int
 input_receive_selection_data(struct input *input, const char *mime_type,
@@ -484,6 +584,9 @@ output_get_wl_output(struct output *output);
 
 enum wl_output_transform
 output_get_transform(struct output *output);
+
+uint32_t
+output_get_scale(struct output *output);
 
 void
 keysym_modifiers_add(struct wl_array *modifiers_map,

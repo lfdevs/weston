@@ -358,10 +358,9 @@ image_create(struct display *display, const char *filename,
 	struct image *image;
 	char *b, *copy, title[512];;
 
-	image = malloc(sizeof *image);
+	image = zalloc(sizeof *image);
 	if (image == NULL)
 		return image;
-	memset(image, 0, sizeof *image);
 
 	copy = strdup(filename);
 	b = basename(copy);
@@ -373,6 +372,7 @@ image_create(struct display *display, const char *filename,
 
 	if (!image->image) {
 		fprintf(stderr, "could not find the image %s!\n", b);
+		free(image->filename);
 		free(image);
 		return NULL;
 	}

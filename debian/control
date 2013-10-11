@@ -5,6 +5,7 @@ Maintainer: Debian X Strike Force <debian-x@lists.debian.org>
 Uploaders:
  Cyril Brulebois <kibi@debian.org>,
  Mike Gabriel <sunweaver@debian.org>,
+ Héctor Orón Martínez <zumbi@debian.org>,
 Build-Depends:
  debhelper (>= 9),
  quilt,
@@ -13,12 +14,13 @@ Build-Depends:
  libpixman-1-dev,
  libpng-dev,
  libjpeg-dev,
+ libcolord-dev (>= 0.1.27),
  mesa-common-dev,
  libglu1-mesa-dev,
  libegl1-mesa-dev (>= 9.0~),
  libegl1-mesa-drivers (>= 9.0~),
  libgles2-mesa-dev (>= 9.0~),
- libwayland-dev (>= 0.85),
+ libwayland-dev (>= 1.2.0),
  libxcb1-dev,
  libxcb-xfixes0-dev,
  libx11-xcb-dev,
@@ -35,12 +37,13 @@ Build-Depends:
  libsystemd-login-dev,
 Standards-Version: 3.9.4
 Homepage: http://wayland.freedesktop.org/
-Vcs-Git: git://git.debian.org/git/pkg-xorg/wayland/weston
-Vcs-Browser: http://git.debian.org/?p=pkg-xorg/wayland/weston.git
+Vcs-Git: git://anonscm.debian.org/pkg-xorg/wayland/weston
+Vcs-Browser: http://anonscm.debian.org/gitweb/?p=pkg-xorg/wayland/weston.git
 
 Package: weston
 Architecture: linux-any
 Depends:
+ adduser,
  libegl1-mesa (>= 8.0-2),
  libegl1-mesa-drivers (>= 8.0-2),
  libgles2-mesa (>= 8.0-2),

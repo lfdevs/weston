@@ -23,7 +23,7 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#define _GNU_SOURCE
+#include "config.h"
 
 #include <errno.h>
 #include <stdlib.h>
@@ -39,19 +39,20 @@
 
 #include <libudev.h>
 
-#include "config.h"
-
 #include "compositor.h"
 #include "launcher-util.h"
 #include "pixman-renderer.h"
 #include "udev-seat.h"
+#include "gl-renderer.h"
 
 struct fbdev_compositor {
 	struct weston_compositor base;
 	uint32_t prev_state;
 
 	struct udev *udev;
-	struct tty *tty;
+	struct udev_input input;
+	int use_pixman;
+	struct wl_listener session_listener;
 };
 
 struct fbdev_screeninfo {
@@ -88,18 +89,10 @@ struct fbdev_output {
 	uint8_t depth;
 };
 
-struct fbdev_seat {
-	struct weston_seat base;
-	struct wl_list devices_list;
-
-	struct udev_monitor *udev_monitor;
-	struct wl_event_source *udev_monitor_source;
-	char *seat_id;
-};
-
 struct fbdev_parameters {
 	int tty;
 	char *device;
+	int use_gl;
 };
 
 static const char default_seat[] = "seat0";
@@ -108,12 +101,6 @@ static inline struct fbdev_output *
 to_fbdev_output(struct weston_output *base)
 {
 	return container_of(base, struct fbdev_output, base);
-}
-
-static inline struct fbdev_seat *
-to_fbdev_seat(struct weston_seat *base)
-{
-	return container_of(base, struct fbdev_seat, base);
 }
 
 static inline struct fbdev_compositor *
@@ -134,7 +121,7 @@ fbdev_output_start_repaint_loop(struct weston_output *output)
 }
 
 static void
-fbdev_output_repaint(struct weston_output *base, pixman_region32_t *damage)
+fbdev_output_repaint_pixman(struct weston_output *base, pixman_region32_t *damage)
 {
 	struct fbdev_output *output = to_fbdev_output(base);
 	struct weston_compositor *ec = output->base.compositor;
@@ -207,6 +194,26 @@ fbdev_output_repaint(struct weston_output *base, pixman_region32_t *damage)
 	                             1000000 / output->mode.refresh);
 }
 
+static void
+fbdev_output_repaint(struct weston_output *base, pixman_region32_t *damage)
+{
+	struct fbdev_output *output = to_fbdev_output(base);
+	struct fbdev_compositor *fbc = output->compositor;
+	struct weston_compositor *ec = & fbc->base;
+
+	if (fbc->use_pixman) {
+		fbdev_output_repaint_pixman(base,damage);
+	} else {
+		ec->renderer->repaint_output(base, damage);
+		/* Update the damage region. */
+		pixman_region32_subtract(&ec->primary_plane.damage,
+	                         &ec->primary_plane.damage, damage);
+
+		wl_event_source_timer_update(output->finish_frame_timer,
+	                             1000000 / output->mode.refresh);
+	}
+}
+
 static int
 finish_frame_handler(void *data)
 {
@@ -256,8 +263,15 @@ calculate_pixman_format(struct fb_var_screeninfo *vinfo,
 		return 0;
 
 	/* We only handle true-colour frame buffers at the moment. */
-	if (finfo->visual != FB_VISUAL_TRUECOLOR || vinfo->grayscale != 0)
-		return 0;
+	switch(finfo->visual) {
+		case FB_VISUAL_TRUECOLOR:
+		case FB_VISUAL_DIRECTCOLOR:
+			if (vinfo->grayscale != 0)
+				return 0;
+		break;
+		default:
+			return 0;
+	}
 
 	/* We only support formats with MSBs on the left. */
 	if (vinfo->red.msb_right != 0 || vinfo->green.msb_right != 0 ||
@@ -505,10 +519,11 @@ fbdev_output_create(struct fbdev_compositor *compositor,
 		weston_log("Creating frame buffer failed.\n");
 		goto out_free;
 	}
-
-	if (fbdev_frame_buffer_map(output, fb_fd) < 0) {
-		weston_log("Mapping frame buffer failed.\n");
-		goto out_free;
+	if (compositor->use_pixman) {
+		if (fbdev_frame_buffer_map(output, fb_fd) < 0) {
+			weston_log("Mapping frame buffer failed.\n");
+			goto out_free;
+		}
 	}
 
 	output->base.start_repaint_loop = fbdev_output_start_repaint_loop;
@@ -528,8 +543,7 @@ fbdev_output_create(struct fbdev_compositor *compositor,
 	wl_list_init(&output->base.mode_list);
 	wl_list_insert(&output->base.mode_list, &output->mode.link);
 
-	output->base.current = &output->mode;
-	output->base.origin = &output->mode;
+	output->base.current_mode = &output->mode;
 	output->base.subpixel = WL_OUTPUT_SUBPIXEL_UNKNOWN;
 	output->base.make = "unknown";
 	output->base.model = output->fb_info.id;
@@ -537,7 +551,8 @@ fbdev_output_create(struct fbdev_compositor *compositor,
 	weston_output_init(&output->base, &compositor->base,
 	                   0, 0, output->fb_info.width_mm,
 	                   output->fb_info.height_mm,
-	                   WL_OUTPUT_TRANSFORM_NORMAL);
+	                   WL_OUTPUT_TRANSFORM_NORMAL,
+			   1);
 
 	width = output->fb_info.x_resolution;
 	height = output->fb_info.y_resolution;
@@ -601,8 +616,18 @@ fbdev_output_create(struct fbdev_compositor *compositor,
 	if (output->base.transform != WL_OUTPUT_TRANSFORM_NORMAL)
 		pixman_image_set_transform(output->shadow_surface, &transform);
 
-	if (pixman_renderer_output_create(&output->base) < 0)
-		goto out_shadow_surface;
+	if (compositor->use_pixman) {
+		if (pixman_renderer_output_create(&output->base) < 0)
+			goto out_shadow_surface;
+	} else {
+		setenv("HYBRIS_EGLPLATFORM", "wayland", 1);
+		if (gl_renderer_output_create(&output->base,
+					(EGLNativeWindowType)NULL) < 0) {
+			weston_log("gl_renderer_output_create failed.\n");
+			goto out_shadow_surface;
+		}
+	}
+
 
 	loop = wl_display_get_event_loop(compositor->base.wl_display);
 	output->finish_frame_timer =
@@ -636,23 +661,28 @@ static void
 fbdev_output_destroy(struct weston_output *base)
 {
 	struct fbdev_output *output = to_fbdev_output(base);
+	struct fbdev_compositor *compositor = output->compositor;
 
 	weston_log("Destroying fbdev output.\n");
 
 	/* Close the frame buffer. */
 	fbdev_output_disable(base);
 
-	if (base->renderer_state != NULL)
-		pixman_renderer_output_destroy(base);
+	if (compositor->use_pixman) {
+		if (base->renderer_state != NULL)
+			pixman_renderer_output_destroy(base);
 
-	if (output->shadow_surface != NULL) {
-		pixman_image_unref(output->shadow_surface);
-		output->shadow_surface = NULL;
-	}
+		if (output->shadow_surface != NULL) {
+			pixman_image_unref(output->shadow_surface);
+			output->shadow_surface = NULL;
+		}
 
-	if (output->shadow_buf != NULL) {
-		free(output->shadow_buf);
-		output->shadow_buf = NULL;
+		if (output->shadow_buf != NULL) {
+			free(output->shadow_buf);
+			output->shadow_buf = NULL;
+		}
+	} else {
+		gl_renderer_output_destroy(base);
 	}
 
 	/* Remove the output. */
@@ -686,6 +716,7 @@ fbdev_output_reenable(struct fbdev_compositor *compositor,
 	struct fbdev_output *output = to_fbdev_output(base);
 	struct fbdev_screeninfo new_screen_info;
 	int fb_fd;
+	const char *device;
 
 	weston_log("Re-enabling fbdev output.\n");
 
@@ -707,19 +738,24 @@ fbdev_output_reenable(struct fbdev_compositor *compositor,
 			           "Attempting to re-open output anyway.\n");
 		}
 
+		close(fb_fd);
+
 		/* Remove and re-add the output so that resources depending on
 		 * the frame buffer X/Y resolution (such as the shadow buffer)
 		 * are re-initialised. */
+		device = output->device;
 		fbdev_output_destroy(base);
-		fbdev_output_create(compositor, output->device);
+		fbdev_output_create(compositor, device);
 
 		return 0;
 	}
 
 	/* Map the device if it has the same details as before. */
-	if (fbdev_frame_buffer_map(output, fb_fd) < 0) {
-		weston_log("Mapping frame buffer failed.\n");
-		goto err;
+	if (compositor->use_pixman) {
+		if (fbdev_frame_buffer_map(output, fb_fd) < 0) {
+			weston_log("Mapping frame buffer failed.\n");
+			goto err;
+		}
 	}
 
 	return 0;
@@ -735,8 +771,11 @@ static void
 fbdev_output_disable(struct weston_output *base)
 {
 	struct fbdev_output *output = to_fbdev_output(base);
+	struct fbdev_compositor *compositor = output->compositor;
 
 	weston_log("Disabling fbdev output.\n");
+
+	if ( ! compositor->use_pixman) return;
 
 	if (output->hw_surface != NULL) {
 		pixman_image_unref(output->hw_surface);
@@ -750,31 +789,26 @@ static void
 fbdev_compositor_destroy(struct weston_compositor *base)
 {
 	struct fbdev_compositor *compositor = to_fbdev_compositor(base);
-	struct udev_seat *seat, *next;
 
-	/* Destroy all inputs. */
-	wl_list_for_each_safe(seat, next, &compositor->base.seat_list, base.link)
-		udev_seat_destroy(seat);
+	udev_input_destroy(&compositor->input);
 
 	/* Destroy the output. */
 	weston_compositor_shutdown(&compositor->base);
 
 	/* Chain up. */
 	compositor->base.renderer->destroy(&compositor->base);
-	tty_destroy(compositor->tty);
+	weston_launcher_destroy(compositor->base.launcher);
 
 	free(compositor);
 }
 
 static void
-vt_func(struct weston_compositor *base, int event)
+session_notify(struct wl_listener *listener, void *data)
 {
-	struct fbdev_compositor *compositor = to_fbdev_compositor(base);
-	struct udev_seat *seat;
+	struct fbdev_compositor *compositor = data;
 	struct weston_output *output;
 
-	switch (event) {
-	case TTY_ENTER_VT:
+	if (compositor->base.session_active) {
 		weston_log("entering VT\n");
 		compositor->base.focus = 1;
 		compositor->base.state = compositor->prev_state;
@@ -785,13 +819,10 @@ vt_func(struct weston_compositor *base, int event)
 
 		weston_compositor_damage_all(&compositor->base);
 
-		wl_list_for_each(seat, &compositor->base.seat_list, base.link)
-			udev_seat_enable(seat, compositor->udev);
-		break;
-	case TTY_LEAVE_VT:
+		udev_input_enable(&compositor->input, compositor->udev);
+	} else {
 		weston_log("leaving VT\n");
-		wl_list_for_each(seat, &compositor->base.seat_list, base.link)
-			udev_seat_disable(seat);
+		udev_input_disable(&compositor->input);
 
 		wl_list_for_each(output, &compositor->base.output_list, link) {
 			fbdev_output_disable(output);
@@ -812,33 +843,30 @@ vt_func(struct weston_compositor *base, int event)
 				 &compositor->base.output_list, link) {
 			output->repaint_needed = 0;
 		}
-
-		break;
 	};
 }
 
 static void
-fbdev_restore(struct weston_compositor *base)
+fbdev_restore(struct weston_compositor *compositor)
 {
-	struct fbdev_compositor *compositor = to_fbdev_compositor(base);
-
-	tty_reset(compositor->tty);
+	weston_launcher_restore(compositor->launcher);
 }
 
 static void
-switch_vt_binding(struct wl_seat *seat, uint32_t time, uint32_t key, void *data)
+switch_vt_binding(struct weston_seat *seat, uint32_t time, uint32_t key, void *data)
 {
-	struct fbdev_compositor *ec = data;
+	struct weston_compositor *compositor = data;
 
-	tty_activate_vt(ec->tty, key - KEY_F1 + 1);
+	weston_launcher_activate_vt(compositor->launcher, key - KEY_F1 + 1);
 }
 
 static struct weston_compositor *
 fbdev_compositor_create(struct wl_display *display, int *argc, char *argv[],
-                        const char *config_file, struct fbdev_parameters *param)
+                        struct weston_config *config,
+			struct fbdev_parameters *param)
 {
 	struct fbdev_compositor *compositor;
-	const char *seat = default_seat;
+	const char *seat_id = default_seat;
 	uint32_t key;
 
 	weston_log("initializing fbdev backend\n");
@@ -848,8 +876,17 @@ fbdev_compositor_create(struct wl_display *display, int *argc, char *argv[],
 		return NULL;
 
 	if (weston_compositor_init(&compositor->base, display, argc, argv,
-	                           config_file) < 0)
+	                           config) < 0)
 		goto out_free;
+
+	/* Check if we run fbdev-backend using weston-launch */
+	compositor->base.launcher =
+		weston_launcher_connect(&compositor->base, param->tty);
+	if (compositor->base.launcher == NULL && geteuid() != 0) {
+		weston_log("fatal: fbdev backend should be run "
+			   "using weston-launch binary or as root\n");
+		goto out_compositor;
+	}
 
 	compositor->udev = udev_new();
 	if (compositor->udev == NULL) {
@@ -858,9 +895,13 @@ fbdev_compositor_create(struct wl_display *display, int *argc, char *argv[],
 	}
 
 	/* Set up the TTY. */
-	compositor->tty = tty_create(&compositor->base, vt_func, param->tty);
-	if (!compositor->tty) {
-		weston_log("Failed to initialize tty.\n");
+	compositor->session_listener.notify = session_notify;
+	wl_signal_add(&compositor->base.session_signal,
+		      &compositor->session_listener);
+	compositor->base.launcher =
+		weston_launcher_connect(&compositor->base, param->tty);
+	if (!compositor->base.launcher) {
+		weston_log("Failed to set up launcher.\n");
 		goto out_udev;
 	}
 
@@ -869,28 +910,36 @@ fbdev_compositor_create(struct wl_display *display, int *argc, char *argv[],
 
 	compositor->base.focus = 1;
 	compositor->prev_state = WESTON_COMPOSITOR_ACTIVE;
+	compositor->use_pixman = !param->use_gl;
 
 	for (key = KEY_F1; key < KEY_F9; key++)
 		weston_compositor_add_key_binding(&compositor->base, key,
 		                                  MODIFIER_CTRL | MODIFIER_ALT,
 		                                  switch_vt_binding,
 		                                  compositor);
-
-	if (pixman_renderer_init(&compositor->base) < 0)
-		goto out_tty;
+	if (compositor->use_pixman) {
+		if (pixman_renderer_init(&compositor->base) < 0)
+			goto out_launcher;
+	} else {
+		if (gl_renderer_create(&compositor->base, EGL_DEFAULT_DISPLAY,
+			gl_renderer_opaque_attribs, NULL) < 0) {
+			weston_log("gl_renderer_create failed.\n");
+			goto out_launcher;
+		}
+	}
 
 	if (fbdev_output_create(compositor, param->device) < 0)
 		goto out_pixman;
 
-	udev_seat_create(&compositor->base, compositor->udev, seat);
+	udev_input_init(&compositor->input, &compositor->base, compositor->udev, seat_id);
 
 	return &compositor->base;
 
 out_pixman:
 	compositor->base.renderer->destroy(&compositor->base);
 
-out_tty:
-	tty_destroy(compositor->tty);
+out_launcher:
+	weston_launcher_destroy(compositor->base.launcher);
 
 out_udev:
 	udev_unref(compositor->udev);
@@ -906,22 +955,23 @@ out_free:
 
 WL_EXPORT struct weston_compositor *
 backend_init(struct wl_display *display, int *argc, char *argv[],
-	     const char *config_file)
+	     struct weston_config *config)
 {
 	/* TODO: Ideally, available frame buffers should be enumerated using
 	 * udev, rather than passing a device node in as a parameter. */
 	struct fbdev_parameters param = {
 		.tty = 0, /* default to current tty */
 		.device = "/dev/fb0", /* default frame buffer */
+		.use_gl = 0,
 	};
 
 	const struct weston_option fbdev_options[] = {
 		{ WESTON_OPTION_INTEGER, "tty", 0, &param.tty },
 		{ WESTON_OPTION_STRING, "device", 0, &param.device },
+		{ WESTON_OPTION_BOOLEAN, "use-gl", 0, &param.use_gl },
 	};
 
 	parse_options(fbdev_options, ARRAY_LENGTH(fbdev_options), argc, argv);
 
-	return fbdev_compositor_create(display, argc, argv, config_file,
-	                               &param);
+	return fbdev_compositor_create(display, argc, argv, config, &param);
 }

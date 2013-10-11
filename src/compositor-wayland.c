@@ -20,12 +20,9 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifdef HAVE_CONFIG_H
-#include <config.h>
-#endif
+#include "config.h"
 
 #include <stddef.h>
-#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -100,7 +97,7 @@ create_border(struct wayland_compositor *c)
 
 	image = load_image(DATADIR "/weston/border.png");
 	if (!image) {
-		weston_log("could'nt load border image\n");
+		weston_log("couldn't load border image\n");
 		return;
 	}
 
@@ -252,10 +249,9 @@ wayland_compositor_create_output(struct wayland_compositor *c,
 {
 	struct wayland_output *output;
 
-	output = malloc(sizeof *output);
+	output = zalloc(sizeof *output);
 	if (output == NULL)
 		return -1;
-	memset(output, 0, sizeof *output);
 
 	output->mode.flags =
 		WL_OUTPUT_MODE_CURRENT | WL_OUTPUT_MODE_PREFERRED;
@@ -265,9 +261,9 @@ wayland_compositor_create_output(struct wayland_compositor *c,
 	wl_list_init(&output->base.mode_list);
 	wl_list_insert(&output->base.mode_list, &output->mode.link);
 
-	output->base.current = &output->mode;
+	output->base.current_mode = &output->mode;
 	weston_output_init(&output->base, &c->base, 0, 0, width, height,
-						WL_OUTPUT_TRANSFORM_NORMAL);
+			   WL_OUTPUT_TRANSFORM_NORMAL, 1);
 
 	output->base.make = "waywayland";
 	output->base.model = "none";
@@ -299,7 +295,6 @@ wayland_compositor_create_output(struct wayland_compositor *c,
 				      &shell_surface_listener, output);
 	wl_shell_surface_set_toplevel(output->parent.shell_surface);
 
-	output->base.origin = output->base.current;
 	output->base.start_repaint_loop = wayland_output_start_repaint_loop;
 	output->base.repaint = wayland_output_repaint;
 	output->base.destroy = wayland_output_destroy;
@@ -451,9 +446,9 @@ input_handle_motion(void *data, struct wl_pointer *pointer,
 	if (input->focus)
 		notify_motion(&input->base, time,
 			      x - wl_fixed_from_int(c->border.left) -
-			      input->base.seat.pointer->x,
+			      input->base.pointer->x,
 			      y - wl_fixed_from_int(c->border.top) -
-			      input->base.seat.pointer->y);
+			      input->base.pointer->y);
 }
 
 static void
@@ -632,13 +627,11 @@ display_add_seat(struct wayland_compositor *c, uint32_t id)
 {
 	struct wayland_input *input;
 
-	input = malloc(sizeof *input);
+	input = zalloc(sizeof *input);
 	if (input == NULL)
 		return;
 
-	memset(input, 0, sizeof *input);
-
-	weston_seat_init(&input->base, &c->base);
+	weston_seat_init(&input->base, &c->base, "default");
 	input->compositor = c;
 	input->seat = wl_registry_bind(c->parent.registry, id,
 				       &wl_seat_interface, 1);
@@ -721,20 +714,19 @@ wayland_destroy(struct weston_compositor *ec)
 static struct weston_compositor *
 wayland_compositor_create(struct wl_display *display,
 			  int width, int height, const char *display_name,
-			  int *argc, char *argv[], const char *config_file)
+			  int *argc, char *argv[],
+			  struct weston_config *config)
 {
 	struct wayland_compositor *c;
 	struct wl_event_loop *loop;
 	int fd;
 
-	c = malloc(sizeof *c);
+	c = zalloc(sizeof *c);
 	if (c == NULL)
 		return NULL;
 
-	memset(c, 0, sizeof *c);
-
 	if (weston_compositor_init(&c->base, display, argc, argv,
-				   config_file) < 0)
+				   config) < 0)
 		goto err_free;
 
 	c->parent.wl_display = wl_display_connect(display_name);
@@ -797,7 +789,7 @@ err_free:
 
 WL_EXPORT struct weston_compositor *
 backend_init(struct wl_display *display, int *argc, char *argv[],
-	     const char *config_file)
+	     struct weston_config *config)
 {
 	int width = 1024, height = 640;
 	char *display_name = NULL;
@@ -812,5 +804,5 @@ backend_init(struct wl_display *display, int *argc, char *argv[],
 		      ARRAY_LENGTH(wayland_options), argc, argv);
 
 	return wayland_compositor_create(display, width, height, display_name,
-					 argc, argv, config_file);
+					 argc, argv, config);
 }

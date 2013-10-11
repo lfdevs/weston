@@ -247,11 +247,7 @@ clickdot_create(struct display *display)
 {
 	struct clickdot *clickdot;
 
-	clickdot = malloc(sizeof *clickdot);
-	if (clickdot == NULL)
-		return clickdot;
-	memset(clickdot, 0, sizeof *clickdot);
-
+	clickdot = xzalloc(sizeof *clickdot);
 	clickdot->window = window_create(display);
 	clickdot->widget = frame_create(clickdot->window, clickdot);
 	window_set_title(clickdot->window, "Wayland ClickDot");

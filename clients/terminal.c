@@ -20,6 +20,8 @@
  * OF THIS SOFTWARE.
  */
 
+#include <config.h>
+
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -33,6 +35,8 @@
 #include <ctype.h>
 #include <cairo.h>
 #include <sys/epoll.h>
+#include <wchar.h>
+#include <locale.h>
 
 #include <wayland-client.h>
 
@@ -40,9 +44,9 @@
 #include "window.h"
 
 static int option_fullscreen;
-static char *option_font = "mono";
-static int option_font_size = 14;
-static char *option_term = "xterm";
+static char *option_font;
+static int option_font_size;
+static char *option_term;
 static char *option_shell;
 
 static struct wl_list terminal_list;
@@ -53,6 +57,16 @@ static void
 terminal_destroy(struct terminal *terminal);
 static int
 terminal_run(struct terminal *terminal, const char *path);
+
+#define TERMINAL_DRAW_SINGLE_WIDE_CHARACTERS    \
+    " !\"#$%&'()*+,-./"                         \
+    "0123456789"                                \
+    ":;<=>?@"                                   \
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"                \
+    "[\\]^_`"                                   \
+    "abcdefghijklmnopqrstuvwxyz"                \
+    "{|}~"                                      \
+    ""
 
 #define MOD_SHIFT	0x01
 #define MOD_ALT		0x02
@@ -96,6 +110,7 @@ struct utf8_state_machine {
 	enum utf8_state state;
 	int len;
 	union utf8_char s;
+	uint32_t unicode;
 };
 
 static void
@@ -122,6 +137,7 @@ utf8_next_char(struct utf8_state_machine *machine, unsigned char c)
 			/* single byte, accept */
 			machine->s.byte[machine->len++] = c;
 			machine->state = utf8state_accept;
+			machine->unicode = c;
 		} else if((c & 0xC0) == 0x80) {
 			/* parser out of sync, ignore byte */
 			machine->state = utf8state_start;
@@ -129,14 +145,17 @@ utf8_next_char(struct utf8_state_machine *machine, unsigned char c)
 			/* start of two byte sequence */
 			machine->s.byte[machine->len++] = c;
 			machine->state = utf8state_expect1;
+			machine->unicode = c & 0x1f;
 		} else if((c & 0xF0) == 0xE0) {
 			/* start of three byte sequence */
 			machine->s.byte[machine->len++] = c;
 			machine->state = utf8state_expect2;
+			machine->unicode = c & 0x0f;
 		} else if((c & 0xF8) == 0xF0) {
 			/* start of four byte sequence */
 			machine->s.byte[machine->len++] = c;
 			machine->state = utf8state_expect3;
+			machine->unicode = c & 0x07;
 		} else {
 			/* overlong encoding, reject */
 			machine->state = utf8state_reject;
@@ -144,6 +163,7 @@ utf8_next_char(struct utf8_state_machine *machine, unsigned char c)
 		break;
 	case utf8state_expect3:
 		machine->s.byte[machine->len++] = c;
+		machine->unicode = (machine->unicode << 6) | (c & 0x3f);
 		if((c & 0xC0) == 0x80) {
 			/* all good, continue */
 			machine->state = utf8state_expect2;
@@ -154,6 +174,7 @@ utf8_next_char(struct utf8_state_machine *machine, unsigned char c)
 		break;
 	case utf8state_expect2:
 		machine->s.byte[machine->len++] = c;
+		machine->unicode = (machine->unicode << 6) | (c & 0x3f);
 		if((c & 0xC0) == 0x80) {
 			/* all good, continue */
 			machine->state = utf8state_expect1;
@@ -164,6 +185,7 @@ utf8_next_char(struct utf8_state_machine *machine, unsigned char c)
 		break;
 	case utf8state_expect1:
 		machine->s.byte[machine->len++] = c;
+		machine->unicode = (machine->unicode << 6) | (c & 0x3f);
 		if((c & 0xC0) == 0x80) {
 			/* all good, accept */
 			machine->state = utf8state_accept;
@@ -178,6 +200,33 @@ utf8_next_char(struct utf8_state_machine *machine, unsigned char c)
 	}
 	
 	return machine->state;
+}
+
+static uint32_t
+get_unicode(union utf8_char utf8)
+{
+	struct utf8_state_machine machine;
+	int i;
+
+	init_state_machine(&machine);
+	for (i = 0; i < 4; i++) {
+		utf8_next_char(&machine, utf8.byte[i]);
+		if (machine.state == utf8state_accept ||
+		    machine.state == utf8state_reject)
+			break;
+	}
+
+	if (machine.state == utf8state_reject)
+		return 0xfffd;
+
+	return machine.unicode;
+}
+
+static bool
+is_wide(union utf8_char utf8)
+{
+	uint32_t unichar = get_unicode(utf8);
+	return wcwidth(unichar) > 1;
 }
 
 struct char_sub {
@@ -407,6 +456,7 @@ struct terminal {
 	struct color_scheme *color_scheme;
 	struct terminal_color color_table[256];
 	cairo_font_extents_t extents;
+	double average_width;
 	cairo_scaled_font_t *font_normal, *font_bold;
 	uint32_t hide_cursor_serial;
 
@@ -699,12 +749,10 @@ terminal_resize_cells(struct terminal *terminal, int width, int height)
 
 	data_pitch = width * sizeof(union utf8_char);
 	size = data_pitch * height;
-	data = malloc(size);
+	data = zalloc(size);
 	attr_pitch = width * sizeof(struct attr);
 	data_attr = malloc(attr_pitch * height);
-	tab_ruler = malloc(width);
-	memset(data, 0, size);
-	memset(tab_ruler, 0, width);
+	tab_ruler = zalloc(width);
 	attr_init(data_attr, terminal->curr_attr, width * height);
 	if (terminal->data && terminal->data_attr) {
 		if (width > terminal->width)
@@ -714,6 +762,11 @@ terminal_resize_cells(struct terminal *terminal, int width, int height)
 
 		if (terminal->height > height) {
 			total_rows = height;
+			i = 1 + terminal->row - height;
+			if (i > 0) {
+			    terminal->start = (terminal->start + i) % terminal->height;
+			    terminal->row = terminal->row - i;
+			}
 		} else {
 			total_rows = terminal->height;
 		}
@@ -741,6 +794,7 @@ terminal_resize_cells(struct terminal *terminal, int width, int height)
 	terminal->data = data;
 	terminal->data_attr = data_attr;
 	terminal->tab_ruler = tab_ruler;
+	terminal->start = 0;
 	terminal_init_tabs(terminal);
 
 	/* Update the window size */
@@ -760,12 +814,12 @@ resize_handler(struct widget *widget,
 	int32_t columns, rows, m;
 
 	m = 2 * terminal->margin;
-	columns = (width - m) / (int32_t) terminal->extents.max_x_advance;
+	columns = (width - m) / (int32_t) terminal->average_width;
 	rows = (height - m) / (int32_t) terminal->extents.height;
 
 	if (!window_is_fullscreen(terminal->window) &&
 	    !window_is_maximized(terminal->window)) {
-		width = columns * terminal->extents.max_x_advance + m;
+		width = columns * terminal->average_width + m;
 		height = rows * terminal->extents.height + m;
 		widget_set_size(terminal->widget, width, height);
 	}
@@ -783,7 +837,7 @@ terminal_resize(struct terminal *terminal, int columns, int rows)
 		return;
 
 	m = 2 * terminal->margin;
-	width = columns * terminal->extents.max_x_advance + m;
+	width = columns * terminal->average_width + m;
 	height = rows * terminal->extents.height + m;
 
 	frame_set_child_size(terminal->widget, width, height);
@@ -832,9 +886,15 @@ terminal_send_selection(struct terminal *terminal, int fd)
 	int len;
 
 	fp = fdopen(fd, "w");
+	if (fp == NULL){
+		close(fd);
+		return;
+	}
 	for (row = 0; row < terminal->height; row++) {
 		p_row = terminal_get_row(terminal, row);
 		for (col = 0; col < terminal->width; col++) {
+			if (p_row[col].ch == 0x200B) /* space glyph */
+				continue;
 			/* get the attributes for this character cell */
 			terminal_decode_attr(terminal, row, col, &attr);
 			if (!attr.attr.s)
@@ -930,10 +990,12 @@ redraw_handler(struct widget *widget, void *data)
 	double d;
 	struct glyph_run run;
 	cairo_font_extents_t extents;
+	double average_width;
+	double unichar_width;
 
 	surface = window_get_surface(terminal->window);
 	widget_get_allocation(terminal->widget, &allocation);
-	cr = cairo_create(surface);
+	cr = widget_cairo_create(terminal->widget);
 	cairo_rectangle(cr, allocation.x, allocation.y,
 			allocation.width, allocation.height);
 	cairo_clip(cr);
@@ -946,7 +1008,8 @@ redraw_handler(struct widget *widget, void *data)
 	cairo_set_scaled_font(cr, terminal->font_normal);
 
 	extents = terminal->extents;
-	side_margin = (allocation.width - terminal->width * extents.max_x_advance) / 2;
+	average_width = terminal->average_width;
+	side_margin = (allocation.width - terminal->width * average_width) / 2;
 	top_margin = (allocation.height - terminal->height * extents.height) / 2;
 
 	cairo_set_line_width(cr, 1.0);
@@ -954,6 +1017,7 @@ redraw_handler(struct widget *widget, void *data)
 			allocation.y + top_margin);
 	/* paint the background */
 	for (row = 0; row < terminal->height; row++) {
+		p_row = terminal_get_row(terminal, row);
 		for (col = 0; col < terminal->width; col++) {
 			/* get the attributes for this character cell */
 			terminal_decode_attr(terminal, row, col, &attr);
@@ -961,12 +1025,17 @@ redraw_handler(struct widget *widget, void *data)
 			if (attr.attr.bg == terminal->color_scheme->border)
 				continue;
 
+			if (is_wide(p_row[col]))
+				unichar_width = 2 * average_width;
+			else
+				unichar_width = average_width;
+
 			terminal_set_color(terminal, cr, attr.attr.bg);
-			cairo_move_to(cr, col * extents.max_x_advance,
+			cairo_move_to(cr, col * average_width,
 				      row * extents.height);
-			cairo_rel_line_to(cr, extents.max_x_advance, 0);
+			cairo_rel_line_to(cr, unichar_width, 0);
 			cairo_rel_line_to(cr, 0, extents.height);
-			cairo_rel_line_to(cr, -extents.max_x_advance, 0);
+			cairo_rel_line_to(cr, -unichar_width, 0);
 			cairo_close_path(cr);
 			cairo_fill(cr);
 		}
@@ -984,12 +1053,12 @@ redraw_handler(struct widget *widget, void *data)
 
 			glyph_run_flush(&run, attr);
 
-			text_x = col * extents.max_x_advance;
+			text_x = col * average_width;
 			text_y = extents.ascent + row * extents.height;
 			if (attr.attr.a & ATTRMASK_UNDERLINE) {
 				terminal_set_color(terminal, cr, attr.attr.fg);
 				cairo_move_to(cr, text_x, (double)text_y + 1.5);
-				cairo_line_to(cr, text_x + extents.max_x_advance, (double) text_y + 1.5);
+				cairo_line_to(cr, text_x + average_width, (double) text_y + 1.5);
 				cairo_stroke(cr);
 			}
 
@@ -1005,11 +1074,11 @@ redraw_handler(struct widget *widget, void *data)
 		d = 0.5;
 
 		cairo_set_line_width(cr, 1);
-		cairo_move_to(cr, terminal->column * extents.max_x_advance + d,
+		cairo_move_to(cr, terminal->column * average_width + d,
 			      terminal->row * extents.height + d);
-		cairo_rel_line_to(cr, extents.max_x_advance - 2 * d, 0);
+		cairo_rel_line_to(cr, average_width - 2 * d, 0);
 		cairo_rel_line_to(cr, 0, extents.height - 2 * d);
-		cairo_rel_line_to(cr, -extents.max_x_advance + 2 * d, 0);
+		cairo_rel_line_to(cr, -average_width + 2 * d, 0);
 		cairo_close_path(cr);
 
 		cairo_stroke(cr);
@@ -1022,7 +1091,7 @@ redraw_handler(struct widget *widget, void *data)
 
 	if (terminal->send_cursor_position) {
 		cursor_x = side_margin + allocation.x +
-				terminal->column * extents.max_x_advance;
+				terminal->column * average_width;
 		cursor_y = top_margin + allocation.y +
 				terminal->row * extents.height;
 		window_set_text_cursor_position(terminal->window,
@@ -1165,8 +1234,11 @@ handle_osc(struct terminal *terminal)
 	case 2: /* Window title*/
 		window_set_title(terminal->window, p);
 		break;
+	case 7: /* shell cwd as uri */
+		break;
 	default:
-		fprintf(stderr, "Unknown OSC escape code %d\n", code);
+		fprintf(stderr, "Unknown OSC escape code %d, text %s\n",
+			code, p);
 		break;
 	}
 }
@@ -1858,6 +1930,10 @@ handle_char(struct terminal *terminal, union utf8_char utf8)
 	row[terminal->column] = utf8;
 	attr_row[terminal->column++] = terminal->curr_attr;
 
+	/* cursor jump for wide character. */
+	if (is_wide(utf8))
+		row[terminal->column++].ch = 0x200B; /* space glyph */
+
 	if (utf8.ch != terminal->last_char.ch)
 		terminal->last_char = utf8;
 }
@@ -2060,6 +2136,37 @@ static const struct wl_data_source_listener data_source_listener = {
 	data_source_send,
 	data_source_cancelled
 };
+
+static const char text_mime_type[] = "text/plain;charset=utf-8";
+
+static void
+data_handler(struct window *window,
+	     struct input *input,
+	     float x, float y, const char **types, void *data)
+{
+	int i, has_text = 0;
+
+	if (!types)
+		return;
+	for (i = 0; types[i]; i++)
+		if (strcmp(types[i], text_mime_type) == 0)
+			has_text = 1;
+
+	if (!has_text) {
+		input_accept(input, NULL);
+	} else {
+		input_accept(input, text_mime_type);
+	}
+}
+
+static void
+drop_handler(struct window *window, struct input *input,
+	     int32_t x, int32_t y, void *data)
+{
+	struct terminal *terminal = data;
+
+	input_receive_drag_data_to_fd(input, text_mime_type, terminal->master);
+}
 
 static void
 fullscreen_handler(struct window *window, void *data)
@@ -2371,7 +2478,7 @@ recompute_selection(struct terminal *terminal)
 	int cw, ch;
 	union utf8_char *data;
 
-	cw = terminal->extents.max_x_advance;
+	cw = terminal->average_width;
 	ch = terminal->extents.height;
 	widget_get_allocation(terminal->widget, &allocation);
 	width = terminal->width * cw;
@@ -2517,18 +2624,29 @@ motion_handler(struct widget *widget,
 	return CURSOR_IBEAM;
 }
 
+static void
+output_handler(struct window *window, struct output *output, int enter,
+	       void *data)
+{
+	if (enter)
+		window_set_buffer_transform(window, output_get_transform(output));
+	window_set_buffer_scale(window, window_get_output_scale(window));
+	window_schedule_redraw(window);
+}
+
+#ifndef howmany
+#define howmany(x, y) (((x) + ((y) - 1)) / (y))
+#endif
+
 static struct terminal *
 terminal_create(struct display *display)
 {
 	struct terminal *terminal;
 	cairo_surface_t *surface;
 	cairo_t *cr;
+	cairo_text_extents_t text_extents;
 
-	terminal = malloc(sizeof *terminal);
-	if (terminal == NULL)
-		return terminal;
-
-	memset(terminal, 0, sizeof *terminal);
+	terminal = xzalloc(sizeof *terminal);
 	terminal->color_scheme = &DEFAULT_COLORS;
 	terminal_init(terminal);
 	terminal->margin_top = 0;
@@ -2549,7 +2667,11 @@ terminal_create(struct display *display)
 	window_set_keyboard_focus_handler(terminal->window,
 					  keyboard_focus_handler);
 	window_set_fullscreen_handler(terminal->window, fullscreen_handler);
+	window_set_output_handler(terminal->window, output_handler);
 	window_set_close_handler(terminal->window, close_handler);
+
+	window_set_data_handler(terminal->window, data_handler);
+	window_set_drop_handler(terminal->window, drop_handler);
 
 	widget_set_redraw_handler(terminal->widget, redraw_handler);
 	widget_set_resize_handler(terminal->widget, resize_handler);
@@ -2573,6 +2695,15 @@ terminal_create(struct display *display)
 	cairo_scaled_font_reference(terminal->font_normal);
 
 	cairo_font_extents(cr, &terminal->extents);
+
+	/* Compute the average ascii glyph width */
+	cairo_text_extents(cr, TERMINAL_DRAW_SINGLE_WIDE_CHARACTERS,
+			   &text_extents);
+	terminal->average_width = howmany
+		(text_extents.width,
+		 strlen(TERMINAL_DRAW_SINGLE_WIDE_CHARACTERS));
+	terminal->average_width = ceil(terminal->average_width);
+
 	cairo_destroy(cr);
 	cairo_surface_destroy(surface);
 
@@ -2650,17 +2781,6 @@ terminal_run(struct terminal *terminal, const char *path)
 	return 0;
 }
 
-static const struct config_key terminal_config_keys[] = {
-	{ "font", CONFIG_KEY_STRING, &option_font },
-	{ "font-size", CONFIG_KEY_INTEGER, &option_font_size },
-	{ "term", CONFIG_KEY_STRING, &option_term },
-};
-
-static const struct config_section config_sections[] = {
-	{ "terminal",
-	  terminal_config_keys, ARRAY_LENGTH(terminal_config_keys) },
-};
-
 static const struct weston_option terminal_options[] = {
 	{ WESTON_OPTION_BOOLEAN, "fullscreen", 'f', &option_fullscreen },
 	{ WESTON_OPTION_STRING, "font", 0, &option_font },
@@ -2671,20 +2791,23 @@ int main(int argc, char *argv[])
 {
 	struct display *d;
 	struct terminal *terminal;
-	char *config_file;
+	struct weston_config *config;
+	struct weston_config_section *s;
+
+	/* as wcwidth is locale-dependent,
+	   wcwidth needs setlocale call to function properly. */
+	setlocale(LC_ALL, "");
 
 	option_shell = getenv("SHELL");
 	if (!option_shell)
 		option_shell = "/bin/bash";
 
-	config_file = config_file_path("weston.ini");
-	parse_config_file(config_file,
-			  config_sections, ARRAY_LENGTH(config_sections),
-			  NULL);
-	free(config_file);
-
-	parse_options(terminal_options,
-		      ARRAY_LENGTH(terminal_options), &argc, argv);
+	config = weston_config_parse("weston.ini");
+	s = weston_config_get_section(config, "terminal", NULL, NULL);
+	weston_config_section_get_string(s, "font", &option_font, "mono");
+	weston_config_section_get_int(s, "font-size", &option_font_size, 14);
+	weston_config_section_get_string(s, "term", &option_term, "xterm");
+	weston_config_destroy(config);
 
 	d = display_create(&argc, argv);
 	if (d == NULL) {

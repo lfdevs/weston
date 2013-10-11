@@ -20,14 +20,13 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#define _GNU_SOURCE
-
 #include "config.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <poll.h>
 #include <errno.h>
 
 #include <error.h>
@@ -38,15 +37,14 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <sys/socket.h>
-#include <sys/epoll.h>
 #include <sys/signalfd.h>
 #include <signal.h>
 #include <unistd.h>
 #include <fcntl.h>
 
-#include <termios.h>
 #include <linux/vt.h>
 #include <linux/major.h>
+#include <linux/kd.h>
 
 #include <pwd.h>
 #include <grp.h>
@@ -60,19 +58,29 @@
 
 #include "weston-launch.h"
 
+#define DRM_MAJOR 226
+
+#ifndef KDSKBMUTE
+#define KDSKBMUTE	0x4B51
+#endif
+
+#define MAX_ARGV_SIZE 256
+
 struct weston_launch {
 	struct pam_conv pc;
 	pam_handle_t *ph;
 	int tty;
 	int ttynr;
 	int sock[2];
+	int drm_fd;
+	int kb_mode;
 	struct passwd *pw;
 
-	int epollfd;
 	int signalfd;
 
 	pid_t child;
 	int verbose;
+	char *new_user;
 };
 
 union cmsg_data { unsigned char b[4]; int fd; };
@@ -190,18 +198,11 @@ setup_pam(struct weston_launch *wl)
 static int
 setup_launcher_socket(struct weston_launch *wl)
 {
-	struct epoll_event ev;
-
-	if (socketpair(AF_LOCAL, SOCK_DGRAM, 0, wl->sock) < 0)
+	if (socketpair(AF_LOCAL, SOCK_SEQPACKET, 0, wl->sock) < 0)
 		error(1, errno, "socketpair failed");
 	
-	fcntl(wl->sock[0], F_SETFD, O_CLOEXEC);
-
-	memset(&ev, 0, sizeof ev);
-	ev.events = EPOLLIN;
-	ev.data.fd = wl->sock[0];
-	if (epoll_ctl(wl->epollfd, EPOLL_CTL_ADD, ev.data.fd, &ev) < 0)
-		return -errno;
+	if (fcntl(wl->sock[0], F_SETFD, FD_CLOEXEC) < 0)
+		error(1, errno, "fcntl failed");
 
 	return 0;
 }
@@ -212,7 +213,6 @@ setup_signals(struct weston_launch *wl)
 	int ret;
 	sigset_t mask;
 	struct sigaction sa;
-	struct epoll_event ev;
 
 	memset(&sa, 0, sizeof sa);
 	sa.sa_handler = SIG_DFL;
@@ -220,22 +220,22 @@ setup_signals(struct weston_launch *wl)
 	ret = sigaction(SIGCHLD, &sa, NULL);
 	assert(ret == 0);
 
+	sa.sa_handler = SIG_IGN;
+	sa.sa_flags = 0;
+	sigaction(SIGHUP, &sa, NULL);
+
 	ret = sigemptyset(&mask);
 	assert(ret == 0);
 	sigaddset(&mask, SIGCHLD);
 	sigaddset(&mask, SIGINT);
 	sigaddset(&mask, SIGTERM);
+	sigaddset(&mask, SIGUSR1);
+	sigaddset(&mask, SIGUSR2);
 	ret = sigprocmask(SIG_BLOCK, &mask, NULL);
 	assert(ret == 0);
 
 	wl->signalfd = signalfd(-1, &mask, SFD_NONBLOCK | SFD_CLOEXEC);
 	if (wl->signalfd < 0)
-		return -errno;
-
-	memset(&ev, 0, sizeof ev);
-	ev.events = EPOLLIN;
-	ev.data.fd = wl->signalfd;
-	if (epoll_ctl(wl->epollfd, EPOLL_CTL_ADD, ev.data.fd, &ev) < 0)
 		return -errno;
 
 	return 0;
@@ -251,48 +251,15 @@ setenv_fd(const char *env, int fd)
 }
 
 static int
-handle_setmaster(struct weston_launch *wl, struct msghdr *msg, ssize_t len)
+send_reply(struct weston_launch *wl, int reply)
 {
-	int ret = -1;
-	struct cmsghdr *cmsg;
-	struct weston_launcher_set_master *message;
-	union cmsg_data *data;
+	int len;
 
-	if (len != sizeof(*message)) {
-		error(0, 0, "missing value in setmaster request");
-		goto out;
-	}
-
-	message = msg->msg_iov->iov_base;
-
-	cmsg = CMSG_FIRSTHDR(msg);
-	if (!cmsg ||
-	    cmsg->cmsg_level != SOL_SOCKET ||
-	    cmsg->cmsg_type != SCM_RIGHTS) {
-		error(0, 0, "invalid control message");
-		goto out;
-	}
-
-	data = (union cmsg_data *) CMSG_DATA(cmsg);
-	if (data->fd == -1) {
-		error(0, 0, "missing drm fd in socket request");
-		goto out;
-	}
-
-	if (message->set_master)
-		ret = drmSetMaster(data->fd);
-	else
-		ret = drmDropMaster(data->fd);
-
-	close(data->fd);
-out:
 	do {
-		len = send(wl->sock[0], &ret, sizeof ret, 0);
+		len = send(wl->sock[0], &reply, sizeof reply, 0);
 	} while (len < 0 && errno == EINTR);
-	if (len < 0)
-		return -1;
 
-	return 0;
+	return len;
 }
 
 static int
@@ -314,9 +281,6 @@ handle_open(struct weston_launch *wl, struct msghdr *msg, ssize_t len)
 	/* Ensure path is null-terminated */
 	((char *) message)[len-1] = '\0';
 
-	if (stat(message->path, &s) < 0)
-		goto err0;
-
 	fd = open(message->path, message->flags);
 	if (fd < 0) {
 		fprintf(stderr, "Error opening device %s: %m\n",
@@ -324,10 +288,18 @@ handle_open(struct weston_launch *wl, struct msghdr *msg, ssize_t len)
 		goto err0;
 	}
 
-	if (major(s.st_rdev) != INPUT_MAJOR) {
+	if (fstat(fd, &s) < 0) {
 		close(fd);
 		fd = -1;
-		fprintf(stderr, "Device %s is not an input device\n",
+		fprintf(stderr, "Failed to stat %s\n", message->path);
+		goto err0;
+	}
+
+	if (major(s.st_rdev) != INPUT_MAJOR &&
+	    major(s.st_rdev) != DRM_MAJOR) {
+		close(fd);
+		fd = -1;
+		fprintf(stderr, "Device %s is not an input or drm device\n",
 			message->path);
 		goto err0;
 	}
@@ -360,6 +332,9 @@ err0:
 
 	if (len < 0)
 		return -1;
+
+	if (major(s.st_rdev) == DRM_MAJOR)
+		wl->drm_fd = fd;
 
 	return 0;
 }
@@ -395,9 +370,6 @@ handle_socket_msg(struct weston_launch *wl)
 	case WESTON_LAUNCHER_OPEN:
 		ret = handle_open(wl, &msg, len);
 		break;
-	case WESTON_LAUNCHER_DRM_SET_MASTER:
-		ret = handle_setmaster(wl, &msg, len);
-		break;
 	}
 
 	return ret;
@@ -406,17 +378,30 @@ handle_socket_msg(struct weston_launch *wl)
 static void
 quit(struct weston_launch *wl, int status)
 {
+	struct vt_mode mode = { 0 };
 	int err;
 
-	close(wl->epollfd);
 	close(wl->signalfd);
 	close(wl->sock[0]);
 
-	err = pam_close_session(wl->ph, 0);
-	if (err)
-		fprintf(stderr, "pam_close_session failed: %d: %s\n",
-			err, pam_strerror(wl->ph, err));
-	pam_end(wl->ph, err);
+	if (wl->new_user) {
+		err = pam_close_session(wl->ph, 0);
+		if (err)
+			fprintf(stderr, "pam_close_session failed: %d: %s\n",
+				err, pam_strerror(wl->ph, err));
+		pam_end(wl->ph, err);
+	}
+
+	if (ioctl(wl->tty, KDSKBMUTE, 0) &&
+	    ioctl(wl->tty, KDSKBMODE, wl->kb_mode))
+		fprintf(stderr, "failed to restore keyboard mode: %m\n");
+
+	if (ioctl(wl->tty, KDSETMODE, KD_TEXT))
+		fprintf(stderr, "failed to set KD_TEXT mode on tty: %m\n");
+
+	mode.mode = VT_AUTO;
+	if (ioctl(wl->tty, VT_SETMODE, &mode) < 0)
+		fprintf(stderr, "could not reset vt handling\n");
 
 	exit(status);
 }
@@ -453,13 +438,19 @@ handle_signal(struct weston_launch *wl)
 		}
 		break;
 	case SIGTERM:
-		if (wl->child)
-			kill(wl->child, SIGTERM);
-		quit(wl, 0);
-		break;
 	case SIGINT:
 		if (wl->child)
-			kill(wl->child, SIGTERM);
+			kill(wl->child, sig.ssi_signo);
+		break;
+	case SIGUSR1:
+		send_reply(wl, WESTON_LAUNCHER_DEACTIVATE);
+		drmDropMaster(wl->drm_fd);
+		ioctl(wl->tty, VT_RELDISP, 1);
+		break;
+	case SIGUSR2:
+		ioctl(wl->tty, VT_RELDISP, VT_ACKACQ);
+		drmSetMaster(wl->drm_fd);
+		send_reply(wl, WESTON_LAUNCHER_ACTIVATE);
 		break;
 	default:
 		return -1;
@@ -472,9 +463,12 @@ static int
 setup_tty(struct weston_launch *wl, const char *tty)
 {
 	struct stat buf;
+	struct vt_mode mode = { 0 };
 	char *t;
 
-	if (tty) {
+	if (!wl->new_user) {
+		wl->tty = STDIN_FILENO;
+	} else if (tty) {
 		t = ttyname(STDIN_FILENO);
 		if (t && strcmp(t, tty) == 0)
 			wl->tty = STDIN_FILENO;
@@ -498,6 +492,10 @@ setup_tty(struct weston_launch *wl, const char *tty)
 	if (wl->tty < 0)
 		error(1, errno, "failed to open tty");
 
+	if (fstat(wl->tty, &buf) == -1 ||
+	    major(buf.st_rdev) != TTY_MAJOR || minor(buf.st_rdev) == 0)
+		error(1, 0, "weston-launch must be run from a virtual terminal");
+
 	if (tty) {
 		if (fstat(wl->tty, &buf) < 0)
 			error(1, errno, "stat %s failed", tty);
@@ -508,7 +506,107 @@ setup_tty(struct weston_launch *wl, const char *tty)
 		wl->ttynr = minor(buf.st_rdev);
 	}
 
+	if (ioctl(wl->tty, KDGKBMODE, &wl->kb_mode))
+		error(1, errno, "failed to get current keyboard mode: %m\n");
+
+	if (ioctl(wl->tty, KDSKBMUTE, 1) &&
+	    ioctl(wl->tty, KDSKBMODE, K_OFF))
+		error(1, errno, "failed to set K_OFF keyboard mode: %m\n");
+
+	if (ioctl(wl->tty, KDSETMODE, KD_GRAPHICS))
+		error(1, errno, "failed to set KD_GRAPHICS mode on tty: %m\n");
+
+	mode.mode = VT_PROCESS;
+	mode.relsig = SIGUSR1;
+	mode.acqsig = SIGUSR2;
+	if (ioctl(wl->tty, VT_SETMODE, &mode) < 0)
+		error(1, errno, "failed to take control of vt handling\n");
+
 	return 0;
+}
+
+static void
+setup_session(struct weston_launch *wl)
+{
+	char **env;
+	char *term;
+	int i;
+
+	if (wl->tty != STDIN_FILENO) {
+		if (setsid() < 0)
+			error(1, errno, "setsid failed");
+		if (ioctl(wl->tty, TIOCSCTTY, 0) < 0)
+			error(1, errno, "TIOCSCTTY failed - tty is in use");
+	}
+
+	term = getenv("TERM");
+	clearenv();
+	if (term)
+		setenv("TERM", term, 1);
+	setenv("USER", wl->pw->pw_name, 1);
+	setenv("LOGNAME", wl->pw->pw_name, 1);
+	setenv("HOME", wl->pw->pw_dir, 1);
+	setenv("SHELL", wl->pw->pw_shell, 1);
+
+	env = pam_getenvlist(wl->ph);
+	if (env) {
+		for (i = 0; env[i]; ++i) {
+			if (putenv(env[i]) < 0)
+				error(0, 0, "putenv %s failed", env[i]);
+		}
+		free(env);
+	}
+}
+
+static void
+drop_privileges(struct weston_launch *wl)
+{
+	if (setgid(wl->pw->pw_gid) < 0 ||
+#ifdef HAVE_INITGROUPS
+	    initgroups(wl->pw->pw_name, wl->pw->pw_gid) < 0 ||
+#endif
+	    setuid(wl->pw->pw_uid) < 0)
+		error(1, errno, "dropping privileges failed");
+}
+
+static void
+launch_compositor(struct weston_launch *wl, int argc, char *argv[])
+{
+	char *child_argv[MAX_ARGV_SIZE];
+	sigset_t mask;
+	int i;
+
+	if (wl->verbose)
+		printf("weston-launch: spawned weston with pid: %d\n", getpid());
+	if (wl->new_user)
+		setup_session(wl);
+
+	if (geteuid() == 0)
+		drop_privileges(wl);
+
+	setenv_fd("WESTON_TTY_FD", wl->tty);
+	setenv_fd("WESTON_LAUNCHER_SOCK", wl->sock[1]);
+
+	unsetenv("DISPLAY");
+
+	/* Do not give our signal mask to the new process. */
+	sigemptyset(&mask);
+	sigaddset(&mask, SIGTERM);
+	sigaddset(&mask, SIGCHLD);
+	sigaddset(&mask, SIGINT);
+	sigprocmask(SIG_UNBLOCK, &mask, NULL);
+
+	child_argv[0] = wl->pw->pw_shell;
+	child_argv[1] = "-l";
+	child_argv[2] = "-c";
+	child_argv[3] = BINDIR "/weston \"$@\"";
+	child_argv[4] = "weston";
+	for (i = 0; i < argc; ++i)
+		child_argv[5 + i] = argv[i];
+	child_argv[5 + i] = NULL;
+
+	execv(child_argv[0], child_argv);
+	error(1, errno, "exec failed");
 }
 
 static void
@@ -518,7 +616,6 @@ help(const char *name)
 	fprintf(stderr, "  -u, --user      Start session as specified username\n");
 	fprintf(stderr, "  -t, --tty       Start session on alternative tty\n");
 	fprintf(stderr, "  -v, --verbose   Be verbose\n");
-	fprintf(stderr, "  -s, --sleep     Sleep specified amount of time before exec\n");
 	fprintf(stderr, "  -h, --help      Display this help message\n");
 }
 
@@ -526,26 +623,22 @@ int
 main(int argc, char *argv[])
 {
 	struct weston_launch wl;
-	char **env;
 	int i, c;
-	char **child_argv;
-	char *tty = NULL, *new_user = NULL;
-	int sleep_fork = 0;
+	char *tty = NULL;
 	struct option opts[] = {
 		{ "user",    required_argument, NULL, 'u' },
 		{ "tty",     required_argument, NULL, 't' },
 		{ "verbose", no_argument,       NULL, 'v' },
-		{ "sleep",   optional_argument, NULL, 's' },
 		{ "help",    no_argument,       NULL, 'h' },
 		{ 0,         0,                 NULL,  0  }
 	};	
 
 	memset(&wl, 0, sizeof wl);
 
-	while ((c = getopt_long(argc, argv, "u:t:s::vh", opts, &i)) != -1) {
+	while ((c = getopt_long(argc, argv, "u:t::vh", opts, &i)) != -1) {
 		switch (c) {
 		case 'u':
-			new_user = optarg;
+			wl.new_user = optarg;
 			if (getuid() != 0)
 				error(1, 0, "Permission denied. -u allowed for root only");
 			break;
@@ -555,33 +648,21 @@ main(int argc, char *argv[])
 		case 'v':
 			wl.verbose = 1;
 			break;
-		case 's':
-			if (optarg)
-				sleep_fork = atoi(optarg);
-			else
-				sleep_fork = 10;
-			break;
 		case 'h':
 			help("weston-launch");
 			exit(EXIT_FAILURE);
 		}
 	}
 
-	child_argv = &argv[optind-1];
-	child_argv[0] = BINDIR "/weston";
+	if ((argc - optind) > (MAX_ARGV_SIZE - 6))
+		error(1, E2BIG, "Too many arguments to pass to weston");
 
-	if (new_user)
-		wl.pw = getpwnam(new_user);
+	if (wl.new_user)
+		wl.pw = getpwnam(wl.new_user);
 	else
 		wl.pw = getpwuid(getuid());
 	if (wl.pw == NULL)
 		error(1, errno, "failed to get username");
-
-	clearenv();
-	setenv("USER", wl.pw->pw_name, 1);
-	setenv("LOGNAME", wl.pw->pw_name, 1);
-	setenv("HOME", wl.pw->pw_dir, 1);
-	setenv("SHELL", wl.pw->pw_shell, 1);
 
 	if (!weston_launch_allowed(&wl))
 		error(1, 0, "Permission denied. You should either:\n"
@@ -595,12 +676,8 @@ main(int argc, char *argv[])
 	if (setup_tty(&wl, tty) < 0)
 		exit(EXIT_FAILURE);
 
-	if (setup_pam(&wl) < 0)
+	if (wl.new_user && setup_pam(&wl) < 0)
 		exit(EXIT_FAILURE);
-
-	wl.epollfd = epoll_create1(EPOLL_CLOEXEC);
-	if (wl.epollfd < 0)
-		error(1, errno, "epoll create failed");
 
 	if (setup_launcher_socket(&wl) < 0)
 		exit(EXIT_FAILURE);
@@ -608,70 +685,35 @@ main(int argc, char *argv[])
 	if (setup_signals(&wl) < 0)
 		exit(EXIT_FAILURE);
 
-	switch ((wl.child = fork())) {
-	case -1:
+	wl.child = fork();
+	if (wl.child == -1) {
 		error(1, errno, "fork failed");
-		break;
-	case 0:
-		if (wl.verbose)
-			printf("weston-launch: spawned weston with pid: %d\n", getpid());
-		if (wl.tty != STDIN_FILENO) {
-			if (setsid() < 0)
-				error(1, errno, "setsid failed");
-			if (ioctl(wl.tty, TIOCSCTTY, 0) < 0)
-				error(1, errno, "TIOCSCTTY failed - tty is in use");
-		}
+		exit(EXIT_FAILURE);
+	}
 
-		if (setgid(wl.pw->pw_gid) < 0 ||
-		    setuid(wl.pw->pw_uid) < 0)
-			error(1, errno, "dropping privilidges failed");
+	if (wl.child == 0)
+		launch_compositor(&wl, argc - optind, argv + optind);
 
-		if (sleep_fork) {
-			if (wl.verbose)
-				printf("weston-launch: waiting %d seconds\n", sleep_fork);
-			sleep(sleep_fork);
-		}
+	close(wl.sock[1]);
+	if (wl.tty != STDIN_FILENO)
+		close(wl.tty);
 
-		env = pam_getenvlist(wl.ph);
-		if (env) {
-			for (i = 0; env[i]; ++i) {
-				if (putenv(env[i]) < 0)
-					error(0, 0, "putenv %s failed", env[i]);
-			}
-			free(env);
-		}
+	while (1) {
+		struct pollfd fds[2];
+		int n;
 
-		if (wl.tty != STDIN_FILENO)
-			setenv_fd("WESTON_TTY_FD", wl.tty);
+		fds[0].fd = wl.sock[0];
+		fds[0].events = POLLIN;
+		fds[1].fd = wl.signalfd;
+		fds[1].events = POLLIN;
 
-		setenv_fd("WESTON_LAUNCHER_SOCK", wl.sock[1]);
-
-		unsetenv("DISPLAY");
-
-		execv(child_argv[0], child_argv);
-		error(1, errno, "exec failed");
-		break;
-	default:
-		close(wl.sock[1]);
-		if (wl.tty != STDIN_FILENO)
-			close(wl.tty);
-
-		while (1) {
-			struct epoll_event ev;
-			int n;
-
-			n = epoll_wait(wl.epollfd, &ev, 1, -1);
-			if (n < 0)
-				error(0, errno, "epoll_wait failed");
-			if (n != 1)
-				continue;
-
-			if (ev.data.fd == wl.sock[0])
-				handle_socket_msg(&wl);
-			else if (ev.data.fd == wl.signalfd)
-				handle_signal(&wl);
-		}
-		break;
+		n = poll(fds, 2, -1);
+		if (n < 0)
+			error(0, errno, "poll failed");
+		if (fds[0].revents & POLLIN)
+			handle_socket_msg(&wl);
+		if (fds[1].revents)
+			handle_signal(&wl);
 	}
 
 	return 0;

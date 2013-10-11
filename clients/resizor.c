@@ -233,11 +233,7 @@ resizor_create(struct display *display)
 {
 	struct resizor *resizor;
 
-	resizor = malloc(sizeof *resizor);
-	if (resizor == NULL)
-		return resizor;
-	memset(resizor, 0, sizeof *resizor);
-
+	resizor = xzalloc(sizeof *resizor);
 	resizor->window = window_create(display);
 	resizor->widget = frame_create(resizor->window, resizor);
 	window_set_title(resizor->window, "Wayland Resizor");

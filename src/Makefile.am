@@ -18,6 +18,8 @@ weston_SOURCES =				\
 	log.c					\
 	compositor.c				\
 	compositor.h				\
+	input.c					\
+	data-device.c				\
 	filter.c				\
 	filter.h				\
 	screenshooter.c				\
@@ -34,6 +36,8 @@ weston_SOURCES =				\
 	input-method-server-protocol.h		\
 	workspaces-protocol.c			\
 	workspaces-server-protocol.h		\
+	subsurface-protocol.c			\
+	subsurface-server-protocol.h		\
 	bindings.c				\
 	animation.c				\
 	gl-renderer.h				\
@@ -42,12 +46,15 @@ weston_SOURCES =				\
 	pixman-renderer.h			\
 	../shared/matrix.c			\
 	../shared/matrix.h			\
+	../shared/zalloc.h			\
 	weston-launch.h				\
 	weston-egl-ext.h
 
 if ENABLE_EGL
 weston_SOURCES +=				\
-	gl-renderer.c
+	gl-renderer.c				\
+	vertex-clipping.c			\
+	vertex-clipping.h
 endif
 
 git-version.h : .FORCE
@@ -88,12 +95,15 @@ westoninclude_HEADERS =				\
 	version.h				\
 	compositor.h				\
 	../shared/matrix.h			\
-	../shared/config-parser.h
+	../shared/config-parser.h		\
+	../shared/zalloc.h
 
 moduledir = $(libdir)/weston
 module_LTLIBRARIES =				\
 	$(desktop_shell)			\
 	$(tablet_shell)				\
+	$(cms_static)				\
+	$(cms_colord)				\
 	$(x11_backend)				\
 	$(drm_backend)				\
 	$(wayland_backend)			\
@@ -134,7 +144,6 @@ drm_backend_la_CFLAGS =				\
 	$(GCC_CFLAGS)
 drm_backend_la_SOURCES =			\
 	compositor-drm.c			\
-	tty.c					\
 	udev-seat.c				\
 	udev-seat.h				\
 	evdev.c					\
@@ -144,6 +153,12 @@ drm_backend_la_SOURCES =			\
 	launcher-util.h				\
 	libbacklight.c				\
 	libbacklight.h
+
+if ENABLE_VAAPI_RECORDER
+drm_backend_la_SOURCES += vaapi-recorder.c vaapi-recorder.h
+drm_backend_la_LIBADD += $(LIBVA_LIBS)
+drm_backend_la_CFLAGS += $(LIBVA_CFLAGS)
+endif
 endif
 
 if ENABLE_WAYLAND_COMPOSITOR
@@ -174,8 +189,11 @@ rpi_backend_la_CFLAGS =				\
 	$(RPI_BCM_HOST_CFLAGS)
 rpi_backend_la_SOURCES =			\
 	compositor-rpi.c			\
+	rpi-renderer.c				\
+	rpi-renderer.h				\
 	rpi-bcm-stubs.h 			\
-	tty.c					\
+	launcher-util.c				\
+	launcher-util.h				\
 	evdev.c					\
 	evdev.h					\
 	evdev-touchpad.c
@@ -206,13 +224,13 @@ fbdev_backend_la_CFLAGS = \
 	$(GCC_CFLAGS)
 fbdev_backend_la_SOURCES = \
 	compositor-fbdev.c \
-	tty.c \
 	udev-seat.c \
 	udev-seat.h \
 	evdev.c \
 	evdev.h \
 	evdev-touchpad.c \
-	launcher-util.c
+	launcher-util.c \
+	launcher-util.h
 endif
 
 if ENABLE_RDP_COMPOSITOR
@@ -251,6 +269,38 @@ tablet_shell_la_SOURCES =			\
 	tablet-shell-server-protocol.h
 endif
 
+if HAVE_LCMS
+cms_static = cms-static.la
+cms_static_la_LDFLAGS = -module -avoid-version
+cms_static_la_LIBADD = $(COMPOSITOR_LIBS) $(LCMS_LIBS) ../shared/libshared.la
+cms_static_la_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS) $(LCMS_CFLAGS)
+cms_static_la_SOURCES =				\
+	cms-static.c				\
+	cms-helper.c				\
+	cms-helper.h
+if ENABLE_COLORD
+cms_colord = cms-colord.la
+cms_colord_la_LDFLAGS = -module -avoid-version
+cms_colord_la_LIBADD = $(COMPOSITOR_LIBS) $(COLORD_LIBS)
+cms_colord_la_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS) $(COLORD_CFLAGS)
+cms_colord_la_SOURCES =				\
+	cms-colord.c				\
+	cms-helper.c				\
+	cms-helper.h
+endif
+endif
+
+noinst_PROGRAMS = spring-tool
+
+spring_tool_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS)
+spring_tool_LDADD = $(COMPOSITOR_LIBS) -lm
+spring_tool_SOURCES =				\
+	spring-tool.c				\
+	animation.c				\
+	../shared/matrix.c			\
+	../shared/matrix.h			\
+	compositor.h
+
 BUILT_SOURCES =					\
 	screenshooter-server-protocol.h		\
 	screenshooter-protocol.c		\
@@ -266,8 +316,11 @@ BUILT_SOURCES =					\
 	input-method-server-protocol.h		\
 	workspaces-server-protocol.h		\
 	workspaces-protocol.c			\
+	subsurface-server-protocol.h		\
+	subsurface-protocol.c			\
 	git-version.h
 
 CLEANFILES = $(BUILT_SOURCES)
 
-@wayland_scanner_rules@
+wayland_protocoldir = $(top_srcdir)/protocol
+include $(top_srcdir)/wayland-scanner.mk

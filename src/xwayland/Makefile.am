@@ -23,6 +23,7 @@ xwayland_la_SOURCES =				\
 	xwayland.h				\
 	window-manager.c			\
 	selection.c				\
+	dnd.c					\
 	launcher.c				\
 	xserver-protocol.c			\
 	xserver-server-protocol.h		\
@@ -33,4 +34,7 @@ BUILT_SOURCES =					\
 	xserver-protocol.c			\
 	xserver-server-protocol.h
 
-@wayland_scanner_rules@
+CLEANFILES = $(BUILT_SOURCES)
+
+wayland_protocoldir = $(top_srcdir)/protocol
+include $(top_srcdir)/wayland-scanner.mk

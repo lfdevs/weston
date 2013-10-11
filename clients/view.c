@@ -230,10 +230,9 @@ view_create(struct display *display,
 	GFile *file = NULL;
 	GError *error = NULL;
 
-	view = malloc(sizeof *view);
+	view = zalloc(sizeof *view);
 	if (view == NULL)
 		return view;
-	memset(view, 0, sizeof *view);
 
 	file = g_file_new_for_commandline_arg(filename);
 	basename = g_file_get_basename(file);
@@ -293,7 +292,9 @@ main(int argc, char *argv[])
 	int i;
 	int view_counter = 0;
 
+#if !GLIB_CHECK_VERSION(2, 35, 0)
 	g_type_init();
+#endif
 
 	parse_options(view_options, ARRAY_LENGTH(view_options), &argc, argv);
 

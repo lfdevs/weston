@@ -23,13 +23,26 @@
 #ifndef _WESTON_LAUNCHER_UTIL_H_
 #define _WESTON_LAUNCHER_UTIL_H_
 
+#include "config.h"
+
 #include "compositor.h"
 
+struct weston_launcher;
+
+struct weston_launcher *
+weston_launcher_connect(struct weston_compositor *compositor, int tty);
+
+void
+weston_launcher_destroy(struct weston_launcher *launcher);
+
 int
-weston_launcher_open(struct weston_compositor *compositor,
+weston_launcher_open(struct weston_launcher *launcher,
 		     const char *path, int flags);
+
 int
-weston_launcher_drm_set_master(struct weston_compositor *compositor,
-			       int drm_fd, char master);
+weston_launcher_activate_vt(struct weston_launcher *launcher, int vt);
+
+void
+weston_launcher_restore(struct weston_launcher *launcher);
 
 #endif

@@ -1,3 +1,34 @@
+weston (1.3.0-1) unstable; urgency=low
+
+  [ Sven Joachim ]
+  * Bump libwayland-dev build-depends to (>= 1.2.0).
+
+  [ Laurent Bigonville ]
+  * debian/rules:
+    - Install weston-launch with setuid bit set (LP: #1102597)
+    - Set libexec path to /usr/lib/weston
+  * debian/weston.lintian-overrides: Add override for the mode of weston-launch
+    executable
+  * debian/weston.examples: Install weston.ini as an example file
+  * debian/weston.postinst: Create weston-launch group on installation
+    (LP: #1203017)
+  * debian/control, debian/weston.install: Enable colord support
+  * debian/README.Debian: Fix directions on how to run weston under KMS
+    (Closes: #714379)
+  * debian/control: Add a dependency against adduser
+  * debian/control: Use canonical URL's for Vcs field
+
+  [ Timo Aaltonen ]
+  * rules: Explicitly enable cairo-gl so that weston-screensaver gets
+    built.
+
+  [ Hector Oron ]
+  * New upstream release (1.3.0) (Closes: #719144).
+  * Add myself to Uploaders.
+  * Switch Debian source format to 3.0 quilt
+
+ -- Hector Oron <zumbi@debian.org>  Fri, 11 Oct 2013 13:03:04 +0200
+
 weston (1.1.1-1) experimental; urgency=low
 
   [ Timo Aaltonen ]

@@ -20,7 +20,7 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#define _GNU_SOURCE
+#include "config.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -30,7 +30,7 @@
 #include "xwayland.h"
 
 static int
-weston_wm_write_property(int fd, uint32_t mask, void *data)
+writable_callback(int fd, uint32_t mask, void *data)
 {
 	struct weston_wm *wm = data;
 	unsigned char *property;
@@ -43,7 +43,9 @@ weston_wm_write_property(int fd, uint32_t mask, void *data)
 	len = write(fd, property + wm->property_start, remainder);
 	if (len == -1) {
 		free(wm->property_reply);
-		wl_event_source_remove(wm->property_source);
+		wm->property_reply = NULL;
+		if (wm->property_source)
+			wl_event_source_remove(wm->property_source);
 		close(fd);
 		weston_log("write error to target fd: %m\n");
 		return 1;
@@ -56,7 +58,9 @@ weston_wm_write_property(int fd, uint32_t mask, void *data)
 	wm->property_start += len;
 	if (len == remainder) {
 		free(wm->property_reply);
-		wl_event_source_remove(wm->property_source);
+		wm->property_reply = NULL;
+		if (wm->property_source)
+			wl_event_source_remove(wm->property_source);
 
 		if (wm->incr) {
 			xcb_delete_property(wm->conn,
@@ -69,6 +73,21 @@ weston_wm_write_property(int fd, uint32_t mask, void *data)
 	}
 
 	return 1;
+}
+
+static void
+weston_wm_write_property(struct weston_wm *wm, xcb_get_property_reply_t *reply)
+{
+	wm->property_start = 0;
+	wm->property_reply = reply;
+	writable_callback(wm->data_source_fd, WL_EVENT_WRITABLE, wm);
+
+	if (wm->property_reply)
+		wm->property_source =
+			wl_event_loop_add_fd(wm->server->loop,
+					     wm->data_source_fd,
+					     WL_EVENT_WRITABLE,
+					     writable_callback, wm);
 }
 
 static void
@@ -90,14 +109,7 @@ weston_wm_get_incr_chunk(struct weston_wm *wm)
 	dump_property(wm, wm->atom.wl_selection, reply);
 
 	if (xcb_get_property_value_length(reply) > 0) {
-		wm->property_start = 0;
-		wm->property_source =
-			wl_event_loop_add_fd(wm->server->loop,
-					     wm->data_source_fd,
-					     WL_EVENT_WRITABLE,
-					     weston_wm_write_property,
-					     wm);
-		wm->property_reply = reply;
+		weston_wm_write_property(wm, reply);
 	} else {
 		weston_log("transfer complete\n");
 		close(wm->data_source_fd);
@@ -106,18 +118,18 @@ weston_wm_get_incr_chunk(struct weston_wm *wm)
 }
 
 struct x11_data_source {
-	struct wl_data_source base;
+	struct weston_data_source base;
 	struct weston_wm *wm;
 };
 
 static void
-data_source_accept(struct wl_data_source *source,
+data_source_accept(struct weston_data_source *source,
 		   uint32_t time, const char *mime_type)
 {
 }
 
 static void
-data_source_send(struct wl_data_source *base,
+data_source_send(struct weston_data_source *base,
 		 const char *mime_type, int32_t fd)
 {
 	struct x11_data_source *source = (struct x11_data_source *) base;
@@ -135,12 +147,12 @@ data_source_send(struct wl_data_source *base,
 		xcb_flush(wm->conn);
 
 		fcntl(fd, F_SETFL, O_WRONLY | O_NONBLOCK);
-		wm->data_source_fd = fcntl(fd, F_DUPFD_CLOEXEC, fd);
+		wm->data_source_fd = fd;
 	}
 }
 
 static void
-data_source_cancel(struct wl_data_source *source)
+data_source_cancel(struct weston_data_source *source)
 {
 }
 
@@ -177,11 +189,10 @@ weston_wm_get_selection_targets(struct weston_wm *wm)
 	if (source == NULL)
 		return;
 
-	wl_signal_init(&source->base.resource.destroy_signal);
+	wl_signal_init(&source->base.destroy_signal);
 	source->base.accept = data_source_accept;
 	source->base.send = data_source_send;
 	source->base.cancel = data_source_cancel;
-	source->base.resource.data = source;
 	source->wm = wm;
 
 	wl_array_init(&source->base.mime_types);
@@ -195,8 +206,8 @@ weston_wm_get_selection_targets(struct weston_wm *wm)
 	}
 
 	compositor = wm->server->compositor;
-	wl_seat_set_selection(&seat->seat, &source->base,
-			      wl_display_next_serial(compositor->wl_display));
+	weston_seat_set_selection(seat, &source->base,
+				  wl_display_next_serial(compositor->wl_display));
 
 	free(reply);
 }
@@ -224,14 +235,7 @@ weston_wm_get_selection_data(struct weston_wm *wm)
 	} else {
 		dump_property(wm, wm->atom.wl_selection, reply);
 		wm->incr = 0;
-		wm->property_start = 0;
-		wm->property_source =
-			wl_event_loop_add_fd(wm->server->loop,
-					     wm->data_source_fd,
-					     WL_EVENT_WRITABLE,
-					     weston_wm_write_property,
-					     wm);
-		wm->property_reply = reply;
+		weston_wm_write_property(wm, reply);
 	}
 }
 
@@ -422,7 +426,7 @@ weston_wm_read_data_source(int fd, uint32_t mask, void *data)
 static void
 weston_wm_send_data(struct weston_wm *wm, xcb_atom_t target, const char *mime_type)
 {
-	struct wl_data_source *source;
+	struct weston_data_source *source;
 	struct weston_seat *seat = weston_wm_pick_seat(wm);
 	int p[2];
 
@@ -441,8 +445,9 @@ weston_wm_send_data(struct weston_wm *wm, xcb_atom_t target, const char *mime_ty
 						   weston_wm_read_data_source,
 						   wm);
 
-	source = seat->seat.selection_data_source;
+	source = seat->selection_data_source;
 	source->send(source, mime_type, p[1]);
+	close(p[1]);
 }
 
 static void
@@ -544,7 +549,7 @@ weston_wm_handle_selection_request(struct weston_wm *wm,
 	}
 }
 
-static void
+static int
 weston_wm_handle_xfixes_selection_notify(struct weston_wm *wm,
 				       xcb_generic_event_t *event)
 {
@@ -553,6 +558,9 @@ weston_wm_handle_xfixes_selection_notify(struct weston_wm *wm,
 	struct weston_compositor *compositor;
 	struct weston_seat *seat = weston_wm_pick_seat(wm);
 	uint32_t serial;
+
+	if (xfixes_selection_notify->selection != wm->atom.clipboard)
+		return 0;
 
 	weston_log("xfixes selection notify event: owner %d\n",
 	       xfixes_selection_notify->owner);
@@ -563,12 +571,12 @@ weston_wm_handle_xfixes_selection_notify(struct weston_wm *wm,
 			 * proxy selection.  Clear the wayland selection. */
 			compositor = wm->server->compositor;
 			serial = wl_display_next_serial(compositor->wl_display);
-			wl_seat_set_selection(&seat->seat, NULL, serial);
+			weston_seat_set_selection(seat, NULL, serial);
 		}
 
 		wm->selection_owner = XCB_WINDOW_NONE;
 
-		return;
+		return 1;
 	}
 
 	wm->selection_owner = xfixes_selection_notify->owner;
@@ -579,7 +587,7 @@ weston_wm_handle_xfixes_selection_notify(struct weston_wm *wm,
 	if (xfixes_selection_notify->owner == wm->selection_window) {
 		wm->selection_timestamp = xfixes_selection_notify->timestamp;
 		weston_log("our window, skipping\n");
-		return;
+		return 1;
 	}
 
 	wm->incr = 0;
@@ -590,6 +598,8 @@ weston_wm_handle_xfixes_selection_notify(struct weston_wm *wm,
 			      xfixes_selection_notify->timestamp);
 
 	xcb_flush(wm->conn);
+
+	return 1;
 }
 
 int
@@ -609,8 +619,7 @@ weston_wm_handle_selection_event(struct weston_wm *wm,
 
 	switch (event->response_type - wm->xfixes->first_event) {
 	case XCB_XFIXES_SELECTION_NOTIFY:
-		weston_wm_handle_xfixes_selection_notify(wm, event);
-		return 1;
+		return weston_wm_handle_xfixes_selection_notify(wm, event);
 	}
 
 	return 0;
@@ -619,10 +628,10 @@ weston_wm_handle_selection_event(struct weston_wm *wm,
 static void
 weston_wm_set_selection(struct wl_listener *listener, void *data)
 {
-	struct wl_seat *seat = data;
+	struct weston_seat *seat = data;
 	struct weston_wm *wm =
 		container_of(listener, struct weston_wm, selection_listener);
-	struct wl_data_source *source = seat->selection_data_source;
+	struct weston_data_source *source = seat->selection_data_source;
 	const char **p, **end;
 	int has_text_plain = 0;
 
@@ -697,7 +706,7 @@ weston_wm_selection_init(struct weston_wm *wm)
 
 	seat = weston_wm_pick_seat(wm);
 	wm->selection_listener.notify = weston_wm_set_selection;
-	wl_signal_add(&seat->seat.selection_signal, &wm->selection_listener);
+	wl_signal_add(&seat->selection_signal, &wm->selection_listener);
 
 	weston_wm_set_selection(&wm->selection_listener, seat);
 }

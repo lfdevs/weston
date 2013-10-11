@@ -36,6 +36,17 @@
 
 #include <GLES2/gl2.h>
 #include <EGL/egl.h>
+#include <EGL/eglext.h>
+
+#ifndef EGL_EXT_swap_buffers_with_damage
+#define EGL_EXT_swap_buffers_with_damage 1
+typedef EGLBoolean (EGLAPIENTRYP PFNEGLSWAPBUFFERSWITHDAMAGEEXTPROC)(EGLDisplay dpy, EGLSurface surface, EGLint *rects, EGLint n_rects);
+#endif
+
+#ifndef EGL_EXT_buffer_age
+#define EGL_EXT_buffer_age 1
+#define EGL_BUFFER_AGE_EXT			0x313D
+#endif
 
 struct window;
 struct seat;
@@ -47,6 +58,7 @@ struct display {
 	struct wl_shell *shell;
 	struct wl_seat *seat;
 	struct wl_pointer *pointer;
+	struct wl_touch *touch;
 	struct wl_keyboard *keyboard;
 	struct wl_shm *shm;
 	struct wl_cursor_theme *cursor_theme;
@@ -58,6 +70,8 @@ struct display {
 		EGLConfig conf;
 	} egl;
 	struct window *window;
+
+	PFNEGLSWAPBUFFERSWITHDAMAGEEXTPROC swap_buffers_with_damage;
 };
 
 struct geometry {
@@ -107,6 +121,7 @@ init_egl(struct display *display, int opaque)
 		EGL_CONTEXT_CLIENT_VERSION, 2,
 		EGL_NONE
 	};
+	const char *extensions;
 
 	EGLint config_attribs[] = {
 		EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
@@ -140,6 +155,18 @@ init_egl(struct display *display, int opaque)
 					    display->egl.conf,
 					    EGL_NO_CONTEXT, context_attribs);
 	assert(display->egl.ctx);
+
+	display->swap_buffers_with_damage = NULL;
+	extensions = eglQueryString(display->egl.dpy, EGL_EXTENSIONS);
+	if (extensions &&
+	    strstr(extensions, "EGL_EXT_swap_buffers_with_damage") &&
+	    strstr(extensions, "EGL_EXT_buffer_age"))
+		display->swap_buffers_with_damage =
+			(PFNEGLSWAPBUFFERSWITHDAMAGEEXTPROC)
+			eglGetProcAddress("eglSwapBuffersWithDamageEXT");
+
+	if (display->swap_buffers_with_damage)
+		printf("has EGL_EXT_buffer_age and EGL_EXT_swap_buffers_with_damage\n");
 
 }
 
@@ -346,6 +373,7 @@ static void
 redraw(void *data, struct wl_callback *callback, uint32_t time)
 {
 	struct window *window = data;
+	struct display *display = window->display;
 	static const GLfloat verts[3][2] = {
 		{ -0.5, -0.5 },
 		{  0.5, -0.5 },
@@ -366,6 +394,8 @@ redraw(void *data, struct wl_callback *callback, uint32_t time)
 	static const int32_t speed_div = 5;
 	static uint32_t start_time = 0;
 	struct wl_region *region;
+	EGLint rect[4];
+	EGLint buffer_age = 0;
 
 	assert(window->callback == callback);
 	window->callback = NULL;
@@ -384,6 +414,10 @@ redraw(void *data, struct wl_callback *callback, uint32_t time)
 	rotation[0][2] =  sin(angle);
 	rotation[2][0] = -sin(angle);
 	rotation[2][2] =  cos(angle);
+
+	if (display->swap_buffers_with_damage)
+		eglQuerySurface(display->egl.dpy, window->egl_surface,
+				EGL_BUFFER_AGE_EXT, &buffer_age);
 
 	glViewport(0, 0, window->geometry.width, window->geometry.height);
 
@@ -417,7 +451,17 @@ redraw(void *data, struct wl_callback *callback, uint32_t time)
 	window->callback = wl_surface_frame(window->surface);
 	wl_callback_add_listener(window->callback, &frame_listener, window);
 
-	eglSwapBuffers(window->display->egl.dpy, window->egl_surface);
+	if (display->swap_buffers_with_damage && buffer_age > 0) {
+		rect[0] = window->geometry.width / 4 - 1;
+		rect[1] = window->geometry.height / 4 - 1;
+		rect[2] = window->geometry.width / 2 + 2;
+		rect[3] = window->geometry.height / 2 + 2;
+		display->swap_buffers_with_damage(display->egl.dpy,
+						  window->egl_surface,
+						  rect, 1);
+	} else {
+		eglSwapBuffers(display->egl.dpy, window->egl_surface);
+	}
 }
 
 static const struct wl_callback_listener frame_listener = {
@@ -489,6 +533,46 @@ static const struct wl_pointer_listener pointer_listener = {
 };
 
 static void
+touch_handle_down(void *data, struct wl_touch *wl_touch,
+		  uint32_t serial, uint32_t time, struct wl_surface *surface,
+		  int32_t id, wl_fixed_t x_w, wl_fixed_t y_w)
+{
+	struct display *d = (struct display *)data;
+
+	wl_shell_surface_move(d->window->shell_surface, d->seat, serial);
+}
+
+static void
+touch_handle_up(void *data, struct wl_touch *wl_touch,
+		uint32_t serial, uint32_t time, int32_t id)
+{
+}
+
+static void
+touch_handle_motion(void *data, struct wl_touch *wl_touch,
+		    uint32_t time, int32_t id, wl_fixed_t x_w, wl_fixed_t y_w)
+{
+}
+
+static void
+touch_handle_frame(void *data, struct wl_touch *wl_touch)
+{
+}
+
+static void
+touch_handle_cancel(void *data, struct wl_touch *wl_touch)
+{
+}
+
+static const struct wl_touch_listener touch_listener = {
+	touch_handle_down,
+	touch_handle_up,
+	touch_handle_motion,
+	touch_handle_frame,
+	touch_handle_cancel,
+};
+
+static void
 keyboard_handle_keymap(void *data, struct wl_keyboard *keyboard,
 		       uint32_t format, int fd, uint32_t size)
 {
@@ -556,6 +640,15 @@ seat_handle_capabilities(void *data, struct wl_seat *seat,
 	} else if (!(caps & WL_SEAT_CAPABILITY_KEYBOARD) && d->keyboard) {
 		wl_keyboard_destroy(d->keyboard);
 		d->keyboard = NULL;
+	}
+
+	if ((caps & WL_SEAT_CAPABILITY_TOUCH) && !d->touch) {
+		d->touch = wl_seat_get_touch(seat);
+		wl_touch_set_user_data(d->touch, d);
+		wl_touch_add_listener(d->touch, &touch_listener, d);
+	} else if (!(caps & WL_SEAT_CAPABILITY_TOUCH) && d->touch) {
+		wl_touch_destroy(d->touch);
+		d->touch = NULL;
 	}
 }
 

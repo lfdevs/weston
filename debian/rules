@@ -1,7 +1,8 @@
 #!/usr/bin/make -f
 
 override_dh_auto_configure:
-	dh_auto_configure -- --disable-setuid-install --disable-libunwind
+	dh_auto_configure -- --disable-libunwind --libexec=/usr/lib/weston \
+		--with-cairo=gl
 
 override_dh_auto_test:
 	# the test suite does not 100% pass in headless mode
@@ -15,6 +16,9 @@ override_dh_install:
 
 override_dh_makeshlibs:
 	# No-op: libraries are private, not shared.
+
+override_dh_fixperms:
+	dh_fixperms -Xusr/bin/weston-launch
 
 %:
 	dh $@ --with quilt,autoreconf

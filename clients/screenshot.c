@@ -20,7 +20,10 @@
  * OF THIS SOFTWARE.
  */
 
+#include "config.h"
+
 #include <stdint.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -75,6 +78,21 @@ display_handle_geometry(void *data,
 	}
 }
 
+static void *
+xmalloc(size_t size)
+{
+	void *p;
+
+	p = malloc(size);
+	if (p == NULL) {
+		fprintf(stderr, "%s: out of memory\n",
+			program_invocation_short_name);
+		exit(EXIT_FAILURE);
+	}
+
+	return p;
+}
+
 static void
 display_handle_mode(void *data,
 		    struct wl_output *wl_output,
@@ -115,7 +133,7 @@ handle_global(void *data, struct wl_registry *registry,
 	static struct screenshooter_output *output;
 
 	if (strcmp(interface, "wl_output") == 0) {
-		output = malloc(sizeof *output);
+		output = xmalloc(sizeof *output);
 		output->output = wl_registry_bind(registry, name,
 						  &wl_output_interface, 1);
 		wl_list_insert(&output_list, &output->link);
@@ -185,7 +203,7 @@ write_png(int width, int height)
 
 	buffer_stride = width * 4;
 
-	data = malloc(buffer_stride * height);
+	data = xmalloc(buffer_stride * height);
 	if (!data)
 		return;
 
@@ -249,9 +267,9 @@ int main(int argc, char *argv[])
 	int width, height;
 
 	if (getenv("WAYLAND_SOCKET") == NULL) {
-		fprintf(stderr, "%s is must be launched by weston.\n"
-			"Use the MOD+S shortcut to take a screenshot.",
-			argv[0]);
+		fprintf(stderr, "%s must be launched by weston.\n"
+			"Use the MOD+S shortcut to take a screenshot.\n",
+			program_invocation_short_name);
 		return -1;
 	}
 

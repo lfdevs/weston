@@ -1,17 +1,9 @@
 README for weston:
 ------------------
 
-The weston compositor being still experimental, the Debian maintainers
-decided to turn off its setuid bit. This means that trying to run it
-under KMS (from a console, rather than from within X) as a non-root
-user will lead to no input at all, due to permission issues.
+If you want to run weston under KMS (from a console, rather than from within X)
+as non-root, you should start it via the weston-launch wrapper.  For that to
+work, you either need to have logind running and have a local session
+registered, or your user needs to be member of the weston-launch group.
 
-If one really wants to play with it under KMS, and if one understands
-the risks, one can set the setuid bit on a given system by using the
-dpkg-statoverride command, which will locally override the permissions
-set by the package maintainers. Unfortunately, as of this writing,
-that means clients won't be able to get access to the display, so the
-way to test weston in KMS would be running it as root, at your own
-risks.
-
- -- Cyril Brulebois <kibi@debian.org>, Tue, 21 Feb 2012 19:35:54 +0100
+ -- Laurent Bigonville <bigon@debian.org>, Sun, 11 Aug 2013 17:29:28 +0200
