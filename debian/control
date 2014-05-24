@@ -6,6 +6,7 @@ Uploaders:
  Cyril Brulebois <kibi@debian.org>,
  Mike Gabriel <sunweaver@debian.org>,
  Héctor Orón Martínez <zumbi@debian.org>,
+ Emilio Pozuelo Monfort <pochu@debian.org>,
 Build-Depends:
  debhelper (>= 9),
  quilt,
@@ -22,20 +23,23 @@ Build-Depends:
  libgles2-mesa-dev (>= 9.0~),
  libwayland-dev (>= 1.2.0),
  libxcb1-dev,
+ libxcb-composite0-dev,
  libxcb-xfixes0-dev,
+ libxcb-xkb-dev,
  libx11-xcb-dev,
  libx11-dev,
  libudev-dev,
  libgbm-dev,
  libxkbcommon-dev (>= 0.1.0~2),
  libcairo2-dev,
+ libpango1.0-dev,
  libgdk-pixbuf2.0-dev,
  libxcursor-dev,
  libmtdev-dev,
  libpam0g-dev,
  libvpx-dev,
  libsystemd-login-dev,
-Standards-Version: 3.9.4
+Standards-Version: 3.9.5
 Homepage: http://wayland.freedesktop.org/
 Vcs-Git: git://anonscm.debian.org/pkg-xorg/wayland/weston
 Vcs-Browser: http://anonscm.debian.org/gitweb/?p=pkg-xorg/wayland/weston.git

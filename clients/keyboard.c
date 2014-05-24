@@ -21,6 +21,8 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include "config.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -73,7 +75,8 @@ struct key {
 	enum key_type key_type;
 
 	char *label;
-	char *alt;
+	char *uppercase;
+	char *symbol;
 
 	unsigned int width;
 };
@@ -90,120 +93,119 @@ struct layout {
 };
 
 static const struct key normal_keys[] = {
-	{ keytype_default, "q", "Q", 1},
-	{ keytype_default, "w", "W", 1},
-	{ keytype_default, "e", "E", 1},
-	{ keytype_default, "r", "R", 1},
-	{ keytype_default, "t", "T", 1},
-	{ keytype_default, "y", "Y", 1},
-	{ keytype_default, "u", "U", 1},
-	{ keytype_default, "i", "I", 1},
-	{ keytype_default, "o", "O", 1},
-	{ keytype_default, "p", "P", 1},
-	{ keytype_backspace, "<--", "<--", 2},
+	{ keytype_default, "q", "Q", "1", 1},
+	{ keytype_default, "w", "W", "2", 1},
+	{ keytype_default, "e", "E", "3", 1},
+	{ keytype_default, "r", "R", "4", 1},
+	{ keytype_default, "t", "T", "5", 1},
+	{ keytype_default, "y", "Y", "6", 1},
+	{ keytype_default, "u", "U", "7", 1},
+	{ keytype_default, "i", "I", "8", 1},
+	{ keytype_default, "o", "O", "9", 1},
+	{ keytype_default, "p", "P", "0", 1},
+	{ keytype_backspace, "<--", "<--", "<--", 2},
 
-	{ keytype_tab, "->|", "->|", 1},
-	{ keytype_default, "a", "A", 1},
-	{ keytype_default, "s", "S", 1},
-	{ keytype_default, "d", "D", 1},
-	{ keytype_default, "f", "F", 1},
-	{ keytype_default, "g", "G", 1},
-	{ keytype_default, "h", "H", 1},
-	{ keytype_default, "j", "J", 1},
-	{ keytype_default, "k", "K", 1},
-	{ keytype_default, "l", "L", 1},
-	{ keytype_enter, "Enter", "Enter", 2},
+	{ keytype_tab, "->|", "->|", "->|", 1},
+	{ keytype_default, "a", "A", "-", 1},
+	{ keytype_default, "s", "S", "@", 1},
+	{ keytype_default, "d", "D", "*", 1},
+	{ keytype_default, "f", "F", "^", 1},
+	{ keytype_default, "g", "G", ":", 1},
+	{ keytype_default, "h", "H", ";", 1},
+	{ keytype_default, "j", "J", "(", 1},
+	{ keytype_default, "k", "K", ")", 1},
+	{ keytype_default, "l", "L", "~", 1},
+	{ keytype_enter, "Enter", "Enter", "Enter", 2},
 
-	{ keytype_switch, "ABC", "abc", 2},
-	{ keytype_default, "z", "Z", 1},
-	{ keytype_default, "x", "X", 1},
-	{ keytype_default, "c", "C", 1},
-	{ keytype_default, "v", "V", 1},
-	{ keytype_default, "b", "B", 1},
-	{ keytype_default, "n", "N", 1},
-	{ keytype_default, "m", "M", 1},
-	{ keytype_default, ",", ",", 1},
-	{ keytype_default, ".", ".", 1},
-	{ keytype_switch, "ABC", "abc", 1},
+	{ keytype_switch, "ABC", "abc", "ABC", 2},
+	{ keytype_default, "z", "Z", "/", 1},
+	{ keytype_default, "x", "X", "\'", 1},
+	{ keytype_default, "c", "C", "\"", 1},
+	{ keytype_default, "v", "V", "+", 1},
+	{ keytype_default, "b", "B", "=", 1},
+	{ keytype_default, "n", "N", "?", 1},
+	{ keytype_default, "m", "M", "!", 1},
+	{ keytype_default, ",", ",", "\\", 1},
+	{ keytype_default, ".", ".", "|", 1},
+	{ keytype_switch, "ABC", "abc", "ABC", 1},
 
-	{ keytype_symbols, "?123", "?123", 1},
-	{ keytype_space, "", "", 5},
-	{ keytype_arrow_up, "/\\", "/\\", 1},
-	{ keytype_arrow_left, "<", "<", 1},
-	{ keytype_arrow_right, ">", ">", 1},
-	{ keytype_arrow_down, "\\/", "\\/", 1},
-	{ keytype_style, "", "", 2}
+	{ keytype_symbols, "?123", "?123", "abc", 1},
+	{ keytype_space, "", "", "", 5},
+	{ keytype_arrow_up, "/\\", "/\\", "/\\", 1},
+	{ keytype_arrow_left, "<", "<", "<", 1},
+	{ keytype_arrow_right, ">", ">", ">", 1},
+	{ keytype_arrow_down, "\\/", "\\/", "\\/", 1},
+	{ keytype_style, "", "", "", 2}
 };
 
 static const struct key numeric_keys[] = {
-	{ keytype_default, "1", "1", 1},
-	{ keytype_default, "2", "2", 1},
-	{ keytype_default, "3", "3", 1},
-	{ keytype_default, "4", "4", 1},
-	{ keytype_default, "5", "5", 1},
-	{ keytype_default, "6", "6", 1},
-	{ keytype_default, "7", "7", 1},
-	{ keytype_default, "8", "8", 1},
-	{ keytype_default, "9", "9", 1},
-	{ keytype_default, "0", "0", 1},
-	{ keytype_backspace, "<--", "<--", 2},
+	{ keytype_default, "1", "1", "1", 1},
+	{ keytype_default, "2", "2", "2", 1},
+	{ keytype_default, "3", "3", "3", 1},
+	{ keytype_default, "4", "4", "4", 1},
+	{ keytype_default, "5", "5", "5", 1},
+	{ keytype_default, "6", "6", "6", 1},
+	{ keytype_default, "7", "7", "7", 1},
+	{ keytype_default, "8", "8", "8", 1},
+	{ keytype_default, "9", "9", "9", 1},
+	{ keytype_default, "0", "0", "0", 1},
+	{ keytype_backspace, "<--", "<--", "<--", 2},
 
-	{ keytype_space, "", "", 4},
-	{ keytype_enter, "Enter", "Enter", 2},
-	{ keytype_arrow_up, "/\\", "/\\", 1},
-	{ keytype_arrow_left, "<", "<", 1},
-	{ keytype_arrow_right, ">", ">", 1},
-	{ keytype_arrow_down, "\\/", "\\/", 1},
-	{ keytype_style, "", "", 2}
+	{ keytype_space, "", "", "", 4},
+	{ keytype_enter, "Enter", "Enter", "Enter", 2},
+	{ keytype_arrow_up, "/\\", "/\\", "/\\", 1},
+	{ keytype_arrow_left, "<", "<", "<", 1},
+	{ keytype_arrow_right, ">", ">", ">", 1},
+	{ keytype_arrow_down, "\\/", "\\/", "\\/", 1},
+	{ keytype_style, "", "", "", 2}
 };
 
 static const struct key arabic_keys[] = {
-	{ keytype_default, "ض", "ض", 1},
-	{ keytype_default, "ص", "ص", 1},
-	{ keytype_default, "ث", "ث", 1},
-	{ keytype_default, "ق", "ق", 1},
-	{ keytype_default, "ف", "ف", 1},
-	{ keytype_default, "غ", "إ", 1},
-	{ keytype_default, "ع", "ع", 1},
-	{ keytype_default, "ه", "ه", 1},
-	{ keytype_default, "خ", "خ", 1},
-	{ keytype_default, "ح", "ح", 1},
-	{ keytype_default, "ج", "ج", 1},
-	{ keytype_backspace, "-->", "-->", 2},
+	{ keytype_default, "ض", "ﹶ", "۱", 1},
+	{ keytype_default, "ص", "ﹰ", "۲", 1},
+	{ keytype_default, "ث", "ﹸ", "۳", 1},
+	{ keytype_default, "ق", "ﹲ", "۴", 1},
+	{ keytype_default, "ف", "ﻹ", "۵", 1},
+	{ keytype_default, "غ", "ﺇ", "۶", 1},
+	{ keytype_default, "ع", "`", "۷", 1},
+	{ keytype_default, "ه", "٪", "۸", 1},
+	{ keytype_default, "خ", ">", "۹", 1},
+	{ keytype_default, "ح", "<", "۰", 1},
+	{ keytype_backspace, "-->", "-->", "-->", 2},
 
-	{ keytype_tab, "->|", "->|", 1},
-	{ keytype_default, "ش", "ش", 1},
-	{ keytype_default, "س", "س", 1},
-	{ keytype_default, "ي", "ي", 1},
-	{ keytype_default, "ب", "ب", 1},
-	{ keytype_default, "ل", "ل", 1},
-	{ keytype_default, "ا", "أ", 1},
-	{ keytype_default, "ت", "ت", 1},
-	{ keytype_default, "ن", "ن", 1},
-	{ keytype_default, "م", "م", 1},
-	{ keytype_default, "ك", "ك", 1},
-	{ keytype_default, "د", "د", 1},
-	{ keytype_enter, "Enter", "Enter", 2},
+	{ keytype_tab, "->|", "->|", "->|", 1},
+	{ keytype_default, "ش", "ﹺ", "ﹼ", 1},
+	{ keytype_default, "س", "ﹴ", "!", 1},
+	{ keytype_default, "ي", "[", "@", 1},
+	{ keytype_default, "ب", "]", "#", 1},
+	{ keytype_default, "ل", "ﻷ", "$", 1},
+	{ keytype_default, "ا", "أ", "%", 1},
+	{ keytype_default, "ت", "-", "^", 1},
+	{ keytype_default, "ن", "x", "&", 1},
+	{ keytype_default, "م", "/", "*", 1},
+	{ keytype_default, "ك", ":", "_", 1},
+	{ keytype_default, "د", "\"", "+", 1},
+	{ keytype_enter, "Enter", "Enter", "Enter", 2},
 
-	{ keytype_switch, "ABC", "abc", 2},
-	{ keytype_default, "ئ", "ئ", 1},
-	{ keytype_default, "ء", "ء", 1},
-	{ keytype_default, "ؤ", "ؤ", 1},
-	{ keytype_default, "ر", "ر", 1},
-	{ keytype_default, "ى", "آ", 1},
-	{ keytype_default, "ة", "ة", 1},
-	{ keytype_default, "و", "و", 1},
-	{ keytype_default, "ز", "ز", 1},
-	{ keytype_default, "ظ", "ظ", 1},
-	{ keytype_switch, "ABC", "abc", 2},
+	{ keytype_switch, "Shift", "Base", "Shift", 2},
+	{ keytype_default, "ئ", "~", ")", 1},
+	{ keytype_default, "ء", "°", "(", 1},
+	{ keytype_default, "ؤ", "{", "\"", 1},
+	{ keytype_default, "ر", "}", "\'", 1},
+	{ keytype_default, "ى", "ﺁ", "؟", 1},
+	{ keytype_default, "ة", "'", "!", 1},
+	{ keytype_default, "و", ",", ";", 1},
+	{ keytype_default, "ﺯ", ".", "\\", 1},
+	{ keytype_default, "ظ", "؟", "=", 1},
+	{ keytype_switch, "Shift", "Base", "Shift", 2},
 
-	{ keytype_symbols, "؟٣٢١", "؟٣٢١", 1},
-	{ keytype_default, "ذ", "ذ", 1},
-	{ keytype_default, "،", "،", 1},
-	{ keytype_space, "", "", 6},
-	{ keytype_default, ".", ".", 1},
-	{ keytype_default, "ط", "ط", 1},
-	{ keytype_style, "", "", 2}
+	{ keytype_symbols, "؟٣٢١", "؟٣٢١", "Base", 1},
+	{ keytype_default, "ﻻ", "ﻵ", "|", 1},
+	{ keytype_default, ",", "،", "،", 1},
+	{ keytype_space, "", "", "", 6},
+	{ keytype_default, ".", "ذ", "]", 1},
+	{ keytype_default, "ط", "ﺝ", "[", 1},
+	{ keytype_style, "", "", "", 2}
 };
 
 
@@ -249,8 +251,9 @@ static const double key_width = 60;
 static const double key_height = 50;
 
 enum keyboard_state {
-	keyboardstate_default,
-	keyboardstate_uppercase
+	KEYBOARD_STATE_DEFAULT,
+	KEYBOARD_STATE_UPPERCASE,
+	KEYBOARD_STATE_SYMBOLS
 };
 
 struct keyboard {
@@ -261,6 +264,19 @@ struct keyboard {
 	enum keyboard_state state;
 };
 
+static void __attribute__ ((format (printf, 1, 2)))
+dbg(const char *fmt, ...)
+{
+#ifdef DEBUG
+	int l;
+	va_list argp;
+
+	va_start(argp, fmt);
+	l = vfprintf(stderr, fmt, argp);
+	va_end(argp);
+#endif
+}
+
 static const char *
 label_from_key(struct keyboard *keyboard,
 	       const struct key *key)
@@ -268,10 +284,16 @@ label_from_key(struct keyboard *keyboard,
 	if (key->key_type == keytype_style)
 		return style_labels[keyboard->keyboard->preedit_style];
 
-	if (keyboard->state == keyboardstate_default)
+	switch(keyboard->state) {
+	case KEYBOARD_STATE_DEFAULT:
 		return key->label;
-	else
-		return key->alt;
+	case KEYBOARD_STATE_UPPERCASE:
+		return key->uppercase;
+	case KEYBOARD_STATE_SYMBOLS:
+		return key->symbol;
+	}
+
+	return "";
 }
 
 static void
@@ -384,12 +406,13 @@ resize_handler(struct widget *widget,
 static char *
 insert_text(const char *text, uint32_t offset, const char *insert)
 {
-	char *new_text = xmalloc(strlen(text) + strlen(insert) + 1);
+	int tlen = strlen(text), ilen = strlen(insert);
+	char *new_text = xmalloc(tlen + ilen + 1);
 
-	strncat(new_text, text, offset);
-	new_text[offset] = '\0';
-	strcat(new_text, insert);
-	strcat(new_text, text + offset);
+	memcpy(new_text, text, offset);
+	memcpy(new_text + offset, insert, ilen);
+	memcpy(new_text + offset + ilen, text + offset, tlen - offset);
+	new_text[tlen + ilen] = '\0';
 
 	return new_text;
 }
@@ -462,14 +485,14 @@ delete_before_cursor(struct virtual_keyboard *keyboard)
 	const char *start, *end;
 
 	if (!keyboard->surrounding_text) {
-		fprintf(stderr, "delete_before_cursor: No surrounding text available\n");
+		dbg("delete_before_cursor: No surrounding text available\n");
 		return;
 	}
 
 	start = prev_utf8_char(keyboard->surrounding_text,
 			       keyboard->surrounding_text + keyboard->surrounding_cursor);
 	if (!start) {
-		fprintf(stderr, "delete_before_cursor: No previous character to delete\n");
+		dbg("delete_before_cursor: No previous character to delete\n");
 		return;
 	}
 
@@ -489,11 +512,39 @@ delete_before_cursor(struct virtual_keyboard *keyboard)
 		memmove(keyboard->surrounding_text + keyboard->surrounding_cursor, end, strlen(end));
 }
 
+static char *
+append(char *s1, const char *s2)
+{
+	int len1, len2;
+	char *s;
+
+	len1 = strlen(s1);
+	len2 = strlen(s2);
+	s = xrealloc(s1, len1 + len2 + 1);
+	memcpy(s + len1, s2, len2);
+	s[len1 + len2] = '\0';
+
+	return s;
+}
+
 static void
 keyboard_handle_key(struct keyboard *keyboard, uint32_t time, const struct key *key, struct input *input, enum wl_pointer_button_state state)
 {
-	const char *label = keyboard->state == keyboardstate_default ? key->label : key->alt;
-	xkb_mod_mask_t mod_mask = keyboard->state == keyboardstate_default ? 0 : keyboard->keyboard->keysym.shift_mask;
+	const char *label = NULL;
+
+	switch(keyboard->state) {
+	case KEYBOARD_STATE_DEFAULT :
+		label = key->label;
+		break;
+	case KEYBOARD_STATE_UPPERCASE :
+		label = key->uppercase;
+		break;
+	case KEYBOARD_STATE_SYMBOLS :
+		label = key->symbol;
+		break;
+	}
+
+	xkb_mod_mask_t mod_mask = keyboard->state == KEYBOARD_STATE_DEFAULT ? 0 : keyboard->keyboard->keysym.shift_mask;
 	uint32_t key_state = (state == WL_POINTER_BUTTON_STATE_PRESSED) ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED;
 
 	switch (key->key_type) {
@@ -501,8 +552,9 @@ keyboard_handle_key(struct keyboard *keyboard, uint32_t time, const struct key *
 			if (state != WL_POINTER_BUTTON_STATE_PRESSED)
 				break;
 
-			keyboard->keyboard->preedit_string = strcat(keyboard->keyboard->preedit_string,
-								    label);
+			keyboard->keyboard->preedit_string =
+				append(keyboard->keyboard->preedit_string,
+				       label);
 			virtual_keyboard_send_preedit(keyboard->keyboard, -1);
 			break;
 		case keytype_backspace:
@@ -526,21 +578,39 @@ keyboard_handle_key(struct keyboard *keyboard, uint32_t time, const struct key *
 		case keytype_space:
 			if (state != WL_POINTER_BUTTON_STATE_PRESSED)
 				break;
-			keyboard->keyboard->preedit_string = strcat(keyboard->keyboard->preedit_string,
-								    " ");
+			keyboard->keyboard->preedit_string =
+				append(keyboard->keyboard->preedit_string, " ");
 			virtual_keyboard_commit_preedit(keyboard->keyboard);
 			break;
 		case keytype_switch:
 			if (state != WL_POINTER_BUTTON_STATE_PRESSED)
 				break;
-			if (keyboard->state == keyboardstate_default)
-				keyboard->state = keyboardstate_uppercase;
-			else
-				keyboard->state = keyboardstate_default;
+			switch(keyboard->state) {
+			case KEYBOARD_STATE_DEFAULT:
+				keyboard->state = KEYBOARD_STATE_UPPERCASE;
+				break;
+			case KEYBOARD_STATE_UPPERCASE:
+				keyboard->state = KEYBOARD_STATE_DEFAULT;
+				break;
+			case KEYBOARD_STATE_SYMBOLS:
+				keyboard->state = KEYBOARD_STATE_UPPERCASE;
+				break;
+			}
 			break;
 		case keytype_symbols:
 			if (state != WL_POINTER_BUTTON_STATE_PRESSED)
 				break;
+			switch(keyboard->state) {
+			case KEYBOARD_STATE_DEFAULT:
+				keyboard->state = KEYBOARD_STATE_SYMBOLS;
+				break;
+			case KEYBOARD_STATE_UPPERCASE:
+				keyboard->state = KEYBOARD_STATE_SYMBOLS;
+				break;
+			case KEYBOARD_STATE_SYMBOLS:
+				keyboard->state = KEYBOARD_STATE_DEFAULT;
+				break;
+			}
 			break;
 		case keytype_tab:
 			virtual_keyboard_commit_preedit(keyboard->keyboard);
@@ -625,11 +695,9 @@ button_handler(struct widget *widget,
 }
 
 static void
-touch_down_handler(struct widget *widget, struct input *input,
-		   uint32_t serial, uint32_t time, int32_t id,
-		   float x, float y, void *data)
+touch_handler(struct input *input, uint32_t time,
+	      float x, float y, uint32_t state, void *data)
 {
-
 	struct keyboard *keyboard = data;
 	struct rectangle allocation;
 	int row, col;
@@ -648,20 +716,35 @@ touch_down_handler(struct widget *widget, struct input *input,
 	for (i = 0; i < layout->count; ++i) {
 		col -= layout->keys[i].width;
 		if (col < 0) {
-			keyboard_handle_key(keyboard, time, &layout->keys[i], input, WL_POINTER_BUTTON_STATE_PRESSED);
+			keyboard_handle_key(keyboard, time,
+					    &layout->keys[i], input, state);
 			break;
 		}
 	}
 
-	widget_schedule_redraw(widget);
+	widget_schedule_redraw(keyboard->widget);
+}
+
+static void
+touch_down_handler(struct widget *widget, struct input *input,
+		   uint32_t serial, uint32_t time, int32_t id,
+		   float x, float y, void *data)
+{
+  touch_handler(input, time, x, y, 
+		WL_POINTER_BUTTON_STATE_PRESSED, data);
 }
 
 static void
 touch_up_handler(struct widget *widget, struct input *input,
-				uint32_t serial, uint32_t time, int32_t id,
-				void *data)
+		 uint32_t serial, uint32_t time, int32_t id,
+		 void *data)
 {
+  float x, y;
 
+  input_get_touch(input, id, &x, &y);
+
+  touch_handler(input, time, x, y,
+		WL_POINTER_BUTTON_STATE_RELEASED, data);
 }
 
 static void
@@ -685,7 +768,7 @@ handle_reset(void *data,
 {
 	struct virtual_keyboard *keyboard = data;
 
-	fprintf(stderr, "Reset pre-edit buffer\n");
+	dbg("Reset pre-edit buffer\n");
 
 	if (strlen(keyboard->preedit_string)) {
 		free(keyboard->preedit_string);
@@ -732,7 +815,7 @@ handle_commit_state(void *data,
 	layout = get_current_layout(keyboard);
 
 	if (keyboard->surrounding_text)
-		fprintf(stderr, "Surrounding text updated: %s\n", keyboard->surrounding_text);
+		dbg("Surrounding text updated: %s\n", keyboard->surrounding_text);
 
 	window_schedule_resize(keyboard->keyboard->window,
 			       layout->columns * key_width,
@@ -778,7 +861,7 @@ input_method_activate(void *data,
 	struct wl_array modifiers_map;
 	const struct layout *layout;
 
-	keyboard->keyboard->state = keyboardstate_default;
+	keyboard->keyboard->state = KEYBOARD_STATE_DEFAULT;
 
 	if (keyboard->context)
 		wl_input_method_context_destroy(keyboard->context);
@@ -881,7 +964,6 @@ keyboard_create(struct output *output, struct virtual_keyboard *virtual_keyboard
 	widget_set_button_handler(keyboard->widget, button_handler);
 	widget_set_touch_down_handler(keyboard->widget, touch_down_handler);
 	widget_set_touch_up_handler(keyboard->widget, touch_up_handler);
-
 
 	window_schedule_resize(keyboard->window,
 			       layout->columns * key_width,

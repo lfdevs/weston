@@ -50,8 +50,6 @@
 #include <grp.h>
 #include <security/pam_appl.h>
 
-#include <xf86drm.h>
-
 #ifdef HAVE_SYSTEMD_LOGIN
 #include <systemd/sd-login.h>
 #endif
@@ -64,7 +62,31 @@
 #define KDSKBMUTE	0x4B51
 #endif
 
+#ifndef EVIOCREVOKE
+#define EVIOCREVOKE _IOW('E', 0x91, int)
+#endif
+
 #define MAX_ARGV_SIZE 256
+
+#ifdef HAVE_LIBDRM
+
+#include <xf86drm.h>
+
+#else
+
+static inline int
+drmDropMaster(int drm_fd)
+{
+	return 0;
+}
+
+static inline int
+drmSetMaster(int drm_fd)
+{
+	return 0;
+}
+
+#endif
 
 struct weston_launch {
 	struct pam_conv pc;
@@ -73,6 +95,7 @@ struct weston_launch {
 	int ttynr;
 	int sock[2];
 	int drm_fd;
+	int last_input_fd;
 	int kb_mode;
 	struct passwd *pw;
 
@@ -333,8 +356,11 @@ err0:
 	if (len < 0)
 		return -1;
 
-	if (major(s.st_rdev) == DRM_MAJOR)
+	if (fd != -1 && major(s.st_rdev) == DRM_MAJOR)
 		wl->drm_fd = fd;
+	if (fd != -1 && major(s.st_rdev) == INPUT_MAJOR &&
+	    wl->last_input_fd < fd)
+		wl->last_input_fd = fd;
 
 	return 0;
 }
@@ -399,11 +425,32 @@ quit(struct weston_launch *wl, int status)
 	if (ioctl(wl->tty, KDSETMODE, KD_TEXT))
 		fprintf(stderr, "failed to set KD_TEXT mode on tty: %m\n");
 
+	/* We have to drop master before we switch the VT back in
+	 * VT_AUTO, so we don't risk switching to a VT with another
+	 * display server, that will then fail to set drm master. */
+	drmDropMaster(wl->drm_fd);
+
 	mode.mode = VT_AUTO;
 	if (ioctl(wl->tty, VT_SETMODE, &mode) < 0)
 		fprintf(stderr, "could not reset vt handling\n");
 
 	exit(status);
+}
+
+static void
+close_input_fds(struct weston_launch *wl)
+{
+	struct stat s;
+	int fd;
+
+	for (fd = 3; fd <= wl->last_input_fd; fd++) {
+		if (fstat(fd, &s) == 0 && major(s.st_rdev) == INPUT_MAJOR) {
+			/* EVIOCREVOKE may fail if the kernel doesn't
+			 * support it, but all we can do is ignore it. */
+			ioctl(fd, EVIOCREVOKE, 0);
+			close(fd);
+		}
+	}
 }
 
 static int
@@ -444,6 +491,7 @@ handle_signal(struct weston_launch *wl)
 		break;
 	case SIGUSR1:
 		send_reply(wl, WESTON_LAUNCHER_DEACTIVATE);
+		close_input_fds(wl);
 		drmDropMaster(wl->drm_fd);
 		ioctl(wl->tty, VT_RELDISP, 1);
 		break;
@@ -596,7 +644,7 @@ launch_compositor(struct weston_launch *wl, int argc, char *argv[])
 	sigaddset(&mask, SIGINT);
 	sigprocmask(SIG_UNBLOCK, &mask, NULL);
 
-	child_argv[0] = wl->pw->pw_shell;
+	child_argv[0] = "/bin/sh";
 	child_argv[1] = "-l";
 	child_argv[2] = "-c";
 	child_argv[3] = BINDIR "/weston \"$@\"";

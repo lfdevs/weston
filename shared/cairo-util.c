@@ -320,12 +320,27 @@ load_cairo_surface(const char *filename)
 						   width, height, stride);
 }
 
+void
+theme_set_background_source(struct theme *t, cairo_t *cr, uint32_t flags)
+{
+	cairo_pattern_t *pattern;
+
+	if (flags & THEME_FRAME_ACTIVE) {
+		pattern = cairo_pattern_create_linear(16, 16, 16, 112);
+		cairo_pattern_add_color_stop_rgb(pattern, 0.0, 1.0, 1.0, 1.0);
+		cairo_pattern_add_color_stop_rgb(pattern, 0.2, 0.8, 0.8, 0.8);
+		cairo_set_source(cr, pattern);
+		cairo_pattern_destroy(pattern);
+	} else {
+		cairo_set_source_rgba(cr, 0.75, 0.75, 0.75, 1);
+	}
+}
+
 struct theme *
 theme_create(void)
 {
 	struct theme *t;
 	cairo_t *cr;
-	cairo_pattern_t *pattern;
 
 	t = malloc(sizeof *t);
 	if (t == NULL)
@@ -352,12 +367,7 @@ theme_create(void)
 	cr = cairo_create(t->active_frame);
 	cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
 
-	pattern = cairo_pattern_create_linear(16, 16, 16, 112);
-	cairo_pattern_add_color_stop_rgb(pattern, 0.0, 1.0, 1.0, 1.0);
-	cairo_pattern_add_color_stop_rgb(pattern, 0.2, 0.8, 0.8, 0.8);
-	cairo_set_source(cr, pattern);
-	cairo_pattern_destroy(pattern);
-
+	theme_set_background_source(t, cr, THEME_FRAME_ACTIVE);
 	rounded_rect(cr, 0, 0, 128, 128, t->frame_radius);
 	cairo_fill(cr);
 
@@ -370,7 +380,7 @@ theme_create(void)
 		cairo_image_surface_create (CAIRO_FORMAT_ARGB32, 128, 128);
 	cr = cairo_create(t->inactive_frame);
 	cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
-	cairo_set_source_rgba(cr, 0.75, 0.75, 0.75, 1);
+	theme_set_background_source(t, cr, 0);
 	rounded_rect(cr, 0, 0, 128, 128, t->frame_radius);
 	cairo_fill(cr);
 
@@ -408,7 +418,7 @@ theme_render_frame(struct theme *t,
 	cairo_text_extents_t extents;
 	cairo_font_extents_t font_extents;
 	cairo_surface_t *source;
-	int x, y, margin;
+	int x, y, margin, top_margin;
 
 	cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
 	cairo_set_source_rgba(cr, 0, 0, 0, 0);
@@ -429,40 +439,47 @@ theme_render_frame(struct theme *t,
 	else
 		source = t->inactive_frame;
 
+	if (title)
+		top_margin = t->titlebar_height;
+	else
+		top_margin = t->width;
+
 	tile_source(cr, source,
 		    margin, margin,
 		    width - margin * 2, height - margin * 2,
-		    t->width, t->titlebar_height);
+		    t->width, top_margin);
 
-	cairo_rectangle (cr, margin + t->width, margin,
-			 width - (margin + t->width) * 2,
-			 t->titlebar_height - t->width);
-	cairo_clip(cr);
+	if (title) {
+		cairo_rectangle (cr, margin + t->width, margin,
+				 width - (margin + t->width) * 2,
+				 t->titlebar_height - t->width);
+		cairo_clip(cr);
 
-	cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
-	cairo_select_font_face(cr, "sans",
-			       CAIRO_FONT_SLANT_NORMAL,
-			       CAIRO_FONT_WEIGHT_BOLD);
-	cairo_set_font_size(cr, 14);
-	cairo_text_extents(cr, title, &extents);
-	cairo_font_extents (cr, &font_extents);
-	x = (width - extents.width) / 2;
-	y = margin +
-		(t->titlebar_height -
-		 font_extents.ascent - font_extents.descent) / 2 +
-		font_extents.ascent;
+		cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+		cairo_select_font_face(cr, "sans",
+				       CAIRO_FONT_SLANT_NORMAL,
+				       CAIRO_FONT_WEIGHT_BOLD);
+		cairo_set_font_size(cr, 14);
+		cairo_text_extents(cr, title, &extents);
+		cairo_font_extents (cr, &font_extents);
+		x = (width - extents.width) / 2;
+		y = margin +
+			(t->titlebar_height -
+			 font_extents.ascent - font_extents.descent) / 2 +
+			font_extents.ascent;
 
-	if (flags & THEME_FRAME_ACTIVE) {
-		cairo_move_to(cr, x + 1, y  + 1);
-		cairo_set_source_rgb(cr, 1, 1, 1);
-		cairo_show_text(cr, title);
-		cairo_move_to(cr, x, y);
-		cairo_set_source_rgb(cr, 0, 0, 0);
-		cairo_show_text(cr, title);
-	} else {
-		cairo_move_to(cr, x, y);
-		cairo_set_source_rgb(cr, 0.4, 0.4, 0.4);
-		cairo_show_text(cr, title);
+		if (flags & THEME_FRAME_ACTIVE) {
+			cairo_move_to(cr, x + 1, y  + 1);
+			cairo_set_source_rgb(cr, 1, 1, 1);
+			cairo_show_text(cr, title);
+			cairo_move_to(cr, x, y);
+			cairo_set_source_rgb(cr, 0, 0, 0);
+			cairo_show_text(cr, title);
+		} else {
+			cairo_move_to(cr, x, y);
+			cairo_set_source_rgb(cr, 0.4, 0.4, 0.4);
+			cairo_show_text(cr, title);
+		}
 	}
 }
 
@@ -471,14 +488,24 @@ theme_get_location(struct theme *t, int x, int y,
 				int width, int height, int flags)
 {
 	int vlocation, hlocation, location;
-	const int grip_size = 8;
-	int margin;
+	int margin, top_margin, grip_size;
 
-	margin = (flags & THEME_FRAME_MAXIMIZED) ? 0 : t->margin;
+	if (flags & THEME_FRAME_MAXIMIZED) {
+		margin = 0;
+		grip_size = 0;
+	} else {
+		margin = t->margin;
+		grip_size = 8;
+	}
+
+	if (flags & THEME_FRAME_NO_TITLE)
+		top_margin = t->width;
+	else
+		top_margin = t->titlebar_height;
 
 	if (x < margin)
 		hlocation = THEME_LOCATION_EXTERIOR;
-	else if (margin <= x && x < margin + grip_size)
+	else if (x < margin + grip_size)
 		hlocation = THEME_LOCATION_RESIZING_LEFT;
 	else if (x < width - margin - grip_size)
 		hlocation = THEME_LOCATION_INTERIOR;
@@ -489,7 +516,7 @@ theme_get_location(struct theme *t, int x, int y,
 
 	if (y < margin)
 		vlocation = THEME_LOCATION_EXTERIOR;
-	else if (margin <= y && y < margin + grip_size)
+	else if (y < margin + grip_size)
 		vlocation = THEME_LOCATION_RESIZING_TOP;
 	else if (y < height - margin - grip_size)
 		vlocation = THEME_LOCATION_INTERIOR;
@@ -502,7 +529,7 @@ theme_get_location(struct theme *t, int x, int y,
 	if (location & THEME_LOCATION_EXTERIOR)
 		location = THEME_LOCATION_EXTERIOR;
 	if (location == THEME_LOCATION_INTERIOR &&
-	    y < margin + t->titlebar_height)
+	    y < margin + top_margin)
 		location = THEME_LOCATION_TITLEBAR;
 	else if (location == THEME_LOCATION_INTERIOR)
 		location = THEME_LOCATION_CLIENT_AREA;

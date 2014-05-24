@@ -31,6 +31,17 @@
 #include "../shared/os-compatibility.h"
 #include "weston-test-client-helper.h"
 
+static inline void *
+xzalloc(size_t size)
+{
+	void *p;
+
+	p = calloc(1, size);
+	assert(p);
+
+	return p;
+}
+
 int
 surface_contains(struct surface *surface, int x, int y)
 {
@@ -100,6 +111,17 @@ move_client(struct client *client, int x, int y)
 	frame_callback_wait(client, &done);
 }
 
+int
+get_n_egl_buffers(struct client *client)
+{
+	client->test->n_egl_buffers = -1;
+
+	wl_test_get_n_egl_buffers(client->test->wl_test);
+	wl_display_roundtrip(client->wl_display);
+
+	return client->test->n_egl_buffers;
+}
+
 static void
 pointer_handle_enter(void *data, struct wl_pointer *wl_pointer,
 		     uint32_t serial, struct wl_surface *wl_surface,
@@ -158,7 +180,8 @@ static void
 pointer_handle_axis(void *data, struct wl_pointer *wl_pointer,
 		    uint32_t time, uint32_t axis, wl_fixed_t value)
 {
-	fprintf(stderr, "test-client: got pointer axis %u %d\n", axis, value);
+	fprintf(stderr, "test-client: got pointer axis %u %f\n",
+		axis, wl_fixed_to_double(value));
 }
 
 static const struct wl_pointer_listener pointer_listener = {
@@ -328,8 +351,17 @@ test_handle_pointer_position(void *data, struct wl_test *wl_test,
 		test->pointer_x, test->pointer_y);
 }
 
+static void
+test_handle_n_egl_buffers(void *data, struct wl_test *wl_test, uint32_t n)
+{
+	struct test *test = data;
+
+	test->n_egl_buffers = n;
+}
+
 static const struct wl_test_listener test_listener = {
-	test_handle_pointer_position
+	test_handle_pointer_position,
+	test_handle_n_egl_buffers,
 };
 
 static void
@@ -341,7 +373,7 @@ seat_handle_capabilities(void *data, struct wl_seat *seat,
 	struct keyboard *keyboard;
 
 	if ((caps & WL_SEAT_CAPABILITY_POINTER) && !input->pointer) {
-		pointer = calloc(1, sizeof *pointer);
+		pointer = xzalloc(sizeof *pointer);
 		pointer->wl_pointer = wl_seat_get_pointer(seat);
 		wl_pointer_set_user_data(pointer->wl_pointer, pointer);
 		wl_pointer_add_listener(pointer->wl_pointer, &pointer_listener,
@@ -354,7 +386,7 @@ seat_handle_capabilities(void *data, struct wl_seat *seat,
 	}
 
 	if ((caps & WL_SEAT_CAPABILITY_KEYBOARD) && !input->keyboard) {
-		keyboard = calloc(1, sizeof *keyboard);
+		keyboard = xzalloc(sizeof *keyboard);
 		keyboard->wl_keyboard = wl_seat_get_keyboard(seat);
 		wl_keyboard_set_user_data(keyboard->wl_keyboard, keyboard);
 		wl_keyboard_add_listener(keyboard->wl_keyboard, &keyboard_listener,
@@ -419,8 +451,7 @@ handle_global(void *data, struct wl_registry *registry,
 	struct test *test;
 	struct global *global;
 
-	global = malloc(sizeof *global);
-	assert(global);
+	global = xzalloc(sizeof *global);
 	global->name = id;
 	global->interface = strdup(interface);
 	assert(interface);
@@ -432,7 +463,7 @@ handle_global(void *data, struct wl_registry *registry,
 			wl_registry_bind(registry, id,
 					 &wl_compositor_interface, 1);
 	} else if (strcmp(interface, "wl_seat") == 0) {
-		input = calloc(1, sizeof *input);
+		input = xzalloc(sizeof *input);
 		input->wl_seat =
 			wl_registry_bind(registry, id,
 					 &wl_seat_interface, 1);
@@ -444,7 +475,7 @@ handle_global(void *data, struct wl_registry *registry,
 					 &wl_shm_interface, 1);
 		wl_shm_add_listener(client->wl_shm, &shm_listener, client);
 	} else if (strcmp(interface, "wl_output") == 0) {
-		output = malloc(sizeof *output);
+		output = xzalloc(sizeof *output);
 		output->wl_output =
 			wl_registry_bind(registry, id,
 					 &wl_output_interface, 1);
@@ -452,7 +483,7 @@ handle_global(void *data, struct wl_registry *registry,
 				       &output_listener, output);
 		client->output = output;
 	} else if (strcmp(interface, "wl_test") == 0) {
-		test = calloc(1, sizeof *test);
+		test = xzalloc(sizeof *test);
 		test->wl_test =
 			wl_registry_bind(registry, id,
 					 &wl_test_interface, 1);
@@ -464,6 +495,22 @@ handle_global(void *data, struct wl_registry *registry,
 static const struct wl_registry_listener registry_listener = {
 	handle_global
 };
+
+void
+skip(const char *fmt, ...)
+{
+	va_list argp;
+
+	va_start(argp, fmt);
+	vfprintf(stderr, fmt, argp);
+	va_end(argp);
+
+	/* automake tests uses exit code 77. weston-test-runner will see
+	 * this and use it, and then weston-test's sigchld handler (in the
+	 * weston process) will use that as an exit status, which is what
+	 * automake will see in the end. */
+	exit(77);
+}
 
 static void
 log_handler(const char *fmt, va_list args)
@@ -481,7 +528,7 @@ client_create(int x, int y, int width, int height)
 	wl_log_set_handler_client(log_handler);
 
 	/* connect to display */
-	client = calloc(1, sizeof *client);
+	client = xzalloc(sizeof *client);
 	client->wl_display = wl_display_connect(NULL);
 	assert(client->wl_display);
 	wl_list_init(&client->global_list);
@@ -504,8 +551,7 @@ client_create(int x, int y, int width, int height)
 	assert(client->output);
 
 	/* initialize the client surface */
-	surface = calloc(1, sizeof *surface);
-
+	surface = xzalloc(sizeof *surface);
 	surface->wl_surface =
 		wl_compositor_create_surface(client->wl_compositor);
 	assert(surface->wl_surface);

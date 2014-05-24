@@ -20,10 +20,11 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include "config.h"
+
 #include <string.h>
 
 #include "weston-test-client-helper.h"
-#include "subsurface-client-protocol.h"
 #include <stdio.h>
 
 #define NUM_SUBSURFACES 3

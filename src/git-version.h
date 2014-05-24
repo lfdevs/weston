@@ -1,1 +1,1 @@
-#define BUILD_ID "1.3.0-dirty configure.ac: Bump version to 1.3 (2013-10-09 16:20:50 -0700)"
+#define BUILD_ID "1.4.93 configure.ac: Bump version 1.4.93 (2014-05-12 12:51:52 -0700)"

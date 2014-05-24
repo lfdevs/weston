@@ -21,12 +21,15 @@
  * OF THIS SOFTWARE.
  */
 
+#include "config.h"
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <errno.h>
 #include <math.h>
 #include <cairo.h>
 #include <sys/wait.h>
@@ -95,6 +98,7 @@ struct background {
 
 struct output {
 	struct wl_output *output;
+	uint32_t server_output_id;
 	struct wl_list link;
 
 	struct panel *panel;
@@ -142,7 +146,7 @@ sigchild_handler(int s)
 }
 
 static void
-menu_func(struct window *window, int index, void *data)
+menu_func(struct window *window, struct input *input, int index, void *data)
 {
 	printf("Selected index %d from a panel menu.\n", index);
 }
@@ -608,7 +612,7 @@ panel_add_launcher(struct panel *panel, const char *icon, const char *path)
 
 	launcher = xzalloc(sizeof *launcher);
 	launcher->icon = load_icon_or_fallback(icon);
-	launcher->path = strdup(path);
+	launcher->path = xstrdup(path);
 
 	wl_array_init(&launcher->envp);
 	wl_array_init(&launcher->argv);
@@ -705,6 +709,8 @@ background_draw(struct widget *widget, void *data)
 	image = NULL;
 	if (background->image)
 		image = load_cairo_surface(background->image);
+	else if (background->color == 0)
+		image = load_cairo_surface(DATADIR "/weston/pattern.png");
 
 	if (image && background->type != -1) {
 		im_w = cairo_image_surface_get_width(image);
@@ -718,6 +724,7 @@ background_draw(struct widget *widget, void *data)
 		case BACKGROUND_SCALE:
 			cairo_matrix_init_scale(&matrix, sx, sy);
 			cairo_pattern_set_matrix(pattern, &matrix);
+			cairo_pattern_set_extend(pattern, CAIRO_EXTEND_PAD);
 			break;
 		case BACKGROUND_SCALE_CROP:
 			s = (sx < sy) ? sx : sy;
@@ -727,6 +734,7 @@ background_draw(struct widget *widget, void *data)
 			cairo_matrix_init_translate(&matrix, tx, ty);
 			cairo_matrix_scale(&matrix, s, s);
 			cairo_pattern_set_matrix(pattern, &matrix);
+			cairo_pattern_set_extend(pattern, CAIRO_EXTEND_PAD);
 			break;
 		case BACKGROUND_TILE:
 			cairo_pattern_set_extend(pattern, CAIRO_EXTEND_REPEAT);
@@ -896,7 +904,7 @@ unlock_dialog_create(struct desktop *desktop)
 	dialog = xzalloc(sizeof *dialog);
 
 	dialog->window = window_create_custom(display);
-	dialog->widget = frame_create(dialog->window, dialog);
+	dialog->widget = window_frame_create(dialog->window, dialog);
 	window_set_title(dialog->window, "Unlock your desktop");
 
 	window_set_user_data(dialog->window, dialog);
@@ -1053,13 +1061,17 @@ background_create(struct desktop *desktop)
 
 	s = weston_config_get_section(desktop->config, "shell", NULL, NULL);
 	weston_config_section_get_string(s, "background-image",
-					 &background->image,
-					 DATADIR "/weston/pattern.png");
+					 &background->image, NULL);
 	weston_config_section_get_uint(s, "background-color",
-				       &background->color, 0xff002244);
+				       &background->color, 0);
 
 	weston_config_section_get_string(s, "background-type",
 					 &type, "tile");
+	if (type == NULL) {
+		fprintf(stderr, "%s: out of memory\n", program_invocation_short_name);
+		exit(EXIT_FAILURE);
+	}
+
 	if (strcmp(type, "scale") == 0) {
 		background->type = BACKGROUND_SCALE;
 	} else if (strcmp(type, "scale-crop") == 0) {
@@ -1213,6 +1225,7 @@ create_output(struct desktop *desktop, uint32_t id)
 
 	output->output =
 		display_bind(desktop->display, id, &wl_output_interface, 2);
+	output->server_output_id = id;
 
 	wl_output_add_listener(output->output, &output_listener, output);
 
@@ -1238,6 +1251,23 @@ global_handler(struct display *display, uint32_t id,
 		desktop_shell_add_listener(desktop->shell, &listener, desktop);
 	} else if (!strcmp(interface, "wl_output")) {
 		create_output(desktop, id);
+	}
+}
+
+static void
+global_handler_remove(struct display *display, uint32_t id,
+	       const char *interface, uint32_t version, void *data)
+{
+	struct desktop *desktop = data;
+	struct output *output;
+
+	if (!strcmp(interface, "wl_output")) {
+		wl_list_for_each(output, &desktop->outputs, link) {
+			if (output->server_output_id == id) {
+				output_destroy(output);
+				break;
+			}
+		}
 	}
 }
 
@@ -1298,6 +1328,7 @@ int main(int argc, char *argv[])
 
 	display_set_user_data(desktop.display, &desktop);
 	display_set_global_handler(desktop.display, global_handler);
+	display_set_global_handler_remove(desktop.display, global_handler_remove);
 
 	/* Create panel and background for outputs processed before the shell
 	 * global interface was processed */

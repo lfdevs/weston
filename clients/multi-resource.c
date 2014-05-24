@@ -81,6 +81,20 @@ static const struct wl_buffer_listener buffer_listener = {
 	buffer_release
 };
 
+static inline void *
+xzalloc(size_t s)
+{
+	void *p;
+
+	p = calloc(1, s);
+	if (p == NULL) {
+		fprintf(stderr, "%s: out of memory\n", program_invocation_short_name);
+		exit(EXIT_FAILURE);
+	}
+
+	return p;
+}
+
 static int
 attach_buffer(struct window *window, int width, int height)
 {
@@ -140,10 +154,7 @@ create_window(struct display *display, int width, int height)
 {
 	struct window *window;
 
-	window = calloc(1, sizeof *window);
-	if (!window)
-		return NULL;
-
+	window = xzalloc(sizeof *window);
 	window->display = display;
 	window->width = width;
 	window->height = height;
@@ -226,12 +237,7 @@ create_display(void)
 {
 	struct display *display;
 
-	display = malloc(sizeof *display);
-	if (display == NULL) {
-		fprintf(stderr, "out of memory\n");
-		exit(1);
-	}
-	memset(display, 0, sizeof *display);
+	display = xzalloc(sizeof *display);
 	display->display = wl_display_connect(NULL);
 	assert(display->display);
 
@@ -452,8 +458,7 @@ create_device(struct display *display, const char *time_desc, int type)
 		goto error;
 	}
 
-	device = malloc(sizeof *device);
-	memset(device, 0, sizeof(*device));
+	device = xzalloc(sizeof *device);
 	device->type = type;
 	device->start_time = start_time;
 	device->end_time = end_time;
@@ -552,8 +557,6 @@ main(int argc, char **argv)
 
 	display = create_display();
 	window = create_window(display, 250, 250);
-	if (!window)
-		return 1;
 
 	for (i = 1; i < argc; i++) {
 		if (!strncmp(argv[i], "-p", 2)) {

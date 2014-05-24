@@ -9,6 +9,9 @@
 /* Build the fbdev compositor */
 #undef BUILD_FBDEV_COMPOSITOR
 
+/* Build the libinput input device backend */
+#undef BUILD_LIBINPUT_BACKEND
+
 /* Build the RDP compositor */
 #undef BUILD_RDP_COMPOSITOR
 
@@ -42,11 +45,17 @@
 /* Have cairo-egl */
 #undef HAVE_CAIRO_EGL
 
+/* Build with dbus support */
+#undef HAVE_DBUS
+
 /* Define to 1 if you have the <dlfcn.h> header file. */
 #undef HAVE_DLFCN_H
 
 /* Define to 1 if you have the <execinfo.h> header file. */
 #undef HAVE_EXECINFO_H
+
+/* Define to 1 if you have the <freerdp/version.h> header file. */
+#undef HAVE_FREERDP_VERSION_H
 
 /* Define to 1 if you have the `initgroups' function. */
 #undef HAVE_INITGROUPS
@@ -57,6 +66,9 @@
 /* Have lcms support */
 #undef HAVE_LCMS
 
+/* Define if libdrm is available */
+#undef HAVE_LIBDRM
+
 /* Have libunwind support */
 #undef HAVE_LIBUNWIND
 
@@ -65,6 +77,9 @@
 
 /* Define to 1 if you have the `mkostemp' function. */
 #undef HAVE_MKOSTEMP
+
+/* Define to 1 if you have the `posix_fallocate' function. */
+#undef HAVE_POSIX_FALLOCATE
 
 /* Define to 1 if you have the <stdint.h> header file. */
 #undef HAVE_STDINT_H
@@ -83,6 +98,9 @@
 
 /* Have systemd-login */
 #undef HAVE_SYSTEMD_LOGIN
+
+/* Have systemd-login >= 209 */
+#undef HAVE_SYSTEMD_LOGIN_209
 
 /* Define to 1 if you have the <sys/stat.h> header file. */
 #undef HAVE_SYS_STAT_H
@@ -163,6 +181,9 @@
 
 /* The default backend to load, if not wayland nor x11. */
 #undef WESTON_NATIVE_BACKEND
+
+/* The default desktop shell client to load. */
+#undef WESTON_SHELL_CLIENT
 
 /* Enable large inode numbers on Mac OS X 10.5.  */
 #ifndef _DARWIN_USE_64_BIT_INODE

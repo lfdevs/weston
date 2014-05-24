@@ -20,11 +20,13 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include "config.h"
+
 #include <string.h>
 #include <stdio.h>
 #include <linux/input.h>
 #include "weston-test-client-helper.h"
-#include "../clients/text-client-protocol.h"
+#include "text-client-protocol.h"
 
 struct text_input_state {
 	int activated;

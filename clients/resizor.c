@@ -20,6 +20,8 @@
  * OF THIS SOFTWARE.
  */
 
+#include "config.h"
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -77,17 +79,20 @@ frame_callback(void *data, struct wl_callback *callback, uint32_t time)
 
 	assert(!callback || callback == resizor->frame_callback);
 
+	if (resizor->frame_callback) {
+		wl_callback_destroy(resizor->frame_callback);
+		resizor->frame_callback = NULL;
+	}
+
+	if (window_is_maximized(resizor->window))
+		return;
+
 	spring_update(&resizor->width);
 	spring_update(&resizor->height);
 
 	widget_schedule_resize(resizor->widget,
 			       resizor->width.current + 0.5,
 			       resizor->height.current + 0.5);
-
-	if (resizor->frame_callback) {
-		wl_callback_destroy(resizor->frame_callback);
-		resizor->frame_callback = NULL;
-	}
 
 	if (!spring_done(&resizor->width) || !spring_done(&resizor->height)) {
 		resizor->frame_callback =
@@ -195,7 +200,8 @@ key_handler(struct window *window, struct input *input, uint32_t time,
 }
 
 static void
-menu_func(struct window *window, int index, void *user_data)
+menu_func(struct window *window,
+	  struct input *input, int index, void *user_data)
 {
 	fprintf(stderr, "picked entry %d\n", index);
 }
@@ -235,7 +241,7 @@ resizor_create(struct display *display)
 
 	resizor = xzalloc(sizeof *resizor);
 	resizor->window = window_create(display);
-	resizor->widget = frame_create(resizor->window, resizor);
+	resizor->widget = window_frame_create(resizor->window, resizor);
 	window_set_title(resizor->window, "Wayland Resizor");
 	resizor->display = display;
 

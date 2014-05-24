@@ -60,7 +60,7 @@ finish_frame_handler(void *data)
 	return 1;
 }
 
-static void
+static int
 headless_output_repaint(struct weston_output *output_base,
 		       pixman_region32_t *damage)
 {
@@ -74,7 +74,7 @@ headless_output_repaint(struct weston_output *output_base,
 
 	wl_event_source_timer_update(output->finish_frame_timer, 16);
 
-	return;
+	return 0;
 }
 
 static void
@@ -114,8 +114,6 @@ headless_compositor_create_output(struct headless_compositor *c,
 	output->base.make = "weston";
 	output->base.model = "headless";
 
-	weston_output_move(&output->base, 0, 0);
-
 	loop = wl_display_get_event_loop(c->base.wl_display);
 	output->finish_frame_timer =
 		wl_event_loop_add_timer(loop, finish_frame_handler, output);
@@ -133,6 +131,25 @@ headless_compositor_create_output(struct headless_compositor *c,
 	return 0;
 }
 
+static int
+headless_input_create(struct headless_compositor *c)
+{
+	weston_seat_init(&c->fake_seat, &c->base, "default");
+
+	weston_seat_init_pointer(&c->fake_seat);
+
+	if (weston_seat_init_keyboard(&c->fake_seat, NULL) < 0)
+		return -1;
+
+	return 0;
+}
+
+static void
+headless_input_destroy(struct headless_compositor *c)
+{
+	weston_seat_release(&c->fake_seat);
+}
+
 static void
 headless_restore(struct weston_compositor *ec)
 {
@@ -143,9 +160,7 @@ headless_destroy(struct weston_compositor *ec)
 {
 	struct headless_compositor *c = (struct headless_compositor *) ec;
 
-	ec->renderer->destroy(ec);
-
-	weston_seat_release(&c->fake_seat);
+	headless_input_destroy(c);
 	weston_compositor_shutdown(ec);
 
 	free(ec);
@@ -166,19 +181,22 @@ headless_compositor_create(struct wl_display *display,
 	if (weston_compositor_init(&c->base, display, argc, argv, config) < 0)
 		goto err_free;
 
-	weston_seat_init(&c->fake_seat, &c->base, "default");
+	if (headless_input_create(c) < 0)
+		goto err_compositor;
 
 	c->base.destroy = headless_destroy;
 	c->base.restore = headless_restore;
 
 	if (headless_compositor_create_output(c, width, height) < 0)
-		goto err_compositor;
+		goto err_input;
 
 	if (noop_renderer_init(&c->base) < 0)
-		goto err_compositor;
+		goto err_input;
 
 	return &c->base;
 
+err_input:
+	headless_input_destroy(c);
 err_compositor:
 	weston_compositor_shutdown(&c->base);
 err_free:

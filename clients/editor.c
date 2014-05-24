@@ -110,11 +110,55 @@ utf8_next_char(const char *p)
 	return NULL;
 }
 
+static void
+move_up(const char *p, uint32_t *cursor)
+{
+	const char *posr, *posr_i;
+	char text[16];
+
+	xkb_keysym_to_utf8(XKB_KEY_Return, text, sizeof(text));
+
+	posr = strstr(p, text);
+	while (posr) {
+		if (*cursor > (unsigned)(posr-p)) {
+			posr_i = strstr(posr+1, text);
+			if (!posr_i || !(*cursor > (unsigned)(posr_i-p))) {
+				*cursor = posr-p;
+				break;
+			}
+			posr = posr_i;
+		} else {
+			break;
+		}
+	}
+}
+
+static void
+move_down(const char *p, uint32_t *cursor)
+{
+	const char *posr;
+	char text[16];
+
+	xkb_keysym_to_utf8(XKB_KEY_Return, text, sizeof(text));
+
+	posr = strstr(p, text);
+	while (posr) {
+		if (*cursor <= (unsigned)(posr-p)) {
+			*cursor = posr-p + 1;
+			break;
+		}
+		posr = strstr(posr+1, text);
+	}
+}
+
 static void text_entry_redraw_handler(struct widget *widget, void *data);
 static void text_entry_button_handler(struct widget *widget,
 				      struct input *input, uint32_t time,
 				      uint32_t button,
 				      enum wl_pointer_button_state state, void *data);
+static void text_entry_touch_handler(struct widget *widget, struct input *input,
+				     uint32_t serial, uint32_t time, int32_t id,
+				     float tx, float ty, void *data);
 static int text_entry_motion_handler(struct widget *widget,
 				     struct input *input, uint32_t time,
 				     float x, float y, void *data);
@@ -342,13 +386,7 @@ text_input_keysym(void *data,
 		  uint32_t modifiers)
 {
 	struct text_entry *entry = data;
-	const char *state_label = "release";
-	const char *key_label = "Unknown";
 	const char *new_char;
-
-	if (state == WL_KEYBOARD_KEY_STATE_PRESSED) {
-		state_label = "pressed";
-	}
 
 	if (key == XKB_KEY_Left ||
 	    key == XKB_KEY_Right) {
@@ -363,6 +401,23 @@ text_input_keysym(void *data,
 		if (new_char != NULL) {
 			entry->cursor = new_char - entry->text;
 		}
+
+		if (!(modifiers & entry->keysym.shift_mask))
+			entry->anchor = entry->cursor;
+		widget_schedule_redraw(entry->widget);
+
+		return;
+	}
+
+	if (key == XKB_KEY_Up ||
+	    key == XKB_KEY_Down) {
+		if (state != WL_KEYBOARD_KEY_STATE_RELEASED)
+			return;
+
+		if (key == XKB_KEY_Up)
+			move_up(entry->text, &entry->cursor);
+		else
+			move_down(entry->text, &entry->cursor);
 
 		if (!(modifiers & entry->keysym.shift_mask))
 			entry->anchor = entry->cursor;
@@ -392,17 +447,20 @@ text_input_keysym(void *data,
 		return;
 	}
 
-	switch (key) {
-		case XKB_KEY_Tab:
-			key_label = "Tab";
-			break;
-		case XKB_KEY_KP_Enter:
-		case XKB_KEY_Return:
-			key_label = "Enter";
-			break;
-	}
+	if (key == XKB_KEY_Tab ||
+	    key == XKB_KEY_KP_Enter ||
+	    key == XKB_KEY_Return) {
+		char text[16];
 
-	fprintf(stderr, "%s key was %s.\n", key_label, state_label);
+		if (state != WL_KEYBOARD_KEY_STATE_RELEASED)
+			return;
+
+		xkb_keysym_to_utf8(key, text, sizeof(text));
+
+		text_entry_insert_at_cursor(entry, text, 0, 0);
+
+		return;
+	}
 }
 
 static void
@@ -516,6 +574,7 @@ text_entry_create(struct editor *editor, const char *text)
 	widget_set_redraw_handler(entry->widget, text_entry_redraw_handler);
 	widget_set_button_handler(entry->widget, text_entry_button_handler);
 	widget_set_motion_handler(entry->widget, text_entry_motion_handler);
+	widget_set_touch_down_handler(entry->widget, text_entry_touch_handler);
 
 	return entry;
 }
@@ -952,7 +1011,17 @@ text_entry_draw_cursor(struct text_entry *entry, cairo_t *cr)
 	cairo_stroke(cr);
 }
 
-static const int text_offset_left = 10;
+static int
+text_offset_left(struct rectangle *allocation)
+{
+	return 10;
+}
+
+static int
+text_offset_top(struct rectangle *allocation)
+{
+	return allocation->height / 2;
+}
 
 static void
 text_entry_redraw_handler(struct widget *widget, void *data)
@@ -989,7 +1058,9 @@ text_entry_redraw_handler(struct widget *widget, void *data)
 
 	cairo_set_source_rgba(cr, 0, 0, 0, 1);
 
-	cairo_translate(cr, text_offset_left, allocation.height / 2);
+	cairo_translate(cr,
+			text_offset_left(&allocation),
+			text_offset_top(&allocation));
 
 	if (!entry->layout)
 		entry->layout = pango_cairo_create_layout(cr);
@@ -1016,6 +1087,7 @@ text_entry_motion_handler(struct widget *widget,
 {
 	struct text_entry *entry = data;
 	struct rectangle allocation;
+	int tx, ty;
 
 	if (!entry->button_pressed) {
 		return CURSOR_IBEAM;
@@ -1023,10 +1095,10 @@ text_entry_motion_handler(struct widget *widget,
 
 	widget_get_allocation(entry->widget, &allocation);
 
-	text_entry_set_cursor_position(entry,
-				       x - allocation.x - text_offset_left,
-				       y - allocation.y - text_offset_left,
-				       false);
+	tx = x - allocation.x - text_offset_left(&allocation);
+	ty = y - allocation.y - text_offset_top(&allocation);
+
+	text_entry_set_cursor_position(entry, tx, ty, false);
 
 	return CURSOR_IBEAM;
 }
@@ -1046,8 +1118,8 @@ text_entry_button_handler(struct widget *widget,
 	widget_get_allocation(entry->widget, &allocation);
 	input_get_position(input, &x, &y);
 
-	x -= allocation.x + text_offset_left;
-	y -= allocation.y + text_offset_left;
+	x -= allocation.x + text_offset_left(&allocation);
+	y -= allocation.y + text_offset_top(&allocation);
 
 	editor = window_get_user_data(entry->window);
 
@@ -1078,6 +1150,29 @@ text_entry_button_handler(struct widget *widget,
 }
 
 static void
+text_entry_touch_handler(struct widget *widget, struct input *input,
+			 uint32_t serial, uint32_t time, int32_t id,
+			 float tx, float ty, void *data)
+{
+	struct text_entry *entry = data;
+	struct wl_seat *seat = input_get_seat(input);
+	struct rectangle allocation;
+	struct editor *editor;
+	int32_t x, y;
+
+	widget_get_allocation(entry->widget, &allocation);
+
+	x = tx - (allocation.x + text_offset_left(&allocation));
+	y = ty - (allocation.y + text_offset_top(&allocation));
+
+	editor = window_get_user_data(entry->window);
+	text_entry_activate(entry, seat);
+	editor->active_entry = entry;
+
+	text_entry_set_cursor_position(entry, x, y, true);
+}
+
+static void
 editor_button_handler(struct widget *widget,
 		      struct input *input, uint32_t time,
 		      uint32_t button,
@@ -1096,6 +1191,29 @@ editor_button_handler(struct widget *widget,
 		text_entry_deactivate(editor->editor, seat);
 		editor->active_entry = NULL;
 	}
+}
+
+static void
+editor_touch_handler(struct widget *widget, struct input *input,
+		     uint32_t serial, uint32_t time, int32_t id,
+		     float tx, float ty, void *data)
+{
+	struct editor *editor = data;
+
+	struct wl_seat *seat = input_get_seat(input);
+
+	text_entry_deactivate(editor->entry, seat);
+	text_entry_deactivate(editor->editor, seat);
+	editor->active_entry = NULL;
+}
+
+static void
+keyboard_focus_handler(struct window *window,
+		       struct input *device, void *data)
+{
+	struct editor *editor = data;
+
+	window_schedule_redraw(editor->window);
 }
 
 static void
@@ -1157,6 +1275,22 @@ key_handler(struct window *window,
 					entry->anchor = entry->cursor;
 				widget_schedule_redraw(entry->widget);
 			}
+			break;
+		case XKB_KEY_Up:
+			text_entry_commit_and_reset(entry);
+
+			move_up(entry->text, &entry->cursor);
+			if (!(input_get_modifiers(input) & MOD_SHIFT_MASK))
+				entry->anchor = entry->cursor;
+			widget_schedule_redraw(entry->widget);
+			break;
+		case XKB_KEY_Down:
+			text_entry_commit_and_reset(entry);
+
+			move_down(entry->text, &entry->cursor);
+			if (!(input_get_modifiers(input) & MOD_SHIFT_MASK))
+				entry->anchor = entry->cursor;
+			widget_schedule_redraw(entry->widget);
 			break;
 		case XKB_KEY_Escape:
 			break;
@@ -1221,7 +1355,7 @@ main(int argc, char *argv[])
 	display_set_global_handler(editor.display, global_handler);
 
 	editor.window = window_create(editor.display);
-	editor.widget = frame_create(editor.window, &editor);
+	editor.widget = window_frame_create(editor.window, &editor);
 
 	editor.entry = text_entry_create(&editor, "Entry");
 	editor.entry->click_to_show = click_to_show;
@@ -1233,11 +1367,14 @@ main(int argc, char *argv[])
 
 	window_set_title(editor.window, "Text Editor");
 	window_set_key_handler(editor.window, key_handler);
+	window_set_keyboard_focus_handler(editor.window,
+					  keyboard_focus_handler);
 	window_set_user_data(editor.window, &editor);
 
 	widget_set_redraw_handler(editor.widget, redraw_handler);
 	widget_set_resize_handler(editor.widget, resize_handler);
 	widget_set_button_handler(editor.widget, editor_button_handler);
+	widget_set_touch_down_handler(editor.widget, editor_touch_handler);
 
 	window_schedule_resize(editor.window, 500, 400);
 

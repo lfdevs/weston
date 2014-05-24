@@ -32,17 +32,19 @@
 struct udev_seat {
 	struct weston_seat base;
 	struct wl_list devices_list;
+	struct wl_listener output_create_listener;
 };
 
 struct udev_input {
+	struct udev *udev;
 	struct udev_monitor *udev_monitor;
 	struct wl_event_source *udev_monitor_source;
 	char *seat_id;
 	struct weston_compositor *compositor;
+	int enabled;
 };
 
-
-int udev_input_enable(struct udev_input *input, struct udev *udev);
+int udev_input_enable(struct udev_input *input);
 void udev_input_disable(struct udev_input *input);
 int udev_input_init(struct udev_input *input,
 		    struct weston_compositor *c,
@@ -50,6 +52,6 @@ int udev_input_init(struct udev_input *input,
 		    const char *seat_id);
 void udev_input_destroy(struct udev_input *input);
 
-struct udev_seat *udev_seat_get_named(struct weston_compositor *c,
+struct udev_seat *udev_seat_get_named(struct udev_input *input,
 				      const char *seat_name);
 #endif

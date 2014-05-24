@@ -42,7 +42,7 @@
 #include "compositor.h"
 #include "launcher-util.h"
 #include "pixman-renderer.h"
-#include "udev-seat.h"
+#include "udev-input.h"
 #include "gl-renderer.h"
 
 struct fbdev_compositor {
@@ -94,6 +94,8 @@ struct fbdev_parameters {
 	char *device;
 	int use_gl;
 };
+
+struct gl_renderer_interface *gl_renderer;
 
 static const char default_seat[] = "seat0";
 
@@ -194,7 +196,7 @@ fbdev_output_repaint_pixman(struct weston_output *base, pixman_region32_t *damag
 	                             1000000 / output->mode.refresh);
 }
 
-static void
+static int
 fbdev_output_repaint(struct weston_output *base, pixman_region32_t *damage)
 {
 	struct fbdev_output *output = to_fbdev_output(base);
@@ -212,6 +214,8 @@ fbdev_output_repaint(struct weston_output *base, pixman_region32_t *damage)
 		wl_event_source_timer_update(output->finish_frame_timer,
 	                             1000000 / output->mode.refresh);
 	}
+
+	return 0;
 }
 
 static int
@@ -524,6 +528,8 @@ fbdev_output_create(struct fbdev_compositor *compositor,
 			weston_log("Mapping frame buffer failed.\n");
 			goto out_free;
 		}
+	} else {
+		close(fb_fd);
 	}
 
 	output->base.start_repaint_loop = fbdev_output_start_repaint_loop;
@@ -621,8 +627,10 @@ fbdev_output_create(struct fbdev_compositor *compositor,
 			goto out_shadow_surface;
 	} else {
 		setenv("HYBRIS_EGLPLATFORM", "wayland", 1);
-		if (gl_renderer_output_create(&output->base,
-					(EGLNativeWindowType)NULL) < 0) {
+		if (gl_renderer->output_create(&output->base,
+					       (EGLNativeWindowType)NULL,
+					       gl_renderer->opaque_attribs,
+					       NULL) < 0) {
 			weston_log("gl_renderer_output_create failed.\n");
 			goto out_shadow_surface;
 		}
@@ -682,11 +690,10 @@ fbdev_output_destroy(struct weston_output *base)
 			output->shadow_buf = NULL;
 		}
 	} else {
-		gl_renderer_output_destroy(base);
+		gl_renderer->output_destroy(base);
 	}
 
 	/* Remove the output. */
-	wl_list_remove(&output->base.link);
 	weston_output_destroy(&output->base);
 
 	free(output);
@@ -796,7 +803,6 @@ fbdev_compositor_destroy(struct weston_compositor *base)
 	weston_compositor_shutdown(&compositor->base);
 
 	/* Chain up. */
-	compositor->base.renderer->destroy(&compositor->base);
 	weston_launcher_destroy(compositor->base.launcher);
 
 	free(compositor);
@@ -810,7 +816,6 @@ session_notify(struct wl_listener *listener, void *data)
 
 	if (compositor->base.session_active) {
 		weston_log("entering VT\n");
-		compositor->base.focus = 1;
 		compositor->base.state = compositor->prev_state;
 
 		wl_list_for_each(output, &compositor->base.output_list, link) {
@@ -819,7 +824,7 @@ session_notify(struct wl_listener *listener, void *data)
 
 		weston_compositor_damage_all(&compositor->base);
 
-		udev_input_enable(&compositor->input, compositor->udev);
+		udev_input_enable(&compositor->input);
 	} else {
 		weston_log("leaving VT\n");
 		udev_input_disable(&compositor->input);
@@ -828,7 +833,6 @@ session_notify(struct wl_listener *listener, void *data)
 			fbdev_output_disable(output);
 		}
 
-		compositor->base.focus = 0;
 		compositor->prev_state = compositor->base.state;
 		weston_compositor_offscreen(&compositor->base);
 
@@ -879,15 +883,6 @@ fbdev_compositor_create(struct wl_display *display, int *argc, char *argv[],
 	                           config) < 0)
 		goto out_free;
 
-	/* Check if we run fbdev-backend using weston-launch */
-	compositor->base.launcher =
-		weston_launcher_connect(&compositor->base, param->tty);
-	if (compositor->base.launcher == NULL && geteuid() != 0) {
-		weston_log("fatal: fbdev backend should be run "
-			   "using weston-launch binary or as root\n");
-		goto out_compositor;
-	}
-
 	compositor->udev = udev_new();
 	if (compositor->udev == NULL) {
 		weston_log("Failed to initialize udev context.\n");
@@ -899,16 +894,16 @@ fbdev_compositor_create(struct wl_display *display, int *argc, char *argv[],
 	wl_signal_add(&compositor->base.session_signal,
 		      &compositor->session_listener);
 	compositor->base.launcher =
-		weston_launcher_connect(&compositor->base, param->tty);
+		weston_launcher_connect(&compositor->base, param->tty, "seat0");
 	if (!compositor->base.launcher) {
-		weston_log("Failed to set up launcher.\n");
+		weston_log("fatal: fbdev backend should be run "
+			   "using weston-launch binary or as root\n");
 		goto out_udev;
 	}
 
 	compositor->base.destroy = fbdev_compositor_destroy;
 	compositor->base.restore = fbdev_restore;
 
-	compositor->base.focus = 1;
 	compositor->prev_state = WESTON_COMPOSITOR_ACTIVE;
 	compositor->use_pixman = !param->use_gl;
 
@@ -921,8 +916,16 @@ fbdev_compositor_create(struct wl_display *display, int *argc, char *argv[],
 		if (pixman_renderer_init(&compositor->base) < 0)
 			goto out_launcher;
 	} else {
-		if (gl_renderer_create(&compositor->base, EGL_DEFAULT_DISPLAY,
-			gl_renderer_opaque_attribs, NULL) < 0) {
+		gl_renderer = weston_load_module("gl-renderer.so",
+						 "gl_renderer_interface");
+		if (!gl_renderer) {
+			weston_log("could not load gl renderer\n");
+			goto out_launcher;
+		}
+
+		if (gl_renderer->create(&compositor->base, EGL_DEFAULT_DISPLAY,
+					gl_renderer->opaque_attribs,
+					NULL) < 0) {
 			weston_log("gl_renderer_create failed.\n");
 			goto out_launcher;
 		}

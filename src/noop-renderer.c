@@ -49,22 +49,44 @@ noop_renderer_flush_damage(struct weston_surface *surface)
 static void
 noop_renderer_attach(struct weston_surface *es, struct weston_buffer *buffer)
 {
-}
+	struct wl_shm_buffer *shm_buffer;
+	uint8_t *data;
+	uint32_t size, i, width, height, stride;
+	volatile unsigned char unused = 0; /* volatile so it's not optimized out */
 
-static int
-noop_renderer_create_surface(struct weston_surface *surface)
-{
-	return 0;
+	if (!buffer)
+		return;
+
+	shm_buffer = wl_shm_buffer_get(buffer->resource);
+
+	if (!shm_buffer) {
+		weston_log("No-op renderer supports only SHM buffers\n");
+		return;
+	}
+
+	data = wl_shm_buffer_get_data(shm_buffer);
+	stride = wl_shm_buffer_get_stride(shm_buffer);
+	width = wl_shm_buffer_get_width(shm_buffer);
+	height = wl_shm_buffer_get_height(shm_buffer);
+	size = stride * height;
+
+	/* Access the buffer data to make sure the buffer's client gets killed
+	 * if the buffer size is invalid. This makes the bad_buffer test pass.
+	 * This can be removed if we start reading the buffer contents
+	 * somewhere else, e.g. in repaint_output(). */
+	wl_shm_buffer_begin_access(shm_buffer);
+	for (i = 0; i < size; i++)
+		unused ^= data[i];
+	wl_shm_buffer_end_access(shm_buffer);
+
+	buffer->shm_buffer = shm_buffer;
+	buffer->width = width;
+	buffer->height = height;
 }
 
 static void
 noop_renderer_surface_set_color(struct weston_surface *surface,
 		 float red, float green, float blue, float alpha)
-{
-}
-
-static void
-noop_renderer_destroy_surface(struct weston_surface *surface)
 {
 }
 
@@ -88,9 +110,7 @@ noop_renderer_init(struct weston_compositor *ec)
 	renderer->repaint_output = noop_renderer_repaint_output;
 	renderer->flush_damage = noop_renderer_flush_damage;
 	renderer->attach = noop_renderer_attach;
-	renderer->create_surface = noop_renderer_create_surface;
 	renderer->surface_set_color = noop_renderer_surface_set_color;
-	renderer->destroy_surface = noop_renderer_destroy_surface;
 	renderer->destroy = noop_renderer_destroy;
 	ec->renderer = renderer;
 

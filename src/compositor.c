@@ -53,7 +53,7 @@
 #endif
 
 #include "compositor.h"
-#include "subsurface-server-protocol.h"
+#include "scaler-server-protocol.h"
 #include "../shared/os-compatibility.h"
 #include "git-version.h"
 #include "version.h"
@@ -93,7 +93,7 @@ weston_output_transform_scale_init(struct weston_output *output,
 				   uint32_t transform, uint32_t scale);
 
 static void
-weston_compositor_build_surface_list(struct weston_compositor *compositor);
+weston_compositor_build_view_list(struct weston_compositor *compositor);
 
 WL_EXPORT int
 weston_output_switch_mode(struct weston_output *output, struct weston_mode *mode,
@@ -138,7 +138,6 @@ weston_output_switch_mode(struct weston_output *output, struct weston_mode *mode
 		if (ret < 0)
 			return ret;
 
-		output->current_mode = mode;
 		output->current_scale = scale;
 		break;
 	case WESTON_MODE_SWITCH_RESTORE_NATIVE:
@@ -347,6 +346,44 @@ region_init_infinite(pixman_region32_t *region)
 static struct weston_subsurface *
 weston_surface_to_subsurface(struct weston_surface *surface);
 
+WL_EXPORT struct weston_view *
+weston_view_create(struct weston_surface *surface)
+{
+	struct weston_view *view;
+
+	view = calloc(1, sizeof *view);
+	if (view == NULL)
+		return NULL;
+
+	view->surface = surface;
+
+	/* Assign to surface */
+	wl_list_insert(&surface->views, &view->surface_link);
+
+	wl_signal_init(&view->destroy_signal);
+	wl_list_init(&view->link);
+	wl_list_init(&view->layer_link);
+
+	view->plane = NULL;
+
+	pixman_region32_init(&view->clip);
+
+	view->alpha = 1.0;
+	pixman_region32_init(&view->transform.opaque);
+
+	wl_list_init(&view->geometry.transformation_list);
+	wl_list_insert(&view->geometry.transformation_list,
+		       &view->transform.position.link);
+	weston_matrix_init(&view->transform.position.matrix);
+	wl_list_init(&view->geometry.child_list);
+	pixman_region32_init(&view->transform.boundingbox);
+	view->transform.dirty = 1;
+
+	view->output = NULL;
+
+	return view;
+}
+
 WL_EXPORT struct weston_surface *
 weston_surface_create(struct weston_compositor *compositor)
 {
@@ -360,40 +397,26 @@ weston_surface_create(struct weston_compositor *compositor)
 
 	surface->resource = NULL;
 
-	wl_list_init(&surface->link);
-	wl_list_init(&surface->layer_link);
-
 	surface->compositor = compositor;
-	surface->alpha = 1.0;
 	surface->ref_count = 1;
 
-	if (compositor->renderer->create_surface(surface) < 0) {
-		free(surface);
-		return NULL;
-	}
-
-	surface->buffer_transform = WL_OUTPUT_TRANSFORM_NORMAL;
-	surface->buffer_scale = 1;
-	surface->pending.buffer_transform = surface->buffer_transform;
-	surface->pending.buffer_scale = surface->buffer_scale;
+	surface->buffer_viewport.buffer.transform = WL_OUTPUT_TRANSFORM_NORMAL;
+	surface->buffer_viewport.buffer.scale = 1;
+	surface->buffer_viewport.buffer.src_width = wl_fixed_from_int(-1);
+	surface->buffer_viewport.surface.width = -1;
+	surface->pending.buffer_viewport = surface->buffer_viewport;
 	surface->output = NULL;
-	surface->plane = &compositor->primary_plane;
 	surface->pending.newly_attached = 0;
+
+	surface->viewport_resource = NULL;
 
 	pixman_region32_init(&surface->damage);
 	pixman_region32_init(&surface->opaque);
-	pixman_region32_init(&surface->clip);
 	region_init_infinite(&surface->input);
-	pixman_region32_init(&surface->transform.opaque);
-	wl_list_init(&surface->frame_callback_list);
 
-	wl_list_init(&surface->geometry.transformation_list);
-	wl_list_insert(&surface->geometry.transformation_list,
-		       &surface->transform.position.link);
-	weston_matrix_init(&surface->transform.position.matrix);
-	wl_list_init(&surface->geometry.child_list);
-	pixman_region32_init(&surface->transform.boundingbox);
-	surface->transform.dirty = 1;
+	wl_list_init(&surface->views);
+
+	wl_list_init(&surface->frame_callback_list);
 
 	surface->pending.buffer_destroy_listener.notify =
 		surface_handle_pending_buffer_destroy;
@@ -416,13 +439,13 @@ weston_surface_set_color(struct weston_surface *surface,
 }
 
 WL_EXPORT void
-weston_surface_to_global_float(struct weston_surface *surface,
-			       float sx, float sy, float *x, float *y)
+weston_view_to_global_float(struct weston_view *view,
+			    float sx, float sy, float *x, float *y)
 {
-	if (surface->transform.enabled) {
+	if (view->transform.enabled) {
 		struct weston_vector v = { { sx, sy, 0.0f, 1.0f } };
 
-		weston_matrix_transform(&surface->transform.matrix, &v);
+		weston_matrix_transform(&view->transform.matrix, &v);
 
 		if (fabsf(v.f[3]) < 1e-6) {
 			weston_log("warning: numerical instability in "
@@ -436,8 +459,8 @@ weston_surface_to_global_float(struct weston_surface *surface,
 		*x = v.f[0] / v.f[3];
 		*y = v.f[1] / v.f[3];
 	} else {
-		*x = sx + surface->geometry.x;
-		*y = sy + surface->geometry.y;
+		*x = sx + view->geometry.x;
+		*y = sy + view->geometry.y;
 	}
 }
 
@@ -522,14 +545,140 @@ weston_transformed_rect(int width, int height,
 }
 
 WL_EXPORT void
+weston_transformed_region(int width, int height,
+			  enum wl_output_transform transform,
+			  int32_t scale,
+			  pixman_region32_t *src, pixman_region32_t *dest)
+{
+	pixman_box32_t *src_rects, *dest_rects;
+	int nrects, i;
+
+	if (transform == WL_OUTPUT_TRANSFORM_NORMAL && scale == 1) {
+		if (src != dest)
+			pixman_region32_copy(dest, src);
+		return;
+	}
+
+	src_rects = pixman_region32_rectangles(src, &nrects);
+	dest_rects = malloc(nrects * sizeof(*dest_rects));
+	if (!dest_rects)
+		return;
+
+	if (transform == WL_OUTPUT_TRANSFORM_NORMAL) {
+		memcpy(dest_rects, src_rects, nrects * sizeof(*dest_rects));
+	} else {
+		for (i = 0; i < nrects; i++) {
+			switch (transform) {
+			default:
+			case WL_OUTPUT_TRANSFORM_NORMAL:
+				dest_rects[i].x1 = src_rects[i].x1;
+				dest_rects[i].y1 = src_rects[i].y1;
+				dest_rects[i].x2 = src_rects[i].x2;
+				dest_rects[i].y2 = src_rects[i].y2;
+				break;
+			case WL_OUTPUT_TRANSFORM_90:
+				dest_rects[i].x1 = height - src_rects[i].y2;
+				dest_rects[i].y1 = src_rects[i].x1;
+				dest_rects[i].x2 = height - src_rects[i].y1;
+				dest_rects[i].y2 = src_rects[i].x2;
+				break;
+			case WL_OUTPUT_TRANSFORM_180:
+				dest_rects[i].x1 = width - src_rects[i].x2;
+				dest_rects[i].y1 = height - src_rects[i].y2;
+				dest_rects[i].x2 = width - src_rects[i].x1;
+				dest_rects[i].y2 = height - src_rects[i].y1;
+				break;
+			case WL_OUTPUT_TRANSFORM_270:
+				dest_rects[i].x1 = src_rects[i].y1;
+				dest_rects[i].y1 = width - src_rects[i].x2;
+				dest_rects[i].x2 = src_rects[i].y2;
+				dest_rects[i].y2 = width - src_rects[i].x1;
+				break;
+			case WL_OUTPUT_TRANSFORM_FLIPPED:
+				dest_rects[i].x1 = width - src_rects[i].x2;
+				dest_rects[i].y1 = src_rects[i].y1;
+				dest_rects[i].x2 = width - src_rects[i].x1;
+				dest_rects[i].y2 = src_rects[i].y2;
+				break;
+			case WL_OUTPUT_TRANSFORM_FLIPPED_90:
+				dest_rects[i].x1 = height - src_rects[i].y2;
+				dest_rects[i].y1 = width - src_rects[i].x2;
+				dest_rects[i].x2 = height - src_rects[i].y1;
+				dest_rects[i].y2 = width - src_rects[i].x1;
+				break;
+			case WL_OUTPUT_TRANSFORM_FLIPPED_180:
+				dest_rects[i].x1 = src_rects[i].x1;
+				dest_rects[i].y1 = height - src_rects[i].y2;
+				dest_rects[i].x2 = src_rects[i].x2;
+				dest_rects[i].y2 = height - src_rects[i].y1;
+				break;
+			case WL_OUTPUT_TRANSFORM_FLIPPED_270:
+				dest_rects[i].x1 = src_rects[i].y1;
+				dest_rects[i].y1 = src_rects[i].x1;
+				dest_rects[i].x2 = src_rects[i].y2;
+				dest_rects[i].y2 = src_rects[i].x2;
+				break;
+			}
+		}
+	}
+
+	if (scale != 1) {
+		for (i = 0; i < nrects; i++) {
+			dest_rects[i].x1 *= scale;
+			dest_rects[i].x2 *= scale;
+			dest_rects[i].y1 *= scale;
+			dest_rects[i].y2 *= scale;
+		}
+	}
+
+	pixman_region32_clear(dest);
+	pixman_region32_init_rects(dest, dest_rects, nrects);
+	free(dest_rects);
+}
+
+static void
+scaler_surface_to_buffer(struct weston_surface *surface,
+			 float sx, float sy, float *bx, float *by)
+{
+	struct weston_buffer_viewport *vp = &surface->buffer_viewport;
+	double src_width, src_height;
+	double src_x, src_y;
+
+	if (vp->buffer.src_width == wl_fixed_from_int(-1)) {
+		if (vp->surface.width == -1) {
+			*bx = sx;
+			*by = sy;
+			return;
+		}
+
+		src_x = 0.0;
+		src_y = 0.0;
+		src_width = surface->width_from_buffer;
+		src_height = surface->height_from_buffer;
+	} else {
+		src_x = wl_fixed_to_double(vp->buffer.src_x);
+		src_y = wl_fixed_to_double(vp->buffer.src_y);
+		src_width = wl_fixed_to_double(vp->buffer.src_width);
+		src_height = wl_fixed_to_double(vp->buffer.src_height);
+	}
+
+	*bx = sx * src_width / surface->width + src_x;
+	*by = sy * src_height / surface->height + src_y;
+}
+
+WL_EXPORT void
 weston_surface_to_buffer_float(struct weston_surface *surface,
 			       float sx, float sy, float *bx, float *by)
 {
-	weston_transformed_coord(surface->geometry.width,
-				 surface->geometry.height,
-				 surface->buffer_transform,
-				 surface->buffer_scale,
-				 sx, sy, bx, by);
+	struct weston_buffer_viewport *vp = &surface->buffer_viewport;
+
+	/* first transform coordinates if the scaler is set */
+	scaler_surface_to_buffer(surface, sx, sy, bx, by);
+
+	weston_transformed_coord(surface->width_from_buffer,
+				 surface->height_from_buffer,
+				 vp->buffer.transform, vp->buffer.scale,
+				 *bx, *by, bx, by);
 }
 
 WL_EXPORT void
@@ -538,11 +687,9 @@ weston_surface_to_buffer(struct weston_surface *surface,
 {
 	float bxf, byf;
 
-	weston_transformed_coord(surface->geometry.width,
-				 surface->geometry.height,
-				 surface->buffer_transform,
-				 surface->buffer_scale,
-				 sx, sy, &bxf, &byf);
+	weston_surface_to_buffer_float(surface,
+				       sx, sy, &bxf, &byf);
+
 	*bx = floorf(bxf);
 	*by = floorf(byf);
 }
@@ -551,36 +698,49 @@ WL_EXPORT pixman_box32_t
 weston_surface_to_buffer_rect(struct weston_surface *surface,
 			      pixman_box32_t rect)
 {
-	return weston_transformed_rect(surface->geometry.width,
-				       surface->geometry.height,
-				       surface->buffer_transform,
-				       surface->buffer_scale,
+	struct weston_buffer_viewport *vp = &surface->buffer_viewport;
+	float xf, yf;
+
+	/* first transform box coordinates if the scaler is set */
+	scaler_surface_to_buffer(surface, rect.x1, rect.y1, &xf, &yf);
+	rect.x1 = floorf(xf);
+	rect.y1 = floorf(yf);
+
+	scaler_surface_to_buffer(surface, rect.x2, rect.y2, &xf, &yf);
+	rect.x2 = floorf(xf);
+	rect.y2 = floorf(yf);
+
+	return weston_transformed_rect(surface->width_from_buffer,
+				       surface->height_from_buffer,
+				       vp->buffer.transform, vp->buffer.scale,
 				       rect);
 }
 
 WL_EXPORT void
-weston_surface_move_to_plane(struct weston_surface *surface,
+weston_view_move_to_plane(struct weston_view *view,
 			     struct weston_plane *plane)
 {
-	if (surface->plane == plane)
+	if (view->plane == plane)
 		return;
 
-	weston_surface_damage_below(surface);
-	surface->plane = plane;
-	weston_surface_damage(surface);
+	weston_view_damage_below(view);
+	view->plane = plane;
+	weston_surface_damage(view->surface);
 }
 
 WL_EXPORT void
-weston_surface_damage_below(struct weston_surface *surface)
+weston_view_damage_below(struct weston_view *view)
 {
 	pixman_region32_t damage;
 
 	pixman_region32_init(&damage);
-	pixman_region32_subtract(&damage, &surface->transform.boundingbox,
-				 &surface->clip);
-	pixman_region32_union(&surface->plane->damage,
-			      &surface->plane->damage, &damage);
+	pixman_region32_subtract(&damage, &view->transform.boundingbox,
+				 &view->clip);
+	if (view->plane)
+		pixman_region32_union(&view->plane->damage,
+				      &view->plane->damage, &damage);
 	pixman_region32_fini(&damage);
+	weston_view_schedule_repaint(view);
 }
 
 static void
@@ -615,10 +775,47 @@ weston_surface_update_output_mask(struct weston_surface *es, uint32_t mask)
 	}
 }
 
+
 static void
 weston_surface_assign_output(struct weston_surface *es)
 {
-	struct weston_compositor *ec = es->compositor;
+	struct weston_output *new_output;
+	struct weston_view *view;
+	pixman_region32_t region;
+	uint32_t max, area, mask;
+	pixman_box32_t *e;
+
+	new_output = NULL;
+	max = 0;
+	mask = 0;
+	pixman_region32_init(&region);
+	wl_list_for_each(view, &es->views, surface_link) {
+		if (!view->output)
+			continue;
+
+		pixman_region32_intersect(&region, &view->transform.boundingbox,
+					  &view->output->region);
+
+		e = pixman_region32_extents(&region);
+		area = (e->x2 - e->x1) * (e->y2 - e->y1);
+
+		mask |= view->output_mask;
+
+		if (area >= max) {
+			new_output = view->output;
+			max = area;
+		}
+	}
+	pixman_region32_fini(&region);
+
+	es->output = new_output;
+	weston_surface_update_output_mask(es, mask);
+}
+
+static void
+weston_view_assign_output(struct weston_view *ev)
+{
+	struct weston_compositor *ec = ev->surface->compositor;
 	struct weston_output *output, *new_output;
 	pixman_region32_t region;
 	uint32_t max, area, mask;
@@ -629,7 +826,7 @@ weston_surface_assign_output(struct weston_surface *es)
 	mask = 0;
 	pixman_region32_init(&region);
 	wl_list_for_each(output, &ec->output_list, link) {
-		pixman_region32_intersect(&region, &es->transform.boundingbox,
+		pixman_region32_intersect(&region, &ev->transform.boundingbox,
 					  &output->region);
 
 		e = pixman_region32_extents(&region);
@@ -645,14 +842,16 @@ weston_surface_assign_output(struct weston_surface *es)
 	}
 	pixman_region32_fini(&region);
 
-	es->output = new_output;
-	weston_surface_update_output_mask(es, mask);
+	ev->output = new_output;
+	ev->output_mask = mask;
+
+	weston_surface_assign_output(ev->surface);
 }
 
 static void
-surface_compute_bbox(struct weston_surface *surface, int32_t sx, int32_t sy,
-		     int32_t width, int32_t height,
-		     pixman_region32_t *bbox)
+view_compute_bbox(struct weston_view *view, int32_t sx, int32_t sy,
+		  int32_t width, int32_t height,
+		  pixman_region32_t *bbox)
 {
 	float min_x = HUGE_VALF,  min_y = HUGE_VALF;
 	float max_x = -HUGE_VALF, max_y = -HUGE_VALF;
@@ -673,8 +872,7 @@ surface_compute_bbox(struct weston_surface *surface, int32_t sx, int32_t sy,
 
 	for (i = 0; i < 4; ++i) {
 		float x, y;
-		weston_surface_to_global_float(surface,
-					       s[i][0], s[i][1], &x, &y);
+		weston_view_to_global_float(view, s[i][0], s[i][1], &x, &y);
 		if (x < min_x)
 			min_x = x;
 		if (x > max_x)
@@ -692,57 +890,57 @@ surface_compute_bbox(struct weston_surface *surface, int32_t sx, int32_t sy,
 }
 
 static void
-weston_surface_update_transform_disable(struct weston_surface *surface)
+weston_view_update_transform_disable(struct weston_view *view)
 {
-	surface->transform.enabled = 0;
+	view->transform.enabled = 0;
 
 	/* round off fractions when not transformed */
-	surface->geometry.x = roundf(surface->geometry.x);
-	surface->geometry.y = roundf(surface->geometry.y);
+	view->geometry.x = roundf(view->geometry.x);
+	view->geometry.y = roundf(view->geometry.y);
 
 	/* Otherwise identity matrix, but with x and y translation. */
-	surface->transform.position.matrix.type = WESTON_MATRIX_TRANSFORM_TRANSLATE;
-	surface->transform.position.matrix.d[12] = surface->geometry.x;
-	surface->transform.position.matrix.d[13] = surface->geometry.y;
+	view->transform.position.matrix.type = WESTON_MATRIX_TRANSFORM_TRANSLATE;
+	view->transform.position.matrix.d[12] = view->geometry.x;
+	view->transform.position.matrix.d[13] = view->geometry.y;
 
-	surface->transform.matrix = surface->transform.position.matrix;
+	view->transform.matrix = view->transform.position.matrix;
 
-	surface->transform.inverse = surface->transform.position.matrix;
-	surface->transform.inverse.d[12] = -surface->geometry.x;
-	surface->transform.inverse.d[13] = -surface->geometry.y;
+	view->transform.inverse = view->transform.position.matrix;
+	view->transform.inverse.d[12] = -view->geometry.x;
+	view->transform.inverse.d[13] = -view->geometry.y;
 
-	pixman_region32_init_rect(&surface->transform.boundingbox,
-				  surface->geometry.x,
-				  surface->geometry.y,
-				  surface->geometry.width,
-				  surface->geometry.height);
+	pixman_region32_init_rect(&view->transform.boundingbox,
+				  view->geometry.x,
+				  view->geometry.y,
+				  view->surface->width,
+				  view->surface->height);
 
-	if (surface->alpha == 1.0) {
-		pixman_region32_copy(&surface->transform.opaque,
-				     &surface->opaque);
-		pixman_region32_translate(&surface->transform.opaque,
-					  surface->geometry.x,
-					  surface->geometry.y);
+	if (view->alpha == 1.0) {
+		pixman_region32_copy(&view->transform.opaque,
+				     &view->surface->opaque);
+		pixman_region32_translate(&view->transform.opaque,
+					  view->geometry.x,
+					  view->geometry.y);
 	}
 }
 
 static int
-weston_surface_update_transform_enable(struct weston_surface *surface)
+weston_view_update_transform_enable(struct weston_view *view)
 {
-	struct weston_surface *parent = surface->geometry.parent;
-	struct weston_matrix *matrix = &surface->transform.matrix;
-	struct weston_matrix *inverse = &surface->transform.inverse;
+	struct weston_view *parent = view->geometry.parent;
+	struct weston_matrix *matrix = &view->transform.matrix;
+	struct weston_matrix *inverse = &view->transform.inverse;
 	struct weston_transform *tform;
 
-	surface->transform.enabled = 1;
+	view->transform.enabled = 1;
 
 	/* Otherwise identity matrix, but with x and y translation. */
-	surface->transform.position.matrix.type = WESTON_MATRIX_TRANSFORM_TRANSLATE;
-	surface->transform.position.matrix.d[12] = surface->geometry.x;
-	surface->transform.position.matrix.d[13] = surface->geometry.y;
+	view->transform.position.matrix.type = WESTON_MATRIX_TRANSFORM_TRANSLATE;
+	view->transform.position.matrix.d[12] = view->geometry.x;
+	view->transform.position.matrix.d[13] = view->geometry.y;
 
 	weston_matrix_init(matrix);
-	wl_list_for_each(tform, &surface->geometry.transformation_list, link)
+	wl_list_for_each(tform, &view->geometry.transformation_list, link)
 		weston_matrix_multiply(matrix, &tform->matrix);
 
 	if (parent)
@@ -750,143 +948,144 @@ weston_surface_update_transform_enable(struct weston_surface *surface)
 
 	if (weston_matrix_invert(inverse, matrix) < 0) {
 		/* Oops, bad total transformation, not invertible */
-		weston_log("error: weston_surface %p"
-			" transformation not invertible.\n", surface);
+		weston_log("error: weston_view %p"
+			" transformation not invertible.\n", view);
 		return -1;
 	}
 
-	surface_compute_bbox(surface, 0, 0, surface->geometry.width,
-			     surface->geometry.height,
-			     &surface->transform.boundingbox);
+	view_compute_bbox(view, 0, 0,
+			  view->surface->width, view->surface->height,
+			  &view->transform.boundingbox);
 
 	return 0;
 }
 
 WL_EXPORT void
-weston_surface_update_transform(struct weston_surface *surface)
+weston_view_update_transform(struct weston_view *view)
 {
-	struct weston_surface *parent = surface->geometry.parent;
+	struct weston_view *parent = view->geometry.parent;
 
-	if (!surface->transform.dirty)
+	if (!view->transform.dirty)
 		return;
 
 	if (parent)
-		weston_surface_update_transform(parent);
+		weston_view_update_transform(parent);
 
-	surface->transform.dirty = 0;
+	view->transform.dirty = 0;
 
-	weston_surface_damage_below(surface);
+	weston_view_damage_below(view);
 
-	pixman_region32_fini(&surface->transform.boundingbox);
-	pixman_region32_fini(&surface->transform.opaque);
-	pixman_region32_init(&surface->transform.opaque);
+	pixman_region32_fini(&view->transform.boundingbox);
+	pixman_region32_fini(&view->transform.opaque);
+	pixman_region32_init(&view->transform.opaque);
 
 	/* transform.position is always in transformation_list */
-	if (surface->geometry.transformation_list.next ==
-	    &surface->transform.position.link &&
-	    surface->geometry.transformation_list.prev ==
-	    &surface->transform.position.link &&
+	if (view->geometry.transformation_list.next ==
+	    &view->transform.position.link &&
+	    view->geometry.transformation_list.prev ==
+	    &view->transform.position.link &&
 	    !parent) {
-		weston_surface_update_transform_disable(surface);
+		weston_view_update_transform_disable(view);
 	} else {
-		if (weston_surface_update_transform_enable(surface) < 0)
-			weston_surface_update_transform_disable(surface);
+		if (weston_view_update_transform_enable(view) < 0)
+			weston_view_update_transform_disable(view);
 	}
 
-	weston_surface_damage_below(surface);
+	weston_view_damage_below(view);
 
-	weston_surface_assign_output(surface);
+	weston_view_assign_output(view);
 
-	wl_signal_emit(&surface->compositor->transform_signal, surface);
+	wl_signal_emit(&view->surface->compositor->transform_signal,
+		       view->surface);
 }
 
 WL_EXPORT void
-weston_surface_geometry_dirty(struct weston_surface *surface)
+weston_view_geometry_dirty(struct weston_view *view)
 {
-	struct weston_surface *child;
+	struct weston_view *child;
 
 	/*
-	 * The invariant: if surface->geometry.dirty, then all surfaces
-	 * in surface->geometry.child_list have geometry.dirty too.
+	 * The invariant: if view->geometry.dirty, then all views
+	 * in view->geometry.child_list have geometry.dirty too.
 	 * Corollary: if not parent->geometry.dirty, then all ancestors
 	 * are not dirty.
 	 */
 
-	if (surface->transform.dirty)
+	if (view->transform.dirty)
 		return;
 
-	surface->transform.dirty = 1;
+	view->transform.dirty = 1;
 
-	wl_list_for_each(child, &surface->geometry.child_list,
+	wl_list_for_each(child, &view->geometry.child_list,
 			 geometry.parent_link)
-		weston_surface_geometry_dirty(child);
+		weston_view_geometry_dirty(child);
 }
 
 WL_EXPORT void
-weston_surface_to_global_fixed(struct weston_surface *surface,
-			       wl_fixed_t sx, wl_fixed_t sy,
-			       wl_fixed_t *x, wl_fixed_t *y)
+weston_view_to_global_fixed(struct weston_view *view,
+			    wl_fixed_t vx, wl_fixed_t vy,
+			    wl_fixed_t *x, wl_fixed_t *y)
 {
 	float xf, yf;
 
-	weston_surface_to_global_float(surface,
-	                               wl_fixed_to_double(sx),
-				       wl_fixed_to_double(sy),
-				       &xf, &yf);
+	weston_view_to_global_float(view,
+				    wl_fixed_to_double(vx),
+				    wl_fixed_to_double(vy),
+				    &xf, &yf);
 	*x = wl_fixed_from_double(xf);
 	*y = wl_fixed_from_double(yf);
 }
 
 WL_EXPORT void
-weston_surface_from_global_float(struct weston_surface *surface,
-				 float x, float y, float *sx, float *sy)
+weston_view_from_global_float(struct weston_view *view,
+			      float x, float y, float *vx, float *vy)
 {
-	if (surface->transform.enabled) {
+	if (view->transform.enabled) {
 		struct weston_vector v = { { x, y, 0.0f, 1.0f } };
 
-		weston_matrix_transform(&surface->transform.inverse, &v);
+		weston_matrix_transform(&view->transform.inverse, &v);
 
 		if (fabsf(v.f[3]) < 1e-6) {
 			weston_log("warning: numerical instability in "
-				"weston_surface_from_global(), divisor = %g\n",
+				"weston_view_from_global(), divisor = %g\n",
 				v.f[3]);
-			*sx = 0;
-			*sy = 0;
+			*vx = 0;
+			*vy = 0;
 			return;
 		}
 
-		*sx = v.f[0] / v.f[3];
-		*sy = v.f[1] / v.f[3];
+		*vx = v.f[0] / v.f[3];
+		*vy = v.f[1] / v.f[3];
 	} else {
-		*sx = x - surface->geometry.x;
-		*sy = y - surface->geometry.y;
+		*vx = x - view->geometry.x;
+		*vy = y - view->geometry.y;
 	}
 }
 
 WL_EXPORT void
-weston_surface_from_global_fixed(struct weston_surface *surface,
-			         wl_fixed_t x, wl_fixed_t y,
-			         wl_fixed_t *sx, wl_fixed_t *sy)
+weston_view_from_global_fixed(struct weston_view *view,
+			      wl_fixed_t x, wl_fixed_t y,
+			      wl_fixed_t *vx, wl_fixed_t *vy)
 {
-	float sxf, syf;
+	float vxf, vyf;
 
-	weston_surface_from_global_float(surface,
-					 wl_fixed_to_double(x),
-					 wl_fixed_to_double(y),
-					 &sxf, &syf);
-	*sx = wl_fixed_from_double(sxf);
-	*sy = wl_fixed_from_double(syf);
+	weston_view_from_global_float(view,
+				      wl_fixed_to_double(x),
+				      wl_fixed_to_double(y),
+				      &vxf, &vyf);
+	*vx = wl_fixed_from_double(vxf);
+	*vy = wl_fixed_from_double(vyf);
 }
 
 WL_EXPORT void
-weston_surface_from_global(struct weston_surface *surface,
-			   int32_t x, int32_t y, int32_t *sx, int32_t *sy)
+weston_view_from_global(struct weston_view *view,
+			int32_t x, int32_t y, int32_t *vx, int32_t *vy)
 {
-	float sxf, syf;
+	float vxf, vyf;
 
-	weston_surface_from_global_float(surface, x, y, &sxf, &syf);
-	*sx = floorf(sxf);
-	*sy = floorf(syf);
+	weston_view_from_global_float(view, x, y, &vxf, &vyf);
+	*vx = floorf(vxf);
+	*vy = floorf(vyf);
 }
 
 WL_EXPORT void
@@ -900,67 +1099,77 @@ weston_surface_schedule_repaint(struct weston_surface *surface)
 }
 
 WL_EXPORT void
+weston_view_schedule_repaint(struct weston_view *view)
+{
+	struct weston_output *output;
+
+	wl_list_for_each(output, &view->surface->compositor->output_list, link)
+		if (view->output_mask & (1 << output->id))
+			weston_output_schedule_repaint(output);
+}
+
+WL_EXPORT void
 weston_surface_damage(struct weston_surface *surface)
 {
 	pixman_region32_union_rect(&surface->damage, &surface->damage,
-				   0, 0, surface->geometry.width,
-				   surface->geometry.height);
+				   0, 0, surface->width,
+				   surface->height);
 
 	weston_surface_schedule_repaint(surface);
 }
 
 WL_EXPORT void
-weston_surface_configure(struct weston_surface *surface,
-			 float x, float y, int width, int height)
+weston_view_set_position(struct weston_view *view, float x, float y)
 {
-	surface->geometry.x = x;
-	surface->geometry.y = y;
-	surface->geometry.width = width;
-	surface->geometry.height = height;
-	weston_surface_geometry_dirty(surface);
-}
+	if (view->geometry.x == x && view->geometry.y == y)
+		return;
 
-WL_EXPORT void
-weston_surface_set_position(struct weston_surface *surface,
-			    float x, float y)
-{
-	surface->geometry.x = x;
-	surface->geometry.y = y;
-	weston_surface_geometry_dirty(surface);
+	view->geometry.x = x;
+	view->geometry.y = y;
+	weston_view_geometry_dirty(view);
 }
 
 static void
 transform_parent_handle_parent_destroy(struct wl_listener *listener,
 				       void *data)
 {
-	struct weston_surface *surface =
-		container_of(listener, struct weston_surface,
+	struct weston_view *view =
+		container_of(listener, struct weston_view,
 			     geometry.parent_destroy_listener);
 
-	weston_surface_set_transform_parent(surface, NULL);
+	weston_view_set_transform_parent(view, NULL);
 }
 
 WL_EXPORT void
-weston_surface_set_transform_parent(struct weston_surface *surface,
-				    struct weston_surface *parent)
+weston_view_set_transform_parent(struct weston_view *view,
+				    struct weston_view *parent)
 {
-	if (surface->geometry.parent) {
-		wl_list_remove(&surface->geometry.parent_destroy_listener.link);
-		wl_list_remove(&surface->geometry.parent_link);
+	if (view->geometry.parent) {
+		wl_list_remove(&view->geometry.parent_destroy_listener.link);
+		wl_list_remove(&view->geometry.parent_link);
 	}
 
-	surface->geometry.parent = parent;
+	view->geometry.parent = parent;
 
-	surface->geometry.parent_destroy_listener.notify =
+	view->geometry.parent_destroy_listener.notify =
 		transform_parent_handle_parent_destroy;
 	if (parent) {
 		wl_signal_add(&parent->destroy_signal,
-			      &surface->geometry.parent_destroy_listener);
+			      &view->geometry.parent_destroy_listener);
 		wl_list_insert(&parent->geometry.child_list,
-			       &surface->geometry.parent_link);
+			       &view->geometry.parent_link);
 	}
 
-	weston_surface_geometry_dirty(surface);
+	weston_view_geometry_dirty(view);
+}
+
+WL_EXPORT int
+weston_view_is_mapped(struct weston_view *view)
+{
+	if (view->output)
+		return 1;
+	else
+		return 0;
 }
 
 WL_EXPORT int
@@ -972,40 +1181,80 @@ weston_surface_is_mapped(struct weston_surface *surface)
 		return 0;
 }
 
-WL_EXPORT int32_t
-weston_surface_buffer_width(struct weston_surface *surface)
+static void
+surface_set_size(struct weston_surface *surface, int32_t width, int32_t height)
 {
-	int32_t width;
-	switch (surface->buffer_transform) {
-	case WL_OUTPUT_TRANSFORM_90:
-	case WL_OUTPUT_TRANSFORM_270:
-	case WL_OUTPUT_TRANSFORM_FLIPPED_90:
-	case WL_OUTPUT_TRANSFORM_FLIPPED_270:
-		width = surface->buffer_ref.buffer->height;
-                break;
-	default:
-		width = surface->buffer_ref.buffer->width;
-                break;
-	}
-	return width / surface->buffer_scale;
+	struct weston_view *view;
+
+	if (surface->width == width && surface->height == height)
+		return;
+
+	surface->width = width;
+	surface->height = height;
+
+	wl_list_for_each(view, &surface->views, surface_link)
+		weston_view_geometry_dirty(view);
 }
 
-WL_EXPORT int32_t
-weston_surface_buffer_height(struct weston_surface *surface)
+WL_EXPORT void
+weston_surface_set_size(struct weston_surface *surface,
+			int32_t width, int32_t height)
 {
-	int32_t height;
-	switch (surface->buffer_transform) {
+	assert(!surface->resource);
+	surface_set_size(surface, width, height);
+}
+
+static int
+fixed_round_up_to_int(wl_fixed_t f)
+{
+	return wl_fixed_to_int(wl_fixed_from_int(1) - 1 + f);
+}
+
+static void
+weston_surface_set_size_from_buffer(struct weston_surface *surface)
+{
+	struct weston_buffer_viewport *vp = &surface->buffer_viewport;
+	int32_t width, height;
+
+	if (!surface->buffer_ref.buffer) {
+		surface_set_size(surface, 0, 0);
+		surface->width_from_buffer = 0;
+		surface->height_from_buffer = 0;
+		return;
+	}
+
+	switch (vp->buffer.transform) {
 	case WL_OUTPUT_TRANSFORM_90:
 	case WL_OUTPUT_TRANSFORM_270:
 	case WL_OUTPUT_TRANSFORM_FLIPPED_90:
 	case WL_OUTPUT_TRANSFORM_FLIPPED_270:
-		height = surface->buffer_ref.buffer->width;
-                break;
+		width = surface->buffer_ref.buffer->height / vp->buffer.scale;
+		height = surface->buffer_ref.buffer->width / vp->buffer.scale;
+		break;
 	default:
-		height = surface->buffer_ref.buffer->height;
-                break;
+		width = surface->buffer_ref.buffer->width / vp->buffer.scale;
+		height = surface->buffer_ref.buffer->height / vp->buffer.scale;
+		break;
 	}
-	return height / surface->buffer_scale;
+
+	surface->width_from_buffer = width;
+	surface->height_from_buffer = height;
+
+	if (vp->surface.width != -1) {
+		surface_set_size(surface,
+				 vp->surface.width, vp->surface.height);
+		return;
+	}
+
+	if (vp->buffer.src_width != wl_fixed_from_int(-1)) {
+		int32_t w = fixed_round_up_to_int(vp->buffer.src_width);
+		int32_t h = fixed_round_up_to_int(vp->buffer.src_height);
+
+		surface_set_size(surface, w ?: 1, h ?: 1);
+		return;
+	}
+
+	surface_set_size(surface, width, height);
 }
 
 WL_EXPORT uint32_t
@@ -1018,20 +1267,20 @@ weston_compositor_get_time(void)
        return tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 
-WL_EXPORT struct weston_surface *
-weston_compositor_pick_surface(struct weston_compositor *compositor,
-			       wl_fixed_t x, wl_fixed_t y,
-			       wl_fixed_t *sx, wl_fixed_t *sy)
+WL_EXPORT struct weston_view *
+weston_compositor_pick_view(struct weston_compositor *compositor,
+			    wl_fixed_t x, wl_fixed_t y,
+			    wl_fixed_t *vx, wl_fixed_t *vy)
 {
-	struct weston_surface *surface;
+	struct weston_view *view;
 
-	wl_list_for_each(surface, &compositor->surface_list, link) {
-		weston_surface_from_global_fixed(surface, x, y, sx, sy);
-		if (pixman_region32_contains_point(&surface->input,
-						   wl_fixed_to_int(*sx),
-						   wl_fixed_to_int(*sy),
+	wl_list_for_each(view, &compositor->view_list, link) {
+		weston_view_from_global_fixed(view, x, y, vx, vy);
+		if (pixman_region32_contains_point(&view->surface->input,
+						   wl_fixed_to_int(*vx),
+						   wl_fixed_to_int(*vy),
 						   NULL))
-			return surface;
+			return view;
 	}
 
 	return NULL;
@@ -1042,7 +1291,7 @@ weston_compositor_repick(struct weston_compositor *compositor)
 {
 	struct weston_seat *seat;
 
-	if (!compositor->focus)
+	if (!compositor->session_active)
 		return;
 
 	wl_list_for_each(seat, &compositor->seat_list, link)
@@ -1050,29 +1299,58 @@ weston_compositor_repick(struct weston_compositor *compositor)
 }
 
 WL_EXPORT void
-weston_surface_unmap(struct weston_surface *surface)
+weston_view_unmap(struct weston_view *view)
 {
 	struct weston_seat *seat;
 
-	weston_surface_damage_below(surface);
-	surface->output = NULL;
-	wl_list_remove(&surface->layer_link);
-	wl_list_remove(&surface->link);
-	wl_list_init(&surface->link);
+	if (!weston_view_is_mapped(view))
+		return;
 
-	wl_list_for_each(seat, &surface->compositor->seat_list, link) {
-		if (seat->keyboard && seat->keyboard->focus == surface)
+	weston_view_damage_below(view);
+	view->output = NULL;
+	view->plane = NULL;
+	wl_list_remove(&view->layer_link);
+	wl_list_init(&view->layer_link);
+	wl_list_remove(&view->link);
+	wl_list_init(&view->link);
+	view->output_mask = 0;
+	weston_surface_assign_output(view->surface);
+
+	if (weston_surface_is_mapped(view->surface))
+		return;
+
+	wl_list_for_each(seat, &view->surface->compositor->seat_list, link) {
+		if (seat->keyboard && seat->keyboard->focus == view->surface)
 			weston_keyboard_set_focus(seat->keyboard, NULL);
-		if (seat->pointer && seat->pointer->focus == surface)
+		if (seat->pointer && seat->pointer->focus == view)
 			weston_pointer_set_focus(seat->pointer,
 						 NULL,
 						 wl_fixed_from_int(0),
 						 wl_fixed_from_int(0));
-		if (seat->touch && seat->touch->focus == surface)
+		if (seat->touch && seat->touch->focus == view)
 			weston_touch_set_focus(seat, NULL);
 	}
+}
 
-	weston_surface_schedule_repaint(surface);
+WL_EXPORT void
+weston_surface_unmap(struct weston_surface *surface)
+{
+	struct weston_view *view;
+
+	wl_list_for_each(view, &surface->views, surface_link)
+		weston_view_unmap(view);
+	surface->output = NULL;
+}
+
+static void
+weston_surface_reset_pending_buffer(struct weston_surface *surface)
+{
+	if (surface->pending.buffer)
+		wl_list_remove(&surface->pending.buffer_destroy_listener.link);
+	surface->pending.buffer = NULL;
+	surface->pending.sx = 0;
+	surface->pending.sy = 0;
+	surface->pending.newly_attached = 0;
 }
 
 struct weston_frame_callback {
@@ -1080,24 +1358,47 @@ struct weston_frame_callback {
 	struct wl_list link;
 };
 
+WL_EXPORT void
+weston_view_destroy(struct weston_view *view)
+{
+	wl_signal_emit(&view->destroy_signal, view);
+
+	assert(wl_list_empty(&view->geometry.child_list));
+
+	if (weston_view_is_mapped(view)) {
+		weston_view_unmap(view);
+		weston_compositor_build_view_list(view->surface->compositor);
+	}
+
+	wl_list_remove(&view->link);
+	wl_list_remove(&view->layer_link);
+
+	pixman_region32_fini(&view->clip);
+	pixman_region32_fini(&view->transform.boundingbox);
+
+	weston_view_set_transform_parent(view, NULL);
+
+	wl_list_remove(&view->surface_link);
+
+	free(view);
+}
 
 WL_EXPORT void
 weston_surface_destroy(struct weston_surface *surface)
 {
-	struct weston_compositor *compositor = surface->compositor;
 	struct weston_frame_callback *cb, *next;
+	struct weston_view *ev, *nv;
 
 	if (--surface->ref_count > 0)
 		return;
 
 	wl_signal_emit(&surface->destroy_signal, &surface->resource);
 
-	assert(wl_list_empty(&surface->geometry.child_list));
 	assert(wl_list_empty(&surface->subsurface_list_pending));
 	assert(wl_list_empty(&surface->subsurface_list));
 
-	if (weston_surface_is_mapped(surface))
-		weston_surface_unmap(surface);
+	wl_list_for_each_safe(ev, nv, &surface->views, surface_link)
+		weston_view_destroy(ev);
 
 	wl_list_for_each_safe(cb, next,
 			      &surface->pending.frame_callback_list, link)
@@ -1112,18 +1413,12 @@ weston_surface_destroy(struct weston_surface *surface)
 
 	weston_buffer_reference(&surface->buffer_ref, NULL);
 
-	compositor->renderer->destroy_surface(surface);
-
-	pixman_region32_fini(&surface->transform.boundingbox);
 	pixman_region32_fini(&surface->damage);
 	pixman_region32_fini(&surface->opaque);
-	pixman_region32_fini(&surface->clip);
 	pixman_region32_fini(&surface->input);
 
 	wl_list_for_each_safe(cb, next, &surface->frame_callback_list, link)
 		wl_resource_destroy(cb->resource);
-
-	weston_surface_set_transform_parent(surface, NULL);
 
 	free(surface);
 }
@@ -1133,6 +1428,10 @@ destroy_surface(struct wl_resource *resource)
 {
 	struct weston_surface *surface = wl_resource_get_user_data(resource);
 
+	/* Set the resource to NULL, since we don't want to leave a
+	 * dangling pointer if the surface was refcounted and survives
+	 * the weston_surface_destroy() call. */
+	surface->resource = NULL;
 	weston_surface_destroy(surface);
 }
 
@@ -1146,12 +1445,12 @@ weston_buffer_destroy_handler(struct wl_listener *listener, void *data)
 	free(buffer);
 }
 
-struct weston_buffer *
+WL_EXPORT struct weston_buffer *
 weston_buffer_from_resource(struct wl_resource *resource)
 {
 	struct weston_buffer *buffer;
 	struct wl_listener *listener;
-	
+
 	listener = wl_resource_get_destroy_listener(resource,
 						    weston_buffer_destroy_handler);
 
@@ -1168,7 +1467,7 @@ weston_buffer_from_resource(struct wl_resource *resource)
 	buffer->destroy_listener.notify = weston_buffer_destroy_handler;
 	buffer->y_inverted = 1;
 	wl_resource_add_destroy_listener(resource, &buffer->destroy_listener);
-	
+
 	return buffer;
 }
 
@@ -1220,15 +1519,8 @@ weston_surface_attach(struct weston_surface *surface,
 	}
 
 	surface->compositor->renderer->attach(surface, buffer);
-}
 
-WL_EXPORT void
-weston_surface_restack(struct weston_surface *surface, struct wl_list *below)
-{
-	wl_list_remove(&surface->layer_link);
-	wl_list_insert(below, &surface->layer_link);
-	weston_surface_damage_below(surface);
-	weston_surface_damage(surface);
+	weston_surface_set_size_from_buffer(surface);
 }
 
 WL_EXPORT void
@@ -1252,43 +1544,53 @@ weston_output_damage(struct weston_output *output)
 }
 
 static void
-surface_accumulate_damage(struct weston_surface *surface,
-			  pixman_region32_t *opaque)
+surface_flush_damage(struct weston_surface *surface)
 {
 	if (surface->buffer_ref.buffer &&
 	    wl_shm_buffer_get(surface->buffer_ref.buffer->resource))
 		surface->compositor->renderer->flush_damage(surface);
 
-	if (surface->transform.enabled) {
+	empty_region(&surface->damage);
+}
+
+static void
+view_accumulate_damage(struct weston_view *view,
+		       pixman_region32_t *opaque)
+{
+	pixman_region32_t damage;
+
+	pixman_region32_init(&damage);
+	if (view->transform.enabled) {
 		pixman_box32_t *extents;
 
-		extents = pixman_region32_extents(&surface->damage);
-		surface_compute_bbox(surface, extents->x1, extents->y1,
-				     extents->x2 - extents->x1,
-				     extents->y2 - extents->y1,
-				     &surface->damage);
-		pixman_region32_translate(&surface->damage,
-					  -surface->plane->x,
-					  -surface->plane->y);
+		extents = pixman_region32_extents(&view->surface->damage);
+		view_compute_bbox(view, extents->x1, extents->y1,
+				  extents->x2 - extents->x1,
+				  extents->y2 - extents->y1,
+				  &damage);
+		pixman_region32_translate(&damage,
+					  -view->plane->x,
+					  -view->plane->y);
 	} else {
-		pixman_region32_translate(&surface->damage,
-					  surface->geometry.x - surface->plane->x,
-					  surface->geometry.y - surface->plane->y);
+		pixman_region32_copy(&damage, &view->surface->damage);
+		pixman_region32_translate(&damage,
+					  view->geometry.x - view->plane->x,
+					  view->geometry.y - view->plane->y);
 	}
 
-	pixman_region32_subtract(&surface->damage, &surface->damage, opaque);
-	pixman_region32_union(&surface->plane->damage,
-			      &surface->plane->damage, &surface->damage);
-	empty_region(&surface->damage);
-	pixman_region32_copy(&surface->clip, opaque);
-	pixman_region32_union(opaque, opaque, &surface->transform.opaque);
+	pixman_region32_subtract(&damage, &damage, opaque);
+	pixman_region32_union(&view->plane->damage,
+			      &view->plane->damage, &damage);
+	pixman_region32_fini(&damage);
+	pixman_region32_copy(&view->clip, opaque);
+	pixman_region32_union(opaque, opaque, &view->transform.opaque);
 }
 
 static void
 compositor_accumulate_damage(struct weston_compositor *ec)
 {
 	struct weston_plane *plane;
-	struct weston_surface *es;
+	struct weston_view *ev;
 	pixman_region32_t opaque, clip;
 
 	pixman_region32_init(&clip);
@@ -1298,11 +1600,11 @@ compositor_accumulate_damage(struct weston_compositor *ec)
 
 		pixman_region32_init(&opaque);
 
-		wl_list_for_each(es, &ec->surface_list, link) {
-			if (es->plane != plane)
+		wl_list_for_each(ev, &ec->view_list, link) {
+			if (ev->plane != plane)
 				continue;
 
-			surface_accumulate_damage(es, &opaque);
+			view_accumulate_damage(ev, &opaque);
 		}
 
 		pixman_region32_union(&clip, &clip, &opaque);
@@ -1311,7 +1613,16 @@ compositor_accumulate_damage(struct weston_compositor *ec)
 
 	pixman_region32_fini(&clip);
 
-	wl_list_for_each(es, &ec->surface_list, link) {
+	wl_list_for_each(ev, &ec->view_list, link)
+		ev->surface->touched = 0;
+
+	wl_list_for_each(ev, &ec->view_list, link) {
+		if (ev->surface->touched)
+			continue;
+		ev->surface->touched = 1;
+
+		surface_flush_damage(ev->surface);
+
 		/* Both the renderer and the backend have seen the buffer
 		 * by now. If renderer needs the buffer, it has its own
 		 * reference set. If the backend wants to keep the buffer
@@ -1320,76 +1631,161 @@ compositor_accumulate_damage(struct weston_compositor *ec)
 		 * reference now, and allow early buffer release. This enables
 		 * clients to use single-buffering.
 		 */
-		if (!es->keep_buffer)
-			weston_buffer_reference(&es->buffer_ref, NULL);
+		if (!ev->surface->keep_buffer)
+			weston_buffer_reference(&ev->surface->buffer_ref, NULL);
 	}
 }
 
 static void
-surface_list_add(struct weston_compositor *compositor,
-		 struct weston_surface *surface)
+surface_stash_subsurface_views(struct weston_surface *surface)
 {
 	struct weston_subsurface *sub;
 
-	if (wl_list_empty(&surface->subsurface_list)) {
-		weston_surface_update_transform(surface);
-		wl_list_insert(compositor->surface_list.prev, &surface->link);
+	wl_list_for_each(sub, &surface->subsurface_list, parent_link) {
+		if (sub->surface == surface)
+			continue;
+
+		wl_list_insert_list(&sub->unused_views, &sub->surface->views);
+		wl_list_init(&sub->surface->views);
+
+		surface_stash_subsurface_views(sub->surface);
+	}
+}
+
+static void
+surface_free_unused_subsurface_views(struct weston_surface *surface)
+{
+	struct weston_subsurface *sub;
+	struct weston_view *view, *nv;
+
+	wl_list_for_each(sub, &surface->subsurface_list, parent_link) {
+		if (sub->surface == surface)
+			continue;
+
+		wl_list_for_each_safe(view, nv, &sub->unused_views, surface_link)
+			weston_view_destroy(view);
+
+		surface_free_unused_subsurface_views(sub->surface);
+	}
+}
+
+static void
+view_list_add_subsurface_view(struct weston_compositor *compositor,
+			      struct weston_subsurface *sub,
+			      struct weston_view *parent)
+{
+	struct weston_subsurface *child;
+	struct weston_view *view = NULL, *iv;
+
+	wl_list_for_each(iv, &sub->unused_views, surface_link) {
+		if (iv->geometry.parent == parent) {
+			view = iv;
+			break;
+		}
+	}
+
+	if (view) {
+		/* Put it back in the surface's list of views */
+		wl_list_remove(&view->surface_link);
+		wl_list_insert(&sub->surface->views, &view->surface_link);
+	} else {
+		view = weston_view_create(sub->surface);
+		weston_view_set_position(view,
+					 sub->position.x,
+					 sub->position.y);
+		weston_view_set_transform_parent(view, parent);
+	}
+
+	weston_view_update_transform(view);
+
+	if (wl_list_empty(&sub->surface->subsurface_list)) {
+		wl_list_insert(compositor->view_list.prev, &view->link);
 		return;
 	}
 
-	wl_list_for_each(sub, &surface->subsurface_list, parent_link) {
-		if (!weston_surface_is_mapped(sub->surface))
-			continue;
-
-		if (sub->surface == surface) {
-			weston_surface_update_transform(sub->surface);
-			wl_list_insert(compositor->surface_list.prev,
-				       &sub->surface->link);
-		} else {
-			surface_list_add(compositor, sub->surface);
-		}
+	wl_list_for_each(child, &sub->surface->subsurface_list, parent_link) {
+		if (child->surface == sub->surface)
+			wl_list_insert(compositor->view_list.prev, &view->link);
+		else
+			view_list_add_subsurface_view(compositor, child, view);
 	}
 }
 
 static void
-weston_compositor_build_surface_list(struct weston_compositor *compositor)
+view_list_add(struct weston_compositor *compositor,
+	      struct weston_view *view)
 {
-	struct weston_surface *surface;
+	struct weston_subsurface *sub;
+
+	weston_view_update_transform(view);
+
+	if (wl_list_empty(&view->surface->subsurface_list)) {
+		wl_list_insert(compositor->view_list.prev, &view->link);
+		return;
+	}
+
+	wl_list_for_each(sub, &view->surface->subsurface_list, parent_link) {
+		if (sub->surface == view->surface)
+			wl_list_insert(compositor->view_list.prev, &view->link);
+		else
+			view_list_add_subsurface_view(compositor, sub, view);
+	}
+}
+
+static void
+weston_compositor_build_view_list(struct weston_compositor *compositor)
+{
+	struct weston_view *view;
 	struct weston_layer *layer;
 
-	wl_list_init(&compositor->surface_list);
+	wl_list_for_each(layer, &compositor->layer_list, link)
+		wl_list_for_each(view, &layer->view_list, layer_link)
+			surface_stash_subsurface_views(view->surface);
+
+	wl_list_init(&compositor->view_list);
 	wl_list_for_each(layer, &compositor->layer_list, link) {
-		wl_list_for_each(surface, &layer->surface_list, layer_link) {
-			surface_list_add(compositor, surface);
+		wl_list_for_each(view, &layer->view_list, layer_link) {
+			view_list_add(compositor, view);
 		}
 	}
+
+	wl_list_for_each(layer, &compositor->layer_list, link)
+		wl_list_for_each(view, &layer->view_list, layer_link)
+			surface_free_unused_subsurface_views(view->surface);
 }
 
-static void
+static int
 weston_output_repaint(struct weston_output *output, uint32_t msecs)
 {
 	struct weston_compositor *ec = output->compositor;
-	struct weston_surface *es;
+	struct weston_view *ev;
 	struct weston_animation *animation, *next;
 	struct weston_frame_callback *cb, *cnext;
 	struct wl_list frame_callback_list;
 	pixman_region32_t output_damage;
+	int r;
+
+	if (output->destroying)
+		return 0;
 
 	/* Rebuild the surface list and update surface transforms up front. */
-	weston_compositor_build_surface_list(ec);
+	weston_compositor_build_view_list(ec);
 
 	if (output->assign_planes && !output->disable_planes)
 		output->assign_planes(output);
 	else
-		wl_list_for_each(es, &ec->surface_list, link)
-			weston_surface_move_to_plane(es, &ec->primary_plane);
+		wl_list_for_each(ev, &ec->view_list, link)
+			weston_view_move_to_plane(ev, &ec->primary_plane);
 
 	wl_list_init(&frame_callback_list);
-	wl_list_for_each(es, &ec->surface_list, link) {
-		if (es->output == output) {
+	wl_list_for_each(ev, &ec->view_list, link) {
+		/* Note: This operation is safe to do multiple times on the
+		 * same surface.
+		 */
+		if (ev->surface->output == output) {
 			wl_list_insert_list(&frame_callback_list,
-					    &es->frame_callback_list);
-			wl_list_init(&es->frame_callback_list);
+					    &ev->surface->frame_callback_list);
+			wl_list_init(&ev->surface->frame_callback_list);
 		}
 	}
 
@@ -1404,7 +1800,7 @@ weston_output_repaint(struct weston_output *output, uint32_t msecs)
 	if (output->dirty)
 		weston_output_update_matrix(output);
 
-	output->repaint(output, &output_damage);
+	r = output->repaint(output, &output_damage);
 
 	pixman_region32_fini(&output_damage);
 
@@ -1422,6 +1818,8 @@ weston_output_repaint(struct weston_output *output, uint32_t msecs)
 		animation->frame_counter++;
 		animation->frame(animation, output, msecs);
 	}
+
+	return r;
 }
 
 static int
@@ -1440,12 +1838,16 @@ weston_output_finish_frame(struct weston_output *output, uint32_t msecs)
 	struct weston_compositor *compositor = output->compositor;
 	struct wl_event_loop *loop =
 		wl_display_get_event_loop(compositor->wl_display);
-	int fd;
+	int fd, r;
 
 	output->frame_time = msecs;
-	if (output->repaint_needed) {
-		weston_output_repaint(output, msecs);
-		return;
+
+	if (output->repaint_needed &&
+	    compositor->state != WESTON_COMPOSITOR_SLEEPING &&
+	    compositor->state != WESTON_COMPOSITOR_OFFSCREEN) {
+		r = weston_output_repaint(output, msecs);
+		if (!r)
+			return;
 	}
 
 	output->repaint_scheduled = 0;
@@ -1469,7 +1871,7 @@ idle_repaint(void *data)
 WL_EXPORT void
 weston_layer_init(struct weston_layer *layer, struct wl_list *below)
 {
-	wl_list_init(&layer->surface_list);
+	wl_list_init(&layer->view_list);
 	if (below != NULL)
 		wl_list_insert(below, &layer->link);
 }
@@ -1642,56 +2044,46 @@ weston_surface_commit_subsurface_order(struct weston_surface *surface)
 static void
 weston_surface_commit(struct weston_surface *surface)
 {
+	struct weston_view *view;
 	pixman_region32_t opaque;
-	int surface_width = 0;
-	int surface_height = 0;
+
+	/* XXX: wl_viewport.set without an attach should call configure */
 
 	/* wl_surface.set_buffer_transform */
-	surface->buffer_transform = surface->pending.buffer_transform;
-
 	/* wl_surface.set_buffer_scale */
-	surface->buffer_scale = surface->pending.buffer_scale;
+	/* wl_viewport.set */
+	surface->buffer_viewport = surface->pending.buffer_viewport;
 
 	/* wl_surface.attach */
-	if (surface->pending.buffer || surface->pending.newly_attached)
+	if (surface->pending.newly_attached)
 		weston_surface_attach(surface, surface->pending.buffer);
-
-	if (surface->buffer_ref.buffer) {
-		surface_width = weston_surface_buffer_width(surface);
-		surface_height = weston_surface_buffer_height(surface);
-	}
 
 	if (surface->configure && surface->pending.newly_attached)
 		surface->configure(surface,
-				   surface->pending.sx, surface->pending.sy,
-				   surface_width, surface_height);
+				   surface->pending.sx, surface->pending.sy);
 
-	if (surface->pending.buffer)
-		wl_list_remove(&surface->pending.buffer_destroy_listener.link);
-	surface->pending.buffer = NULL;
-	surface->pending.sx = 0;
-	surface->pending.sy = 0;
-	surface->pending.newly_attached = 0;
+	weston_surface_reset_pending_buffer(surface);
 
 	/* wl_surface.damage */
 	pixman_region32_union(&surface->damage, &surface->damage,
 			      &surface->pending.damage);
 	pixman_region32_intersect_rect(&surface->damage, &surface->damage,
 				       0, 0,
-				       surface->geometry.width,
-				       surface->geometry.height);
+				       surface->width,
+				       surface->height);
 	empty_region(&surface->pending.damage);
 
 	/* wl_surface.set_opaque_region */
 	pixman_region32_init_rect(&opaque, 0, 0,
-				  surface->geometry.width,
-				  surface->geometry.height);
+				  surface->width,
+				  surface->height);
 	pixman_region32_intersect(&opaque,
 				  &opaque, &surface->pending.opaque);
 
 	if (!pixman_region32_equal(&opaque, &surface->opaque)) {
 		pixman_region32_copy(&surface->opaque, &opaque);
-		weston_surface_geometry_dirty(surface);
+		wl_list_for_each(view, &surface->views, surface_link)
+			weston_view_geometry_dirty(view);
 	}
 
 	pixman_region32_fini(&opaque);
@@ -1699,8 +2091,8 @@ weston_surface_commit(struct weston_surface *surface)
 	/* wl_surface.set_input_region */
 	pixman_region32_fini(&surface->input);
 	pixman_region32_init_rect(&surface->input, 0, 0,
-				  surface->geometry.width,
-				  surface->geometry.height);
+				  surface->width,
+				  surface->height);
 	pixman_region32_intersect(&surface->input,
 				  &surface->input, &surface->pending.input);
 
@@ -1746,7 +2138,7 @@ surface_set_buffer_transform(struct wl_client *client,
 {
 	struct weston_surface *surface = wl_resource_get_user_data(resource);
 
-	surface->pending.buffer_transform = transform;
+	surface->pending.buffer_viewport.buffer.transform = transform;
 }
 
 static void
@@ -1756,7 +2148,7 @@ surface_set_buffer_scale(struct wl_client *client,
 {
 	struct weston_surface *surface = wl_resource_get_user_data(resource);
 
-	surface->pending.buffer_scale = scale;
+	surface->pending.buffer_viewport.buffer.scale = scale;
 }
 
 static const struct wl_surface_interface surface_interface = {
@@ -1794,6 +2186,8 @@ compositor_create_surface(struct wl_client *client,
 	}
 	wl_resource_set_implementation(surface->resource, &surface_interface,
 				       surface, destroy_surface);
+
+	wl_signal_emit(&ec->create_surface_signal, surface);
 }
 
 static void
@@ -1873,29 +2267,21 @@ static void
 weston_subsurface_commit_from_cache(struct weston_subsurface *sub)
 {
 	struct weston_surface *surface = sub->surface;
+	struct weston_view *view;
 	pixman_region32_t opaque;
-	int surface_width = 0;
-	int surface_height = 0;
 
 	/* wl_surface.set_buffer_transform */
-	surface->buffer_transform = sub->cached.buffer_transform;
-
 	/* wl_surface.set_buffer_scale */
-	surface->buffer_scale = sub->cached.buffer_scale;
+	/* wl_viewport.set */
+	surface->buffer_viewport = sub->cached.buffer_viewport;
 
 	/* wl_surface.attach */
-	if (sub->cached.buffer_ref.buffer || sub->cached.newly_attached)
+	if (sub->cached.newly_attached)
 		weston_surface_attach(surface, sub->cached.buffer_ref.buffer);
 	weston_buffer_reference(&sub->cached.buffer_ref, NULL);
 
-	if (surface->buffer_ref.buffer) {
-		surface_width = weston_surface_buffer_width(surface);
-		surface_height = weston_surface_buffer_height(surface);
-	}
-
 	if (surface->configure && sub->cached.newly_attached)
-		surface->configure(surface, sub->cached.sx, sub->cached.sy,
-				   surface_width, surface_height);
+		surface->configure(surface, sub->cached.sx, sub->cached.sy);
 	sub->cached.sx = 0;
 	sub->cached.sy = 0;
 	sub->cached.newly_attached = 0;
@@ -1905,20 +2291,21 @@ weston_subsurface_commit_from_cache(struct weston_subsurface *sub)
 			      &sub->cached.damage);
 	pixman_region32_intersect_rect(&surface->damage, &surface->damage,
 				       0, 0,
-				       surface->geometry.width,
-				       surface->geometry.height);
+				       surface->width,
+				       surface->height);
 	empty_region(&sub->cached.damage);
 
 	/* wl_surface.set_opaque_region */
 	pixman_region32_init_rect(&opaque, 0, 0,
-				  surface->geometry.width,
-				  surface->geometry.height);
+				  surface->width,
+				  surface->height);
 	pixman_region32_intersect(&opaque,
 				  &opaque, &sub->cached.opaque);
 
 	if (!pixman_region32_equal(&opaque, &surface->opaque)) {
 		pixman_region32_copy(&surface->opaque, &opaque);
-		weston_surface_geometry_dirty(surface);
+		wl_list_for_each(view, &surface->views, surface_link)
+			weston_view_geometry_dirty(view);
 	}
 
 	pixman_region32_fini(&opaque);
@@ -1926,8 +2313,8 @@ weston_subsurface_commit_from_cache(struct weston_subsurface *sub)
 	/* wl_surface.set_input_region */
 	pixman_region32_fini(&surface->input);
 	pixman_region32_init_rect(&surface->input, 0, 0,
-				  surface->geometry.width,
-				  surface->geometry.height);
+				  surface->width,
+				  surface->height);
 	pixman_region32_intersect(&surface->input,
 				  &surface->input, &sub->cached.input);
 
@@ -1967,12 +2354,10 @@ weston_subsurface_commit_to_cache(struct weston_subsurface *sub)
 	}
 	sub->cached.sx += surface->pending.sx;
 	sub->cached.sy += surface->pending.sy;
-	surface->pending.sx = 0;
-	surface->pending.sy = 0;
-	surface->pending.newly_attached = 0;
 
-	sub->cached.buffer_transform = surface->pending.buffer_transform;
-	sub->cached.buffer_scale = surface->pending.buffer_scale;
+	weston_surface_reset_pending_buffer(surface);
+
+	sub->cached.buffer_viewport = surface->pending.buffer_viewport;
 
 	pixman_region32_copy(&sub->cached.opaque, &surface->pending.opaque);
 
@@ -2051,9 +2436,13 @@ static void
 weston_subsurface_parent_commit(struct weston_subsurface *sub,
 				int parent_is_synchronized)
 {
+	struct weston_view *view;
 	if (sub->position.set) {
-		weston_surface_set_position(sub->surface,
-					    sub->position.x, sub->position.y);
+		wl_list_for_each(view, &sub->surface->views, surface_link)
+			weston_view_set_position(view,
+						 sub->position.x,
+						 sub->position.y);
+
 		sub->position.set = 0;
 	}
 
@@ -2062,23 +2451,21 @@ weston_subsurface_parent_commit(struct weston_subsurface *sub,
 }
 
 static void
-subsurface_configure(struct weston_surface *surface, int32_t dx, int32_t dy,
-		     int32_t width, int32_t height)
+subsurface_configure(struct weston_surface *surface, int32_t dx, int32_t dy)
 {
 	struct weston_compositor *compositor = surface->compositor;
+	struct weston_view *view;
 
-	weston_surface_configure(surface,
-				 surface->geometry.x + dx,
-				 surface->geometry.y + dy,
-				 width, height);
+	wl_list_for_each(view, &surface->views, surface_link)
+		weston_view_set_position(view,
+					 view->geometry.x + dx,
+					 view->geometry.y + dy);
 
 	/* No need to check parent mappedness, because if parent is not
 	 * mapped, parent is not in a visible layer, so this sub-surface
 	 * will not be drawn either.
 	 */
 	if (!weston_surface_is_mapped(surface)) {
-		wl_list_init(&surface->layer_link);
-
 		/* Cannot call weston_surface_update_transform(),
 		 * because that would call it also for the parent surface,
 		 * which might not be mapped yet. That would lead to
@@ -2350,6 +2737,8 @@ weston_subsurface_link_surface(struct weston_subsurface *sub,
 static void
 weston_subsurface_destroy(struct weston_subsurface *sub)
 {
+	struct weston_view *view, *next;
+
 	assert(sub->surface);
 
 	if (sub->resource) {
@@ -2357,7 +2746,9 @@ weston_subsurface_destroy(struct weston_subsurface *sub)
 		assert(sub->parent_destroy_listener.notify ==
 		       subsurface_handle_parent_destroy);
 
-		weston_surface_set_transform_parent(sub->surface, NULL);
+		wl_list_for_each_safe(view, next, &sub->surface->views, surface_link)
+			weston_view_destroy(view);
+
 		if (sub->parent)
 			weston_subsurface_unlink_parent(sub);
 
@@ -2396,6 +2787,8 @@ weston_subsurface_create(uint32_t id, struct weston_surface *surface,
 	if (!sub)
 		return NULL;
 
+	wl_list_init(&sub->unused_views);
+
 	sub->resource =
 		wl_resource_create(client, &wl_subsurface_interface, 1, id);
 	if (!sub->resource) {
@@ -2410,7 +2803,6 @@ weston_subsurface_create(uint32_t id, struct weston_surface *surface,
 	weston_subsurface_link_parent(sub, parent);
 	weston_subsurface_cache_init(sub);
 	sub->synchronized = 1;
-	weston_surface_set_transform_parent(surface, parent);
 
 	return sub;
 }
@@ -2604,12 +2996,15 @@ idle_handler(void *data)
 }
 
 WL_EXPORT void
-weston_plane_init(struct weston_plane *plane, int32_t x, int32_t y)
+weston_plane_init(struct weston_plane *plane,
+			struct weston_compositor *ec,
+			int32_t x, int32_t y)
 {
 	pixman_region32_init(&plane->damage);
 	pixman_region32_init(&plane->clip);
 	plane->x = x;
 	plane->y = y;
+	plane->compositor = ec;
 
 	/* Init the link so that the call to wl_list_remove() when releasing
 	 * the plane without ever stacking doesn't lead to a crash */
@@ -2619,8 +3014,15 @@ weston_plane_init(struct weston_plane *plane, int32_t x, int32_t y)
 WL_EXPORT void
 weston_plane_release(struct weston_plane *plane)
 {
+	struct weston_view *view;
+
 	pixman_region32_fini(&plane->damage);
 	pixman_region32_fini(&plane->clip);
+
+	wl_list_for_each(view, &plane->compositor->view_list, link) {
+		if (view->plane == plane)
+			view->plane = NULL;
+	}
 
 	wl_list_remove(&plane->link);
 }
@@ -2683,9 +3085,37 @@ bind_output(struct wl_client *client,
 		wl_output_send_done(resource);
 }
 
+/* Move other outputs when one is removed so the space remains contiguos. */
+static void
+weston_compositor_remove_output(struct weston_compositor *compositor,
+				struct weston_output *remove_output)
+{
+	struct weston_output *output;
+	int offset = 0;
+
+	wl_list_for_each(output, &compositor->output_list, link) {
+		if (output == remove_output) {
+			offset = output->width;
+			continue;
+		}
+
+		if (offset > 0) {
+			weston_output_move(output,
+					   output->x - offset, output->y);
+			output->dirty = 1;
+		}
+	}
+}
+
 WL_EXPORT void
 weston_output_destroy(struct weston_output *output)
 {
+	output->destroying = 1;
+
+	weston_compositor_remove_output(output->compositor, output);
+	wl_list_remove(&output->link);
+
+	wl_signal_emit(&output->compositor->output_destroyed_signal, output);
 	wl_signal_emit(&output->destroy_signal, output);
 
 	free(output->name);
@@ -2758,31 +3188,26 @@ WL_EXPORT void
 weston_output_update_matrix(struct weston_output *output)
 {
 	float magnification;
-	struct weston_matrix camera;
-	struct weston_matrix modelview;
 
 	weston_matrix_init(&output->matrix);
 	weston_matrix_translate(&output->matrix,
-				-(output->x + (output->border.right + output->width - output->border.left) / 2.0),
-				-(output->y + (output->border.bottom + output->height - output->border.top) / 2.0), 0);
+				-(output->x + output->width / 2.0),
+				-(output->y + output->height / 2.0), 0);
 
 	weston_matrix_scale(&output->matrix,
-			    2.0 / (output->width + output->border.left + output->border.right),
-			    -2.0 / (output->height + output->border.top + output->border.bottom), 1);
-
-	weston_output_compute_transform(output);
+			    2.0 / output->width,
+			    -2.0 / output->height, 1);
 
 	if (output->zoom.active) {
 		magnification = 1 / (1 - output->zoom.spring_z.current);
-		weston_matrix_init(&camera);
-		weston_matrix_init(&modelview);
-		weston_output_update_zoom(output, output->zoom.type);
-		weston_matrix_translate(&camera, output->zoom.trans_x,
-					-output->zoom.trans_y, 0);
-		weston_matrix_invert(&modelview, &camera);
-		weston_matrix_scale(&modelview, magnification, magnification, 1.0);
-		weston_matrix_multiply(&output->matrix, &modelview);
+		weston_output_update_zoom(output);
+		weston_matrix_translate(&output->matrix, -output->zoom.trans_x,
+					output->zoom.trans_y, 0);
+		weston_matrix_scale(&output->matrix, magnification,
+				    magnification, 1.0);
 	}
+
+	weston_output_compute_transform(output);
 
 	output->dirty = 0;
 }
@@ -2817,8 +3242,8 @@ weston_output_transform_scale_init(struct weston_output *output, uint32_t transf
 	output->height /= scale;
 }
 
-WL_EXPORT void
-weston_output_move(struct weston_output *output, int x, int y)
+static void
+weston_output_init_geometry(struct weston_output *output, int x, int y)
 {
 	output->x = x;
 	output->y = y;
@@ -2830,6 +3255,45 @@ weston_output_move(struct weston_output *output, int x, int y)
 }
 
 WL_EXPORT void
+weston_output_move(struct weston_output *output, int x, int y)
+{
+	pixman_region32_t old_region;
+	struct wl_resource *resource;
+
+	output->move_x = x - output->x;
+	output->move_y = y - output->y;
+
+	if (output->move_x == 0 && output->move_y == 0)
+		return;
+
+	pixman_region32_init(&old_region);
+	pixman_region32_copy(&old_region, &output->region);
+
+	weston_output_init_geometry(output, x, y);
+
+	output->dirty = 1;
+
+	/* Move views on this output. */
+	wl_signal_emit(&output->compositor->output_moved_signal, output);
+
+	/* Notify clients of the change for output position. */
+	wl_resource_for_each(resource, &output->resource_list) {
+		wl_output_send_geometry(resource,
+					output->x,
+					output->y,
+					output->mm_width,
+					output->mm_height,
+					output->subpixel,
+					output->make,
+					output->model,
+					output->transform);
+
+		if (wl_resource_get_version(resource) >= 2)
+			wl_output_send_done(resource);
+	}
+}
+
+WL_EXPORT void
 weston_output_init(struct weston_output *output, struct weston_compositor *c,
 		   int x, int y, int mm_width, int mm_height, uint32_t transform,
 		   int32_t scale)
@@ -2837,10 +3301,6 @@ weston_output_init(struct weston_output *output, struct weston_compositor *c,
 	output->compositor = c;
 	output->x = x;
 	output->y = y;
-	output->border.top = 0;
-	output->border.bottom = 0;
-	output->border.left = 0;
-	output->border.right = 0;
 	output->mm_width = mm_width;
 	output->mm_height = mm_height;
 	output->dirty = 1;
@@ -2849,7 +3309,7 @@ weston_output_init(struct weston_output *output, struct weston_compositor *c,
 	weston_output_transform_scale_init(output, transform, scale);
 	weston_output_init_zoom(output);
 
-	weston_output_move(output, x, y);
+	weston_output_init_geometry(output, x, y);
 	weston_output_damage(output);
 
 	wl_signal_init(&output->frame_signal);
@@ -2868,11 +3328,12 @@ weston_output_init(struct weston_output *output, struct weston_compositor *c,
 
 WL_EXPORT void
 weston_output_transform_coordinate(struct weston_output *output,
-				   int device_x, int device_y,
+				   wl_fixed_t device_x, wl_fixed_t device_y,
 				   wl_fixed_t *x, wl_fixed_t *y)
 {
 	wl_fixed_t tx, ty;
 	wl_fixed_t width, height;
+	float zoom_scale, zx, zy;
 
 	width = wl_fixed_from_int(output->width * output->current_scale - 1);
 	height = wl_fixed_from_int(output->height * output->current_scale - 1);
@@ -2880,41 +3341,248 @@ weston_output_transform_coordinate(struct weston_output *output,
 	switch(output->transform) {
 	case WL_OUTPUT_TRANSFORM_NORMAL:
 	default:
-		tx = wl_fixed_from_int(device_x);
-		ty = wl_fixed_from_int(device_y);
+		tx = device_x;
+		ty = device_y;
 		break;
 	case WL_OUTPUT_TRANSFORM_90:
-		tx = wl_fixed_from_int(device_y);
-		ty = height - wl_fixed_from_int(device_x);
+		tx = device_y;
+		ty = height - device_x;
 		break;
 	case WL_OUTPUT_TRANSFORM_180:
-		tx = width - wl_fixed_from_int(device_x);
-		ty = height - wl_fixed_from_int(device_y);
+		tx = width - device_x;
+		ty = height - device_y;
 		break;
 	case WL_OUTPUT_TRANSFORM_270:
-		tx = width - wl_fixed_from_int(device_y);
-		ty = wl_fixed_from_int(device_x);
+		tx = width - device_y;
+		ty = device_x;
 		break;
 	case WL_OUTPUT_TRANSFORM_FLIPPED:
-		tx = width - wl_fixed_from_int(device_x);
-		ty = wl_fixed_from_int(device_y);
+		tx = width - device_x;
+		ty = device_y;
 		break;
 	case WL_OUTPUT_TRANSFORM_FLIPPED_90:
-		tx = width - wl_fixed_from_int(device_y);
-		ty = height - wl_fixed_from_int(device_x);
+		tx = width - device_y;
+		ty = height - device_x;
 		break;
 	case WL_OUTPUT_TRANSFORM_FLIPPED_180:
-		tx = wl_fixed_from_int(device_x);
-		ty = height - wl_fixed_from_int(device_y);
+		tx = device_x;
+		ty = height - device_y;
 		break;
 	case WL_OUTPUT_TRANSFORM_FLIPPED_270:
-		tx = wl_fixed_from_int(device_y);
-		ty = wl_fixed_from_int(device_x);
+		tx = device_y;
+		ty = device_x;
 		break;
 	}
 
-	*x = tx / output->current_scale + wl_fixed_from_int(output->x);
-	*y = ty / output->current_scale + wl_fixed_from_int(output->y);
+	tx /= output->current_scale;
+	ty /= output->current_scale;
+
+	if (output->zoom.active) {
+		zoom_scale = output->zoom.spring_z.current;
+		zx = (wl_fixed_to_double(tx) * (1.0f - zoom_scale) +
+		      output->width / 2.0f *
+		      (zoom_scale + output->zoom.trans_x));
+		zy = (wl_fixed_to_double(ty) * (1.0f - zoom_scale) +
+		      output->height / 2.0f *
+		      (zoom_scale + output->zoom.trans_y));
+		tx = wl_fixed_from_double(zx);
+		ty = wl_fixed_from_double(zy);
+	}
+
+	*x = tx + wl_fixed_from_int(output->x);
+	*y = ty + wl_fixed_from_int(output->y);
+}
+
+static void
+destroy_viewport(struct wl_resource *resource)
+{
+	struct weston_surface *surface =
+		wl_resource_get_user_data(resource);
+
+	surface->viewport_resource = NULL;
+	surface->pending.buffer_viewport.buffer.src_width =
+		wl_fixed_from_int(-1);
+	surface->pending.buffer_viewport.surface.width = -1;
+}
+
+static void
+viewport_destroy(struct wl_client *client,
+		 struct wl_resource *resource)
+{
+	wl_resource_destroy(resource);
+}
+
+static void
+viewport_set(struct wl_client *client,
+	     struct wl_resource *resource,
+	     wl_fixed_t src_x,
+	     wl_fixed_t src_y,
+	     wl_fixed_t src_width,
+	     wl_fixed_t src_height,
+	     int32_t dst_width,
+	     int32_t dst_height)
+{
+	struct weston_surface *surface =
+		wl_resource_get_user_data(resource);
+
+	assert(surface->viewport_resource != NULL);
+
+	if (wl_fixed_to_double(src_width) < 0 ||
+	    wl_fixed_to_double(src_height) < 0) {
+		wl_resource_post_error(resource,
+			WL_VIEWPORT_ERROR_BAD_VALUE,
+			"source dimensions must be non-negative (%fx%f)",
+			wl_fixed_to_double(src_width),
+			wl_fixed_to_double(src_height));
+		return;
+	}
+
+	if (dst_width <= 0 || dst_height <= 0) {
+		wl_resource_post_error(resource,
+			WL_VIEWPORT_ERROR_BAD_VALUE,
+			"destination dimensions must be positive (%dx%d)",
+			dst_width, dst_height);
+		return;
+	}
+
+	surface->pending.buffer_viewport.buffer.src_x = src_x;
+	surface->pending.buffer_viewport.buffer.src_y = src_y;
+	surface->pending.buffer_viewport.buffer.src_width = src_width;
+	surface->pending.buffer_viewport.buffer.src_height = src_height;
+	surface->pending.buffer_viewport.surface.width = dst_width;
+	surface->pending.buffer_viewport.surface.height = dst_height;
+}
+
+static void
+viewport_set_source(struct wl_client *client,
+		    struct wl_resource *resource,
+		    wl_fixed_t src_x,
+		    wl_fixed_t src_y,
+		    wl_fixed_t src_width,
+		    wl_fixed_t src_height)
+{
+	struct weston_surface *surface =
+		wl_resource_get_user_data(resource);
+
+	assert(surface->viewport_resource != NULL);
+
+	if (src_width == wl_fixed_from_int(-1) &&
+	    src_height == wl_fixed_from_int(-1)) {
+		/* unset source size */
+		surface->pending.buffer_viewport.buffer.src_width =
+			wl_fixed_from_int(-1);
+		return;
+	}
+
+	if (src_width <= 0 || src_height <= 0) {
+		wl_resource_post_error(resource,
+			WL_VIEWPORT_ERROR_BAD_VALUE,
+			"source size must be positive (%fx%f)",
+			wl_fixed_to_double(src_width),
+			wl_fixed_to_double(src_height));
+		return;
+	}
+
+	surface->pending.buffer_viewport.buffer.src_x = src_x;
+	surface->pending.buffer_viewport.buffer.src_y = src_y;
+	surface->pending.buffer_viewport.buffer.src_width = src_width;
+	surface->pending.buffer_viewport.buffer.src_height = src_height;
+}
+
+static void
+viewport_set_destination(struct wl_client *client,
+			 struct wl_resource *resource,
+			 int32_t dst_width,
+			 int32_t dst_height)
+{
+	struct weston_surface *surface =
+		wl_resource_get_user_data(resource);
+
+	assert(surface->viewport_resource != NULL);
+
+	if (dst_width == -1 && dst_height == -1) {
+		/* unset destination size */
+		surface->pending.buffer_viewport.surface.width = -1;
+		return;
+	}
+
+	if (dst_width <= 0 || dst_height <= 0) {
+		wl_resource_post_error(resource,
+			WL_VIEWPORT_ERROR_BAD_VALUE,
+			"destination size must be positive (%dx%d)",
+			dst_width, dst_height);
+		return;
+	}
+
+	surface->pending.buffer_viewport.surface.width = dst_width;
+	surface->pending.buffer_viewport.surface.height = dst_height;
+}
+
+static const struct wl_viewport_interface viewport_interface = {
+	viewport_destroy,
+	viewport_set,
+	viewport_set_source,
+	viewport_set_destination
+};
+
+static void
+scaler_destroy(struct wl_client *client,
+	       struct wl_resource *resource)
+{
+	wl_resource_destroy(resource);
+}
+
+static void
+scaler_get_viewport(struct wl_client *client,
+		    struct wl_resource *scaler,
+		    uint32_t id,
+		    struct wl_resource *surface_resource)
+{
+	int version = wl_resource_get_version(scaler);
+	struct weston_surface *surface =
+		wl_resource_get_user_data(surface_resource);
+	struct wl_resource *resource;
+
+	if (surface->viewport_resource) {
+		wl_resource_post_error(scaler,
+			WL_SCALER_ERROR_VIEWPORT_EXISTS,
+			"a viewport for that surface already exists");
+		return;
+	}
+
+	resource = wl_resource_create(client, &wl_viewport_interface,
+				      version, id);
+	if (resource == NULL) {
+		wl_client_post_no_memory(client);
+		return;
+	}
+
+	wl_resource_set_implementation(resource, &viewport_interface,
+				       surface, destroy_viewport);
+
+	surface->viewport_resource = resource;
+}
+
+static const struct wl_scaler_interface scaler_interface = {
+	scaler_destroy,
+	scaler_get_viewport
+};
+
+static void
+bind_scaler(struct wl_client *client,
+	    void *data, uint32_t version, uint32_t id)
+{
+	struct wl_resource *resource;
+
+	resource = wl_resource_create(client, &wl_scaler_interface,
+				      MIN(version, 2), id);
+	if (resource == NULL) {
+		wl_client_post_no_memory(client);
+		return;
+	}
+
+	wl_resource_set_implementation(resource, &scaler_interface,
+				       NULL, NULL);
 }
 
 static void
@@ -2982,6 +3650,7 @@ weston_compositor_init(struct weston_compositor *ec,
 	ec->config = config;
 	ec->wl_display = display;
 	wl_signal_init(&ec->destroy_signal);
+	wl_signal_init(&ec->create_surface_signal);
 	wl_signal_init(&ec->activate_signal);
 	wl_signal_init(&ec->transform_signal);
 	wl_signal_init(&ec->kill_signal);
@@ -2992,6 +3661,8 @@ weston_compositor_init(struct weston_compositor *ec,
 	wl_signal_init(&ec->update_input_panel_signal);
 	wl_signal_init(&ec->seat_created_signal);
 	wl_signal_init(&ec->output_created_signal);
+	wl_signal_init(&ec->output_destroyed_signal);
+	wl_signal_init(&ec->output_moved_signal);
 	wl_signal_init(&ec->session_signal);
 	ec->session_active = 1;
 
@@ -3005,17 +3676,23 @@ weston_compositor_init(struct weston_compositor *ec,
 			      ec, bind_subcompositor))
 		return -1;
 
-	wl_list_init(&ec->surface_list);
+	if (!wl_global_create(ec->wl_display, &wl_scaler_interface, 2,
+			      ec, bind_scaler))
+		return -1;
+
+	wl_list_init(&ec->view_list);
 	wl_list_init(&ec->plane_list);
 	wl_list_init(&ec->layer_list);
 	wl_list_init(&ec->seat_list);
 	wl_list_init(&ec->output_list);
 	wl_list_init(&ec->key_binding_list);
+	wl_list_init(&ec->modifier_binding_list);
 	wl_list_init(&ec->button_binding_list);
+	wl_list_init(&ec->touch_binding_list);
 	wl_list_init(&ec->axis_binding_list);
 	wl_list_init(&ec->debug_binding_list);
 
-	weston_plane_init(&ec->primary_plane, 0, 0);
+	weston_plane_init(&ec->primary_plane, ec, 0, 0);
 	weston_compositor_stack_plane(ec, &ec->primary_plane, NULL);
 
 	s = weston_config_get_section(ec->config, "keyboard", NULL, NULL);
@@ -3033,10 +3710,6 @@ weston_compositor_init(struct weston_compositor *ec,
 	if (weston_compositor_xkb_init(ec, &xkb_names) < 0)
 		return -1;
 
-	ec->ping_handler = NULL;
-
-	screenshooter_create(ec);
-	text_cursor_position_notifier_create(ec);
 	text_backend_init(ec);
 
 	wl_data_device_manager_init(ec->wl_display);
@@ -3070,8 +3743,12 @@ weston_compositor_shutdown(struct weston_compositor *ec)
 	wl_list_for_each_safe(output, next, &ec->output_list, link)
 		output->destroy(output);
 
+	if (ec->renderer)
+		ec->renderer->destroy(ec);
+
 	weston_binding_list_destroy_all(&ec->key_binding_list);
 	weston_binding_list_destroy_all(&ec->button_binding_list);
+	weston_binding_list_destroy_all(&ec->touch_binding_list);
 	weston_binding_list_destroy_all(&ec->axis_binding_list);
 	weston_binding_list_destroy_all(&ec->debug_binding_list);
 
@@ -3080,6 +3757,21 @@ weston_compositor_shutdown(struct weston_compositor *ec)
 	wl_event_loop_destroy(ec->input_loop);
 
 	weston_config_destroy(ec->config);
+}
+
+WL_EXPORT void
+weston_compositor_set_default_pointer_grab(struct weston_compositor *ec,
+			const struct weston_pointer_grab_interface *interface)
+{
+	struct weston_seat *seat;
+
+	ec->default_pointer_grab = interface;
+	wl_list_for_each(seat, &ec->seat_list, link) {
+		if (seat->pointer) {
+			weston_pointer_set_default_grab(seat->pointer,
+							interface);
+		}
+	}
 }
 
 WL_EXPORT void
@@ -3171,7 +3863,7 @@ print_backtrace(void)
 			filename = dlinfo.dli_fname;
 		else
 			filename = "?";
-		
+
 		weston_log("%u: %s (%s%s+0x%x) [%p]\n", i++, filename, procname,
 			   ret == -UNW_ENOMEM ? "..." : "", (int)off, (void *)(pip.start_ip + off));
 
@@ -3222,11 +3914,14 @@ on_caught_signal(int s, siginfo_t *siginfo, void *context)
 	raise(SIGTRAP);
 }
 
-static void *
-load_module(const char *name, const char *entrypoint)
+WL_EXPORT void *
+weston_load_module(const char *name, const char *entrypoint)
 {
 	char path[PATH_MAX];
 	void *module, *init;
+
+	if (name == NULL)
+		return NULL;
 
 	if (name[0] != '/')
 		snprintf(path, sizeof path, "%s/%s", MODULEDIR, name);
@@ -3273,7 +3968,7 @@ load_modules(struct weston_compositor *ec, const char *modules,
 	while (*p) {
 		end = strchrnul(p, ',');
 		snprintf(buffer, sizeof buffer, "%.*s", (int) (end - p), p);
-		module_init = load_module(buffer, "module_init");
+		module_init = weston_load_module(buffer, "module_init");
 		if (module_init)
 			module_init(ec, argc, argv);
 		p = end;
@@ -3294,9 +3989,8 @@ static const char xdg_wrong_message[] =
 
 static const char xdg_wrong_mode_message[] =
 	"warning: XDG_RUNTIME_DIR \"%s\" is not configured\n"
-	"correctly.  Unix access mode must be 0700 but is %o,\n"
-	"and XDG_RUNTIME_DIR must be owned by the user, but is\n"
-	"owned by UID %d.\n";
+	"correctly.  Unix access mode must be 0700 (current mode is %o),\n"
+	"and must be owned by the user (current owner is UID %d).\n";
 
 static const char xdg_detail_message[] =
 	"Refer to your distribution on how to get it, or\n"
@@ -3348,6 +4042,7 @@ usage(int error_code)
 		"  -i, --idle-time=SECS\tIdle time in seconds\n"
 		"  --modules\t\tLoad the comma-separated list of modules\n"
 		"  --log==FILE\t\tLog to the given file\n"
+		"  --no-config\t\tDo not read weston.ini\n"
 		"  -h, --help\t\tThis help message\n\n");
 
 	fprintf(stderr,
@@ -3376,6 +4071,11 @@ usage(int error_code)
 		"Options for wayland-backend.so:\n\n"
 		"  --width=WIDTH\t\tWidth of Wayland surface\n"
 		"  --height=HEIGHT\tHeight of Wayland surface\n"
+		"  --scale=SCALE\tScale factor of ouput\n"
+		"  --fullscreen\t\tRun in fullscreen mode\n"
+		"  --use-pixman\t\tUse the pixman (CPU) renderer\n"
+		"  --output-count=COUNT\tCreate multiple outputs\n"
+		"  --sprawl\t\tCreate one fullscreen output for every parent output\n"
 		"  --display=DISPLAY\tWayland display to connect to\n\n");
 
 #if defined(BUILD_RPI_COMPOSITOR) && defined(HAVE_BCM_HOST)
@@ -3385,6 +4085,8 @@ usage(int error_code)
 		"  --single-buffer\tUse single-buffered Dispmanx elements.\n"
 		"  --transform=TR\tThe output transformation, TR is one of:\n"
 		"\tnormal 90 180 270 flipped flipped-90 flipped-180 flipped-270\n"
+		"  --opaque-regions\tEnable support for opaque regions, can be "
+		"very slow without support in the GPU firmware.\n"
 		"\n");
 #endif
 
@@ -3393,10 +4095,10 @@ usage(int error_code)
        "Options for rdp-backend.so:\n\n"
        "  --width=WIDTH\t\tWidth of desktop\n"
        "  --height=HEIGHT\tHeight of desktop\n"
-       "  --extra-modes=MODES\t\n"
        "  --env-socket=SOCKET\tUse that socket as peer connection\n"
        "  --address=ADDR\tThe address to bind\n"
        "  --port=PORT\tThe port to listen on\n"
+       "  --no-clients-resize\tThe RDP peers will be forced to the size of the desktop\n"
        "  --rdp4-key=FILE\tThe file containing the key for RDP4 encryption\n"
        "  --rdp-tls-cert=FILE\tThe file containing the certificate for TLS encryption\n"
        "  --rdp-tls-key=FILE\tThe file containing the private key for TLS encryption\n"
@@ -3418,6 +4120,16 @@ catch_signals(void)
 	sigaction(SIGABRT, &action, NULL);
 }
 
+static void
+handle_primary_client_destroyed(struct wl_listener *listener, void *data)
+{
+	struct wl_client *client = data;
+
+	weston_log("Primary client died.  Closing...\n");
+
+	wl_display_terminate(wl_client_get_display(client));
+}
+
 int main(int argc, char *argv[])
 {
 	int ret = EXIT_SUCCESS;
@@ -3429,27 +4141,34 @@ int main(int argc, char *argv[])
 		*(*backend_init)(struct wl_display *display,
 				 int *argc, char *argv[],
 				 struct weston_config *config);
-	int i;
+	int i, fd;
 	char *backend = NULL;
+	char *option_backend = NULL;
 	char *shell = NULL;
+	char *option_shell = NULL;
 	char *modules, *option_modules = NULL;
 	char *log = NULL;
+	char *server_socket = NULL, *end;
 	int32_t idle_time = 300;
 	int32_t help = 0;
 	char *socket_name = "wayland-0";
 	int32_t version = 0;
-	struct weston_config *config;
+	int32_t noconfig = 0;
+	struct weston_config *config = NULL;
 	struct weston_config_section *section;
+	struct wl_client *primary_client;
+	struct wl_listener primary_client_destroyed;
 
 	const struct weston_option core_options[] = {
-		{ WESTON_OPTION_STRING, "backend", 'B', &backend },
-		{ WESTON_OPTION_STRING, "shell", 0, &shell },
+		{ WESTON_OPTION_STRING, "backend", 'B', &option_backend },
+		{ WESTON_OPTION_STRING, "shell", 0, &option_shell },
 		{ WESTON_OPTION_STRING, "socket", 'S', &socket_name },
 		{ WESTON_OPTION_INTEGER, "idle-time", 'i', &idle_time },
 		{ WESTON_OPTION_STRING, "modules", 0, &option_modules },
 		{ WESTON_OPTION_STRING, "log", 0, &log },
 		{ WESTON_OPTION_BOOLEAN, "help", 'h', &help },
 		{ WESTON_OPTION_BOOLEAN, "version", 0, &version },
+		{ WESTON_OPTION_BOOLEAN, "no-config", 0, &noconfig },
 	};
 
 	parse_options(core_options, ARRAY_LENGTH(core_options), &argc, argv);
@@ -3463,7 +4182,7 @@ int main(int argc, char *argv[])
 	}
 
 	weston_log_file_open(log);
-	
+
 	weston_log("%s\n"
 		   STAMP_SPACE "%s\n"
 		   STAMP_SPACE "Bug reports to: %s\n"
@@ -3488,16 +4207,8 @@ int main(int argc, char *argv[])
 	signals[3] = wl_event_loop_add_signal(loop, SIGCHLD, sigchld_handler,
 					      NULL);
 
-	if (!backend) {
-		if (getenv("WAYLAND_DISPLAY"))
-			backend = "wayland-backend.so";
-		else if (getenv("DISPLAY"))
-			backend = "x11-backend.so";
-		else
-			backend = WESTON_NATIVE_BACKEND;
-	}
-
-	config = weston_config_parse("weston.ini");
+	if (noconfig == 0)
+		config = weston_config_parse("weston.ini");
 	if (config != NULL) {
 		weston_log("Using config file '%s'\n",
 			   weston_config_get_full_path(config));
@@ -3505,9 +4216,24 @@ int main(int argc, char *argv[])
 		weston_log("Starting with no config file.\n");
 	}
 	section = weston_config_get_section(config, "core", NULL, NULL);
-	weston_config_section_get_string(section, "modules", &modules, "");
 
-	backend_init = load_module(backend, "backend_init");
+	if (option_backend)
+		backend = strdup(option_backend);
+	else
+		weston_config_section_get_string(section, "backend", &backend,
+						 NULL);
+
+	if (!backend) {
+		if (getenv("WAYLAND_DISPLAY") || getenv("WAYLAND_SOCKET"))
+			backend = strdup("wayland-backend.so");
+		else if (getenv("DISPLAY"))
+			backend = strdup("x11-backend.so");
+		else
+			backend = strdup(WESTON_NATIVE_BACKEND);
+	}
+
+	backend_init = weston_load_module(backend, "backend_init");
+	free(backend);
 	if (!backend_init)
 		exit(EXIT_FAILURE);
 
@@ -3521,17 +4247,29 @@ int main(int argc, char *argv[])
 	segv_compositor = ec;
 
 	ec->idle_time = idle_time;
+	ec->default_pointer_grab = NULL;
 
 	setenv("WAYLAND_DISPLAY", socket_name, 1);
 
-	if (!shell)
+	if (option_shell)
+		shell = strdup(option_shell);
+	else
 		weston_config_section_get_string(section, "shell", &shell,
 						 "desktop-shell.so");
-	if (load_modules(ec, shell, &argc, argv) < 0)
-		goto out;
 
-	if (load_modules(ec, modules, &argc, argv) < 0)
+	if (load_modules(ec, shell, &argc, argv) < 0) {
+		free(shell);
 		goto out;
+	}
+	free(shell);
+
+	weston_config_section_get_string(section, "modules", &modules, "");
+	if (load_modules(ec, modules, &argc, argv) < 0) {
+		free(modules);
+		goto out;
+	}
+	free(modules);
+
 	if (load_modules(ec, option_modules, &argc, argv) < 0)
 		goto out;
 
@@ -3544,10 +4282,33 @@ int main(int argc, char *argv[])
 
 	weston_compositor_log_capabilities(ec);
 
-	if (wl_display_add_socket(display, socket_name)) {
-		weston_log("fatal: failed to add socket: %m\n");
-		ret = EXIT_FAILURE;
-		goto out;
+	server_socket = getenv("WAYLAND_SERVER_SOCKET");
+	if (server_socket) {
+		weston_log("Running with single client\n");
+		fd = strtol(server_socket, &end, 0);
+		if (*end != '\0')
+			fd = -1;
+	} else {
+		fd = -1;
+	}
+
+	if (fd != -1) {
+		primary_client = wl_client_create(display, fd);
+		if (!primary_client) {
+			weston_log("fatal: failed to add client: %m\n");
+			ret = EXIT_FAILURE;
+			goto out;
+		}
+		primary_client_destroyed.notify =
+			handle_primary_client_destroyed;
+		wl_client_add_destroy_listener(primary_client,
+					       &primary_client_destroyed);
+	} else {
+		if (wl_display_add_socket(display, socket_name)) {
+			weston_log("fatal: failed to add socket: %m\n");
+			ret = EXIT_FAILURE;
+			goto out;
+		}
 	}
 
 	weston_compositor_wake(ec);

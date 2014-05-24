@@ -56,6 +56,7 @@
 
 static int option_width;
 static int option_height;
+static int option_scale;
 static int option_count;
 
 struct x11_compositor {
@@ -115,6 +116,8 @@ struct x11_output {
 	int32_t                 scale;
 };
 
+struct gl_renderer_interface *gl_renderer;
+
 static struct xkb_keymap *
 x11_compositor_get_keymap(struct x11_compositor *c)
 {
@@ -160,7 +163,7 @@ x11_compositor_get_keymap(struct x11_compositor *c)
 static uint32_t
 get_xkb_mod_mask(struct x11_compositor *c, uint32_t in)
 {
-	struct weston_xkb_info *info = c->core_seat.xkb_info;
+	struct weston_xkb_info *info = c->core_seat.keyboard->xkb_info;
 	uint32_t ret = 0;
 
 	if ((in & ShiftMask) && info->shift_mod != XKB_MOD_INVALID)
@@ -201,6 +204,7 @@ x11_compositor_setup_xkb(struct x11_compositor *c)
 	xcb_xkb_per_client_flags_reply_t *pcf_reply;
 	xcb_xkb_get_state_cookie_t state;
 	xcb_xkb_get_state_reply_t *state_reply;
+	uint32_t values[1] = { XCB_EVENT_MASK_PROPERTY_CHANGE };
 
 	c->has_xkb = 0;
 	c->xkb_event_base = 0;
@@ -270,7 +274,7 @@ x11_compositor_setup_xkb(struct x11_compositor *c)
 		return;
 	}
 
-	xkb_state_update_mask(c->core_seat.xkb_state.state,
+	xkb_state_update_mask(c->core_seat.keyboard->xkb_state.state,
 			      get_xkb_mod_mask(c, state_reply->baseMods),
 			      get_xkb_mod_mask(c, state_reply->latchedMods),
 			      get_xkb_mod_mask(c, state_reply->lockedMods),
@@ -280,9 +284,28 @@ x11_compositor_setup_xkb(struct x11_compositor *c)
 
 	free(state_reply);
 
+	xcb_change_window_attributes(c->conn, c->screen->root,
+				     XCB_CW_EVENT_MASK, values);
+
 	c->has_xkb = 1;
 #endif
 }
+
+#ifdef HAVE_XCB_XKB
+static void
+update_xkb_keymap(struct x11_compositor *c)
+{
+	struct xkb_keymap *keymap;
+
+	keymap = x11_compositor_get_keymap(c);
+	if (!keymap) {
+		weston_log("failed to get XKB keymap\n");
+		return;
+	}
+	weston_seat_update_keymap(&c->core_seat, keymap);
+	xkb_keymap_unref(keymap);
+}
+#endif
 
 static int
 x11_input_create(struct x11_compositor *c, int no_input)
@@ -324,7 +347,7 @@ x11_output_start_repaint_loop(struct weston_output *output)
 	weston_output_finish_frame(output, msec);
 }
 
-static void
+static int
 x11_output_repaint_gl(struct weston_output *output_base,
 		      pixman_region32_t *damage)
 {
@@ -337,6 +360,7 @@ x11_output_repaint_gl(struct weston_output *output_base,
 				 &ec->primary_plane.damage, damage);
 
 	wl_event_source_timer_update(output->finish_frame_timer, 10);
+	return 0;
 }
 
 static void
@@ -345,91 +369,38 @@ set_clip_for_output(struct weston_output *output_base, pixman_region32_t *region
 	struct x11_output *output = (struct x11_output *)output_base;
 	struct weston_compositor *ec = output->base.compositor;
 	struct x11_compositor *c = (struct x11_compositor *)ec;
+	pixman_region32_t transformed_region;
 	pixman_box32_t *rects;
 	xcb_rectangle_t *output_rects;
-	pixman_box32_t rect, transformed_rect;
 	xcb_void_cookie_t cookie;
-	int width, height, nrects, i;
+	int nrects, i;
 	xcb_generic_error_t *err;
 
-	rects = pixman_region32_rectangles(region, &nrects);
+	pixman_region32_init(&transformed_region);
+	pixman_region32_copy(&transformed_region, region);
+	pixman_region32_translate(&transformed_region,
+				  -output_base->x, -output_base->y);
+	weston_transformed_region(output_base->width, output_base->height,
+				  output_base->transform,
+				  output_base->current_scale,
+				  &transformed_region, &transformed_region);
+
+	rects = pixman_region32_rectangles(&transformed_region, &nrects);
 	output_rects = calloc(nrects, sizeof(xcb_rectangle_t));
 
-	if (output_rects == NULL)
+	if (output_rects == NULL) {
+		pixman_region32_fini(&transformed_region);
 		return;
-
-	width = output_base->width;
-	height = output_base->height;
+	}
 
 	for (i = 0; i < nrects; i++) {
-		rect = rects[i];
-		rect.x1 -= output_base->x;
-		rect.y1 -= output_base->y;
-		rect.x2 -= output_base->x;
-		rect.y2 -= output_base->y;
-
-		switch (output_base->transform) {
-		default:
-		case WL_OUTPUT_TRANSFORM_NORMAL:
-			transformed_rect.x1 = rect.x1;
-			transformed_rect.y1 = rect.y1;
-			transformed_rect.x2 = rect.x2;
-			transformed_rect.y2 = rect.y2;
-			break;
-		case WL_OUTPUT_TRANSFORM_90:
-			transformed_rect.x1 = height - rect.y2;
-			transformed_rect.y1 = rect.x1;
-			transformed_rect.x2 = height - rect.y1;
-			transformed_rect.y2 = rect.x2;
-			break;
-		case WL_OUTPUT_TRANSFORM_180:
-			transformed_rect.x1 = width - rect.x2;
-			transformed_rect.y1 = height - rect.y2;
-			transformed_rect.x2 = width - rect.x1;
-			transformed_rect.y2 = height - rect.y1;
-			break;
-		case WL_OUTPUT_TRANSFORM_270:
-			transformed_rect.x1 = rect.y1;
-			transformed_rect.y1 = width - rect.x2;
-			transformed_rect.x2 = rect.y2;
-			transformed_rect.y2 = width - rect.x1;
-			break;
-		case WL_OUTPUT_TRANSFORM_FLIPPED:
-			transformed_rect.x1 = width - rect.x2;
-			transformed_rect.y1 = rect.y1;
-			transformed_rect.x2 = width - rect.x1;
-			transformed_rect.y2 = rect.y2;
-			break;
-		case WL_OUTPUT_TRANSFORM_FLIPPED_90:
-			transformed_rect.x1 = height - rect.y2;
-			transformed_rect.y1 = width - rect.x2;
-			transformed_rect.x2 = height - rect.y1;
-			transformed_rect.y2 = width - rect.x1;
-			break;
-		case WL_OUTPUT_TRANSFORM_FLIPPED_180:
-			transformed_rect.x1 = rect.x1;
-			transformed_rect.y1 = height - rect.y2;
-			transformed_rect.x2 = rect.x2;
-			transformed_rect.y2 = height - rect.y1;
-			break;
-		case WL_OUTPUT_TRANSFORM_FLIPPED_270:
-			transformed_rect.x1 = rect.y1;
-			transformed_rect.y1 = rect.x1;
-			transformed_rect.x2 = rect.y2;
-			transformed_rect.y2 = rect.x2;
-			break;
-		}
-
-		transformed_rect.x1 *= output_base->current_scale;
-		transformed_rect.y1 *= output_base->current_scale;
-		transformed_rect.x2 *= output_base->current_scale;
-		transformed_rect.y2 *= output_base->current_scale;
-
-		output_rects[i].x = transformed_rect.x1;
-		output_rects[i].y = transformed_rect.y1;
-		output_rects[i].width = transformed_rect.x2 - transformed_rect.x1;
-		output_rects[i].height = transformed_rect.y2 - transformed_rect.y1;
+		output_rects[i].x = rects[i].x1;
+		output_rects[i].y = rects[i].y1;
+		output_rects[i].width = rects[i].x2 - rects[i].x1;
+		output_rects[i].height = rects[i].y2 - rects[i].y1;
 	}
+
+	pixman_region32_fini(&transformed_region);
 
 	cookie = xcb_set_clip_rectangles_checked(c->conn, XCB_CLIP_ORDERING_UNSORTED,
 					output->gc,
@@ -444,7 +415,7 @@ set_clip_for_output(struct weston_output *output_base, pixman_region32_t *region
 }
 
 
-static void
+static int
 x11_output_repaint_shm(struct weston_output *output_base,
 		       pixman_region32_t *damage)
 {
@@ -475,6 +446,7 @@ x11_output_repaint_shm(struct weston_output *output_base,
 	}
 
 	wl_event_source_timer_update(output->finish_frame_timer, 10);
+	return 0;
 }
 
 static int
@@ -512,14 +484,13 @@ x11_output_destroy(struct weston_output *output_base)
 	struct x11_compositor *compositor =
 		(struct x11_compositor *)output->base.compositor;
 
-	wl_list_remove(&output->base.link);
 	wl_event_source_remove(output->finish_frame_timer);
 
 	if (compositor->use_pixman) {
 		pixman_renderer_output_destroy(output_base);
 		x11_output_deinit_shm(compositor, output);
 	} else
-		gl_renderer_output_destroy(output_base);
+		gl_renderer->output_destroy(output_base);
 
 	xcb_destroy_window(compositor->conn, output->window);
 
@@ -632,8 +603,8 @@ x11_output_wait_for_map(struct x11_compositor *c, struct x11_output *output)
 			if (configure_notify->width % output->scale != 0 ||
 			    configure_notify->height % output->scale != 0)
 				weston_log("Resolution is not a multiple of screen size, rounding\n");
-			output->mode.width = configure_notify->width / output->scale;
-			output->mode.height = configure_notify->height / output->scale;
+			output->mode.width = configure_notify->width;
+			output->mode.height = configure_notify->height;
 			configured = 1;
 			break;
 		}
@@ -732,6 +703,12 @@ x11_output_init_shm(struct x11_compositor *c, struct x11_output *output,
 	     visual_type->blue_mask == 0x0000ff) {
 		weston_log("Will use x8r8g8b8 format for SHM surfaces\n");
 		pixman_format = PIXMAN_x8r8g8b8;
+	} else if (bitsperpixel == 16 &&
+	           visual_type->red_mask == 0x00f800 &&
+	           visual_type->green_mask == 0x0007e0 &&
+	           visual_type->blue_mask == 0x00001f) {
+		weston_log("Will use r5g6b5 format for SHM surfaces\n");
+		pixman_format = PIXMAN_r5g6b5;
 	} else {
 		weston_log("Can't find appropriate format for SHM pixmap\n");
 		errno = ENOTSUP;
@@ -784,7 +761,8 @@ x11_compositor_create_output(struct x11_compositor *c, int x, int y,
 	xcb_screen_iterator_t iter;
 	struct wm_normal_hints normal_hints;
 	struct wl_event_loop *loop;
-	int output_width, output_height;
+	int output_width, output_height, width_mm, height_mm;
+	int ret;
 	uint32_t mask = XCB_CW_EVENT_MASK | XCB_CW_CURSOR;
 	xcb_atom_t atom_list[1];
 	uint32_t values[2] = {
@@ -894,18 +872,32 @@ x11_compositor_create_output(struct x11_compositor *c, int x, int y,
 	output->base.current_mode = &output->mode;
 	output->base.make = "xwayland";
 	output->base.model = "none";
+
+	if (configured_name)
+		output->base.name = strdup(configured_name);
+
+	width_mm = width * c->screen->width_in_millimeters /
+		c->screen->width_in_pixels;
+	height_mm = height * c->screen->height_in_millimeters /
+		c->screen->height_in_pixels;
 	weston_output_init(&output->base, &c->base,
-			   x, y, width, height, transform, scale);
+			   x, y, width_mm, height_mm, transform, scale);
 
 	if (c->use_pixman) {
-		if (x11_output_init_shm(c, output, output_width, output_height) < 0)
+		if (x11_output_init_shm(c, output,
+					output->mode.width,
+					output->mode.height) < 0)
 			return NULL;
 		if (pixman_renderer_output_create(&output->base) < 0) {
 			x11_output_deinit_shm(c, output);
 			return NULL;
 		}
 	} else {
-		if (gl_renderer_output_create(&output->base, (EGLNativeWindowType)output->window) < 0)
+		ret = gl_renderer->output_create(&output->base,
+						 (EGLNativeWindowType) output->window,
+						 gl_renderer->opaque_attribs,
+						 NULL);
+		if (ret < 0)
 			return NULL;
 	}
 
@@ -934,11 +926,25 @@ x11_compositor_find_output(struct x11_compositor *c, xcb_window_t window)
 	assert(0);
 }
 
+static void
+x11_compositor_delete_window(struct x11_compositor *c, xcb_window_t window)
+{
+	struct x11_output *output;
+
+	output = x11_compositor_find_output(c, window);
+	x11_output_destroy(&output->base);
+
+	xcb_flush(c->conn);
+
+	if (wl_list_empty(&c->base.output_list))
+		wl_display_terminate(c->base.wl_display);
+}
+
 #ifdef HAVE_XCB_XKB
 static void
 update_xkb_state(struct x11_compositor *c, xcb_xkb_state_notify_event_t *state)
 {
-	xkb_state_update_mask(c->core_seat.xkb_state.state,
+	xkb_state_update_mask(c->core_seat.keyboard->xkb_state.state,
 			      get_xkb_mod_mask(c, state->baseMods),
 			      get_xkb_mod_mask(c, state->latchedMods),
 			      get_xkb_mod_mask(c, state->lockedMods),
@@ -968,7 +974,7 @@ update_xkb_state_from_core(struct x11_compositor *c, uint16_t x11_mask)
 	uint32_t mask = get_xkb_mod_mask(c, x11_mask);
 	struct weston_keyboard *keyboard = c->core_seat.keyboard;
 
-	xkb_state_update_mask(c->core_seat.xkb_state.state,
+	xkb_state_update_mask(c->core_seat.keyboard->xkb_state.state,
 			      keyboard->modifiers.mods_depressed & mask,
 			      keyboard->modifiers.mods_latched & mask,
 			      keyboard->modifiers.mods_locked & mask,
@@ -1068,8 +1074,9 @@ x11_compositor_deliver_motion_event(struct x11_compositor *c,
 		update_xkb_state_from_core(c, motion_notify->state);
 	output = x11_compositor_find_output(c, motion_notify->event);
 	weston_output_transform_coordinate(&output->base,
-					   motion_notify->event_x,
-					   motion_notify->event_y, &x, &y);
+					   wl_fixed_from_int(motion_notify->event_x),
+					   wl_fixed_from_int(motion_notify->event_y),
+					   &x, &y);
 
 	notify_motion(&c->core_seat, weston_compositor_get_time(),
 		      x - c->prev_x, y - c->prev_y);
@@ -1093,8 +1100,8 @@ x11_compositor_deliver_enter_event(struct x11_compositor *c,
 		update_xkb_state_from_core(c, enter_notify->state);
 	output = x11_compositor_find_output(c, enter_notify->event);
 	weston_output_transform_coordinate(&output->base,
-					   enter_notify->event_x,
-					   enter_notify->event_y, &x, &y);
+					   wl_fixed_from_int(enter_notify->event_x),
+					   wl_fixed_from_int(enter_notify->event_y), &x, &y);
 
 	notify_pointer_focus(&c->core_seat, &output->base, x, y);
 
@@ -1132,6 +1139,7 @@ x11_compositor_handle_event(int fd, uint32_t mask, void *data)
 	xcb_focus_in_event_t *focus_in;
 	xcb_expose_event_t *expose;
 	xcb_atom_t atom;
+	xcb_window_t window;
 	uint32_t *k;
 	uint32_t i, set;
 	uint8_t response_type;
@@ -1240,6 +1248,7 @@ x11_compositor_handle_event(int fd, uint32_t mask, void *data)
 		case XCB_EXPOSE:
 			expose = (xcb_expose_event_t *) event;
 			output = x11_compositor_find_output(c, expose->window);
+			weston_output_damage(&output->base);
 			weston_output_schedule_repaint(&output->base);
 			break;
 
@@ -1259,8 +1268,9 @@ x11_compositor_handle_event(int fd, uint32_t mask, void *data)
 		case XCB_CLIENT_MESSAGE:
 			client_message = (xcb_client_message_event_t *) event;
 			atom = client_message->data.data32[0];
+			window = client_message->window;
 			if (atom == c->atom.wm_delete_window)
-				wl_display_terminate(c->base.wl_display);
+				x11_compositor_delete_window(c, window);
 			break;
 
 		case XCB_FOCUS_IN:
@@ -1284,12 +1294,20 @@ x11_compositor_handle_event(int fd, uint32_t mask, void *data)
 		}
 
 #ifdef HAVE_XCB_XKB
-		if (c->has_xkb &&
-		    response_type == c->xkb_event_base) {
-			xcb_xkb_state_notify_event_t *state =
-				(xcb_xkb_state_notify_event_t *) event;
-			if (state->xkbType == XCB_XKB_STATE_NOTIFY)
-				update_xkb_state(c, state);
+		if (c->has_xkb) {
+			if (response_type == c->xkb_event_base) {
+				xcb_xkb_state_notify_event_t *state =
+					(xcb_xkb_state_notify_event_t *) event;
+				if (state->xkbType == XCB_XKB_STATE_NOTIFY)
+					update_xkb_state(c, state);
+			} else if (response_type == XCB_PROPERTY_NOTIFY) {
+				xcb_property_notify_event_t *prop_notify =
+					(xcb_property_notify_event_t *) event;
+				if (prop_notify->window == c->screen->root &&
+				    prop_notify->atom == c->atom.xkb_names &&
+				    prop_notify->state == XCB_PROPERTY_NEW_VALUE)
+					update_xkb_keymap(c);
+			}
 		}
 #endif
 
@@ -1410,8 +1428,6 @@ x11_destroy(struct weston_compositor *ec)
 
 	weston_compositor_shutdown(ec); /* destroys outputs, too */
 
-	ec->renderer->destroy(ec);
-
 	XCloseDisplay(compositor->dpy);
 	free(ec);
 }
@@ -1441,6 +1457,21 @@ parse_transform(const char *transform, const char *output_name)
 	return WL_OUTPUT_TRANSFORM_NORMAL;
 }
 
+static int
+init_gl_renderer(struct x11_compositor *c)
+{
+	int ret;
+
+	gl_renderer = weston_load_module("gl-renderer.so",
+					 "gl_renderer_interface");
+	if (!gl_renderer)
+		return -1;
+
+	ret = gl_renderer->create(&c->base, (EGLNativeDisplayType) c->dpy,
+				  gl_renderer->opaque_attribs, NULL);
+
+	return ret;
+}
 static struct weston_compositor *
 x11_compositor_create(struct wl_display *display,
 		      int fullscreen,
@@ -1454,7 +1485,7 @@ x11_compositor_create(struct wl_display *display,
 	struct weston_config_section *section;
 	xcb_screen_iterator_t s;
 	int i, x = 0, output_count = 0;
-	int width, height, count, scale;
+	int width, height, scale, count;
 	const char *section_name;
 	char *name, *t, *mode;
 	uint32_t transform;
@@ -1497,10 +1528,8 @@ x11_compositor_create(struct wl_display *display,
 		if (pixman_renderer_init(&c->base) < 0)
 			goto err_xdisplay;
 	}
-	else {
-		if (gl_renderer_create(&c->base, (EGLNativeDisplayType)c->dpy, gl_renderer_opaque_attribs,
-				NULL) < 0)
-			goto err_xdisplay;
+	else if (init_gl_renderer(c) < 0) {
+		goto err_xdisplay;
 	}
 	weston_log("Using %s renderer\n", use_pixman ? "pixman" : "gl");
 
@@ -1512,6 +1541,7 @@ x11_compositor_create(struct wl_display *display,
 
 	width = option_width ? option_width : 1024;
 	height = option_height ? option_height : 640;
+	scale = option_scale ? option_scale : 1;
 	count = option_count ? option_count : 1;
 
 	section = NULL;
@@ -1541,6 +1571,9 @@ x11_compositor_create(struct wl_display *display,
 			height = option_height;
 
 		weston_config_section_get_int(section, "scale", &scale, 1);
+		if (option_scale)
+			scale = option_scale;
+
 		weston_config_section_get_string(section,
 						 "transform", &t, "normal");
 		transform = parse_transform(t, name);
@@ -1564,7 +1597,7 @@ x11_compositor_create(struct wl_display *display,
 	for (i = output_count; i < count; i++) {
 		output = x11_compositor_create_output(c, x, 0, width, height,
 						      fullscreen, no_input, NULL,
-						      WL_OUTPUT_TRANSFORM_NORMAL, 1);
+						      WL_OUTPUT_TRANSFORM_NORMAL, scale);
 		if (output == NULL)
 			goto err_x11_input;
 		x = pixman_region32_extents(&output->base.region)->x2;
@@ -1601,6 +1634,7 @@ backend_init(struct wl_display *display, int *argc, char *argv[],
 	const struct weston_option x11_options[] = {
 		{ WESTON_OPTION_INTEGER, "width", 0, &option_width },
 		{ WESTON_OPTION_INTEGER, "height", 0, &option_height },
+		{ WESTON_OPTION_INTEGER, "scale", 0, &option_scale },
 		{ WESTON_OPTION_BOOLEAN, "fullscreen", 'f', &fullscreen },
 		{ WESTON_OPTION_INTEGER, "output-count", 0, &option_count },
 		{ WESTON_OPTION_BOOLEAN, "no-input", 0, &no_input },

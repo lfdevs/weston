@@ -40,12 +40,9 @@
 #include <linux/kd.h>
 #include <linux/major.h>
 
-#ifdef BUILD_DRM_COMPOSITOR
-#include <xf86drm.h>
-#endif
-
 #include "compositor.h"
 #include "launcher-util.h"
+#include "logind-util.h"
 #include "weston-launch.h"
 
 #define DRM_MAJOR 226
@@ -54,36 +51,54 @@
 #define KDSKBMUTE	0x4B51
 #endif
 
+#ifdef HAVE_LIBDRM
+
+#include <xf86drm.h>
+
+static inline int
+is_drm_master(int drm_fd)
+{
+	drm_magic_t magic;
+
+	return drmGetMagic(drm_fd, &magic) == 0 &&
+		drmAuthMagic(drm_fd, magic) == 0;
+}
+
+#else
+
+static inline int
+drmDropMaster(int drm_fd)
+{
+	return 0;
+}
+
+static inline int
+drmSetMaster(int drm_fd)
+{
+	return 0;
+}
+
+static inline int
+is_drm_master(int drm_fd)
+{
+	return 0;
+}
+
+#endif
+
+
 union cmsg_data { unsigned char b[4]; int fd; };
 
 struct weston_launcher {
 	struct weston_compositor *compositor;
+	struct weston_logind *logind;
+	struct wl_event_loop *loop;
 	int fd;
 	struct wl_event_source *source;
 
 	int kb_mode, tty, drm_fd;
 	struct wl_event_source *vt_source;
 };
-
-#ifdef BUILD_DRM_COMPOSITOR
-static int
-drm_drop_master(int drm_fd)
-{
-	if (drm_fd != -1)
-		return drmDropMaster(drm_fd);
-	return -EBADF;
-}
-static int
-drm_set_master(int drm_fd)
-{
-	if (drm_fd != -1)
-		return drmSetMaster(drm_fd);
-	return -EBADF;
-}
-#else
-static int drm_drop_master(int drm_fd) {return 0;}
-static int drm_set_master(int drm_fd) {return 0;}
-#endif
 
 int
 weston_launcher_open(struct weston_launcher *launcher,
@@ -99,6 +114,9 @@ weston_launcher_open(struct weston_launcher *launcher,
 	struct weston_launcher_open *message;
 	struct stat s;
 
+	if (launcher->logind)
+		return weston_logind_open(launcher->logind, path, flags);
+
 	if (launcher->fd == -1) {
 		fd = open(path, flags | O_CLOEXEC);
 		if (fd == -1)
@@ -110,10 +128,8 @@ weston_launcher_open(struct weston_launcher *launcher,
 		}
 
 		if (major(s.st_rdev) == DRM_MAJOR) {
-			drm_magic_t magic;
 			launcher->drm_fd = fd;
-			if (drmGetMagic(fd, &magic) != 0 ||
-			    drmAuthMagic(fd, magic) != 0) {
+			if (!is_drm_master(fd)) {
 				weston_log("drm fd not master\n");
 				close(fd);
 				return -1;
@@ -171,9 +187,21 @@ weston_launcher_open(struct weston_launcher *launcher,
 }
 
 void
+weston_launcher_close(struct weston_launcher *launcher, int fd)
+{
+	if (launcher->logind)
+		return weston_logind_close(launcher->logind, fd);
+
+	close(fd);
+}
+
+void
 weston_launcher_restore(struct weston_launcher *launcher)
 {
 	struct vt_mode mode = { 0 };
+
+	if (launcher->logind)
+		return weston_logind_restore(launcher->logind);
 
 	if (ioctl(launcher->tty, KDSKBMUTE, 0) &&
 	    ioctl(launcher->tty, KDSKBMODE, launcher->kb_mode))
@@ -181,6 +209,11 @@ weston_launcher_restore(struct weston_launcher *launcher)
 
 	if (ioctl(launcher->tty, KDSETMODE, KD_TEXT))
 		weston_log("failed to set KD_TEXT mode on tty: %m\n");
+
+	/* We have to drop master before we switch the VT back in
+	 * VT_AUTO, so we don't risk switching to a VT with another
+	 * display server, that will then fail to set drm master. */
+	drmDropMaster(launcher->drm_fd);
 
 	mode.mode = VT_AUTO;
 	if (ioctl(launcher->tty, VT_SETMODE, &mode) < 0)
@@ -234,11 +267,11 @@ vt_handler(int signal_number, void *data)
 	if (compositor->session_active) {
 		compositor->session_active = 0;
 		wl_signal_emit(&compositor->session_signal, compositor);
-		drm_drop_master(launcher->drm_fd);
+		drmDropMaster(launcher->drm_fd);
 		ioctl(launcher->tty, VT_RELDISP, 1);
 	} else {
 		ioctl(launcher->tty, VT_RELDISP, VT_ACKACQ);
-		drm_set_master(launcher->drm_fd);
+		drmSetMaster(launcher->drm_fd);
 		compositor->session_active = 1;
 		wl_signal_emit(&compositor->session_signal, compositor);
 	}
@@ -256,7 +289,11 @@ setup_tty(struct weston_launcher *launcher, int tty)
 	int ret, kd_mode;
 
 	if (tty == 0) {
-		launcher->tty = tty;
+		launcher->tty = dup(tty);
+		if (launcher->tty == -1) {
+			weston_log("couldn't dup stdin: %m\n");
+			return -1;
+		}
 	} else {
 		snprintf(tty_device, sizeof tty_device, "/dev/tty%d", tty);
 		launcher->tty = open(tty_device, O_RDWR | O_CLOEXEC);
@@ -271,7 +308,7 @@ setup_tty(struct weston_launcher *launcher, int tty)
 		weston_log("%s not a vt\n", tty_device);
 		weston_log("if running weston from ssh, "
 			   "use --tty to specify a tty\n");
-		return -1;
+		goto err_close;
 	}
 
 	ret = ioctl(launcher->tty, KDGETMODE, &kd_mode);
@@ -282,30 +319,27 @@ setup_tty(struct weston_launcher *launcher, int tty)
 	if (kd_mode != KD_TEXT) {
 		weston_log("%s is already in graphics mode, "
 			   "is another display server running?\n", tty_device);
-		return -1;
+		goto err_close;
 	}
 
-	ret = ioctl(launcher->tty, VT_ACTIVATE, minor(buf.st_rdev));
-	weston_log("VT_ACTIVATE ret=%d, %m vt\n", ret);
-
-	ret = ioctl(launcher->tty, VT_WAITACTIVE, minor(buf.st_rdev));
-	weston_log("VT_WAITACTIVE ret=%d, %m vt\n", ret);
+	ioctl(launcher->tty, VT_ACTIVATE, minor(buf.st_rdev));
+	ioctl(launcher->tty, VT_WAITACTIVE, minor(buf.st_rdev));
 
 	if (ioctl(launcher->tty, KDGKBMODE, &launcher->kb_mode)) {
 		weston_log("failed to read keyboard mode: %m\n");
-		return -1;
+		goto err_close;
 	}
 
 	if (ioctl(launcher->tty, KDSKBMUTE, 1) &&
 	    ioctl(launcher->tty, KDSKBMODE, K_OFF)) {
 		weston_log("failed to set K_OFF keyboard mode: %m\n");
-		return -1;
+		goto err_close;
 	}
 
 	ret = ioctl(launcher->tty, KDSETMODE, KD_GRAPHICS);
 	if (ret) {
 		weston_log("failed to set KD_GRAPHICS mode on tty: %m\n");
-		return -1;
+		goto err_close;
 	}
 
 	mode.mode = VT_PROCESS;
@@ -313,39 +347,54 @@ setup_tty(struct weston_launcher *launcher, int tty)
 	mode.acqsig = SIGUSR1;
 	if (ioctl(launcher->tty, VT_SETMODE, &mode) < 0) {
 		weston_log("failed to take control of vt handling\n");
-		return -1;
+		goto err_close;
 	}
 
 	loop = wl_display_get_event_loop(launcher->compositor->wl_display);
 	launcher->vt_source =
 		wl_event_loop_add_signal(loop, SIGUSR1, vt_handler, launcher);
 	if (!launcher->vt_source)
-		return -1;
+		goto err_close;
 
 	return 0;
+
+ err_close:
+	close(launcher->tty);
+	return -1;
 }
 
 int
 weston_launcher_activate_vt(struct weston_launcher *launcher, int vt)
 {
+	if (launcher->logind)
+		return weston_logind_activate_vt(launcher->logind, vt);
+
 	return ioctl(launcher->tty, VT_ACTIVATE, vt);
 }
 
 struct weston_launcher *
-weston_launcher_connect(struct weston_compositor *compositor, int tty)
+weston_launcher_connect(struct weston_compositor *compositor, int tty,
+			const char *seat_id)
 {
 	struct weston_launcher *launcher;
 	struct wl_event_loop *loop;
+	int r;
 
 	launcher = malloc(sizeof *launcher);
 	if (launcher == NULL)
 		return NULL;
 
+	launcher->logind = NULL;
 	launcher->compositor = compositor;
 	launcher->drm_fd = -1;
 	launcher->fd = weston_environment_get_fd("WESTON_LAUNCHER_SOCK");
 	if (launcher->fd != -1) {
 		launcher->tty = weston_environment_get_fd("WESTON_TTY_FD");
+		/* We don't get a chance to read out the original kb
+		 * mode for the tty, so just hard code K_UNICODE here
+		 * in case we have to clean if weston-launch dies. */
+		launcher->kb_mode = K_UNICODE;
+
 		loop = wl_display_get_event_loop(compositor->wl_display);
 		launcher->source = wl_event_loop_add_fd(loop, launcher->fd,
 							WL_EVENT_READABLE,
@@ -355,14 +404,21 @@ weston_launcher_connect(struct weston_compositor *compositor, int tty)
 			free(launcher);
 			return NULL;
 		}
-	} else if (geteuid() == 0) {
-		if (setup_tty(launcher, tty) == -1) {
-			free(launcher);
-			return NULL;
-		}
 	} else {
-		free(launcher);
-		return NULL;
+		r = weston_logind_connect(&launcher->logind, compositor,
+					  seat_id, tty);
+		if (r < 0) {
+			launcher->logind = NULL;
+			if (geteuid() == 0) {
+				if (setup_tty(launcher, tty) == -1) {
+					free(launcher);
+					return NULL;
+				}
+			} else {
+				free(launcher);
+				return NULL;
+			}
+		}
 	}
 
 	return launcher;
@@ -371,13 +427,18 @@ weston_launcher_connect(struct weston_compositor *compositor, int tty)
 void
 weston_launcher_destroy(struct weston_launcher *launcher)
 {
-	if (launcher->fd != -1) {
+	if (launcher->logind) {
+		weston_logind_destroy(launcher->logind);
+	} else if (launcher->fd != -1) {
 		close(launcher->fd);
 		wl_event_source_remove(launcher->source);
 	} else {
 		weston_launcher_restore(launcher);
 		wl_event_source_remove(launcher->vt_source);
 	}
+
+	if (launcher->tty >= 0)
+		close(launcher->tty);
 
 	free(launcher);
 }
