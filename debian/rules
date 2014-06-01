@@ -2,7 +2,7 @@
 
 override_dh_auto_configure:
 	dh_auto_configure -- --disable-libunwind --libexec=/usr/lib/weston \
-		--with-cairo=gl
+		--with-cairo=gl --enable-libinput-backend
 
 override_dh_auto_test:
 	# the test suite does not 100% pass in headless mode

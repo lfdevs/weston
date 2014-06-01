@@ -1,3 +1,11 @@
+weston (1.5.0-2) unstable; urgency=medium
+
+  * debian/control,
+    debian/rules:
+    + Enable libinput backend.
+
+ -- Emilio Pozuelo Monfort <pochu@debian.org>  Sun, 01 Jun 2014 17:25:06 +0200
+
 weston (1.5.0-1) unstable; urgency=medium
 
   * Add myself to Uploaders.
