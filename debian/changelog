@@ -1,3 +1,16 @@
+weston (1.5.0-3) unstable; urgency=medium
+
+  * d/p/0001-libinput-Use-floating-point-instead-of-fixed-point-n.patch,
+    d/p/0001-Require-libinput-0.4.0.patch,
+    debian/control:
+    + Build against libinput 0.5.0.
+  * debian/weston.install,
+    debian/rules:
+    + Disable cairo-gl support. It causes trouble in some embedded platforms
+      so we're disabling its support, at least for now.
+
+ -- Emilio Pozuelo Monfort <pochu@debian.org>  Fri, 05 Sep 2014 02:14:06 +0200
+
 weston (1.5.0-2) unstable; urgency=medium
 
   * debian/control,

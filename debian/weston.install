@@ -6,7 +6,6 @@ usr/bin/weston-terminal
 usr/include/weston
 usr/lib/weston/weston-desktop-shell
 usr/lib/weston/weston-keyboard
-usr/lib/weston/weston-screensaver
 usr/lib/weston/weston-screenshooter
 usr/lib/weston/weston-simple-im
 usr/lib/*/pkgconfig/weston.pc
@@ -36,14 +35,12 @@ weston-editor	usr/lib/weston/
 weston-eventdemo	usr/lib/weston/
 weston-flower	usr/lib/weston/
 weston-fullscreen	usr/lib/weston/
-weston-gears	usr/lib/weston/
 weston-image	usr/lib/weston/
 weston-info	usr/lib/weston/
 weston-keyboard	usr/lib/weston/
 weston-multi-resource	usr/lib/weston/
 weston-resizor	usr/lib/weston/
 weston-scaler	usr/lib/weston/
-weston-screensaver	usr/lib/weston/
 weston-screenshooter	usr/lib/weston/
 weston-simple-egl	usr/lib/weston/
 weston-simple-im	usr/lib/weston/
