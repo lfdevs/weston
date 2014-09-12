@@ -68,6 +68,11 @@ enum weston_keyboard_modifier {
 	MODIFIER_SHIFT = (1 << 3),
 };
 
+enum weston_keyboard_locks {
+	WESTON_NUM_LOCK = (1 << 0),
+	WESTON_CAPS_LOCK = (1 << 1),
+};
+
 enum weston_led {
 	LED_NUM_LOCK = (1 << 0),
 	LED_CAPS_LOCK = (1 << 1),
@@ -110,9 +115,9 @@ struct weston_shell_interface {
 		      struct weston_seat *ws, uint32_t edges);
 	void (*set_title)(struct shell_surface *shsurf,
 	                  const char *title);
-	void (*set_margin)(struct shell_surface *shsurf,
-			   int32_t left, int32_t right,
-			   int32_t top, int32_t bottom);
+	void (*set_window_geometry)(struct shell_surface *shsurf,
+				    int32_t x, int32_t y,
+				    int32_t width, int32_t height);
 };
 
 struct weston_animation {
@@ -195,7 +200,6 @@ struct weston_output {
 	int dirty;
 	struct wl_signal frame_signal;
 	struct wl_signal destroy_signal;
-	struct wl_signal move_signal;
 	int move_x, move_y;
 	uint32_t frame_time;
 	int disable_planes;
@@ -393,6 +397,13 @@ weston_keyboard_start_grab(struct weston_keyboard *device,
 			   struct weston_keyboard_grab *grab);
 void
 weston_keyboard_end_grab(struct weston_keyboard *keyboard);
+int
+/*
+ * 'mask' and 'value' should be a bitwise mask of one or more
+ * valued of the weston_keyboard_locks enum.
+ */
+weston_keyboard_set_locks(struct weston_keyboard *keyboard,
+			  uint32_t mask, uint32_t value);
 
 struct weston_touch *
 weston_touch_create(void);
@@ -526,9 +537,15 @@ enum {
                                          * to off */
 };
 
-struct weston_layer {
-	struct wl_list view_list;
+struct weston_layer_entry {
 	struct wl_list link;
+	struct weston_layer *layer;
+};
+
+struct weston_layer {
+	struct weston_layer_entry view_list;
+	struct wl_list link;
+	pixman_box32_t mask;
 };
 
 struct weston_plane {
@@ -643,6 +660,9 @@ struct weston_compositor {
 
 	/* Raw keyboard processing (no libxkbcommon initialization or handling) */
 	int use_xkbcommon;
+
+	int32_t kb_repeat_rate;
+	int32_t kb_repeat_delay;
 };
 
 struct weston_buffer {
@@ -686,62 +706,13 @@ struct weston_buffer_viewport {
 		 */
 		int32_t width, height;
 	} surface;
+
+	int changed;
 };
 
 struct weston_region {
 	struct wl_resource *resource;
 	pixman_region32_t region;
-};
-
-struct weston_subsurface {
-	struct wl_resource *resource;
-
-	/* guaranteed to be valid and non-NULL */
-	struct weston_surface *surface;
-	struct wl_listener surface_destroy_listener;
-
-	/* can be NULL */
-	struct weston_surface *parent;
-	struct wl_listener parent_destroy_listener;
-	struct wl_list parent_link;
-	struct wl_list parent_link_pending;
-
-	struct {
-		int32_t x;
-		int32_t y;
-		int set;
-	} position;
-
-	struct {
-		int has_data;
-
-		/* wl_surface.attach */
-		int newly_attached;
-		struct weston_buffer_reference buffer_ref;
-		int32_t sx;
-		int32_t sy;
-
-		/* wl_surface.damage */
-		pixman_region32_t damage;
-
-		/* wl_surface.set_opaque_region */
-		pixman_region32_t opaque;
-
-		/* wl_surface.set_input_region */
-		pixman_region32_t input;
-
-		/* wl_surface.frame */
-		struct wl_list frame_callback_list;
-
-		/* wl_surface.set_buffer_transform */
-		/* wl_surface.set_buffer_scale */
-		struct weston_buffer_viewport buffer_viewport;
-	} cached;
-
-	int synchronized;
-
-	/* Used for constructing the view tree */
-	struct wl_list unused_views;
 };
 
 /* Using weston_view transformations
@@ -780,8 +751,9 @@ struct weston_view {
 	struct wl_signal destroy_signal;
 
 	struct wl_list link;
-	struct wl_list layer_link;
+	struct weston_layer_entry layer_link;
 	struct weston_plane *plane;
+	struct weston_view *parent_view;
 
 	pixman_region32_t clip;
 	float alpha;                     /* part of geometry, see below */
@@ -813,6 +785,8 @@ struct weston_view {
 
 		pixman_region32_t boundingbox;
 		pixman_region32_t opaque;
+		pixman_region32_t masked_boundingbox;
+		pixman_region32_t masked_opaque;
 
 		/* matrix and inverse are used only if enabled = 1.
 		 * If enabled = 0, use x, y, width, height directly.
@@ -836,6 +810,32 @@ struct weston_view {
 	 * displayed on.
 	 */
 	uint32_t output_mask;
+};
+
+struct weston_surface_state {
+	/* wl_surface.attach */
+	int newly_attached;
+	struct weston_buffer *buffer;
+	struct wl_listener buffer_destroy_listener;
+	int32_t sx;
+	int32_t sy;
+
+	/* wl_surface.damage */
+	pixman_region32_t damage;
+
+	/* wl_surface.set_opaque_region */
+	pixman_region32_t opaque;
+
+	/* wl_surface.set_input_region */
+	pixman_region32_t input;
+
+	/* wl_surface.frame */
+	struct wl_list frame_callback_list;
+
+	/* wl_surface.set_buffer_transform */
+	/* wl_surface.set_scaling_factor */
+	/* wl_viewport.set */
+	struct weston_buffer_viewport buffer_viewport;
 };
 
 struct weston_surface {
@@ -882,31 +882,7 @@ struct weston_surface {
 	struct wl_resource *viewport_resource;
 
 	/* All the pending state, that wl_surface.commit will apply. */
-	struct {
-		/* wl_surface.attach */
-		int newly_attached;
-		struct weston_buffer *buffer;
-		struct wl_listener buffer_destroy_listener;
-		int32_t sx;
-		int32_t sy;
-
-		/* wl_surface.damage */
-		pixman_region32_t damage;
-
-		/* wl_surface.set_opaque_region */
-		pixman_region32_t opaque;
-
-		/* wl_surface.set_input_region */
-		pixman_region32_t input;
-
-		/* wl_surface.frame */
-		struct wl_list frame_callback_list;
-
-		/* wl_surface.set_buffer_transform */
-		/* wl_surface.set_scaling_factor */
-		/* wl_viewport.set */
-		struct weston_buffer_viewport buffer_viewport;
-	} pending;
+	struct weston_surface_state pending;
 
 	/*
 	 * If non-NULL, this function will be called on
@@ -923,6 +899,35 @@ struct weston_surface {
 	 */
 	struct wl_list subsurface_list; /* weston_subsurface::parent_link */
 	struct wl_list subsurface_list_pending; /* ...::parent_link_pending */
+};
+
+struct weston_subsurface {
+	struct wl_resource *resource;
+
+	/* guaranteed to be valid and non-NULL */
+	struct weston_surface *surface;
+	struct wl_listener surface_destroy_listener;
+
+	/* can be NULL */
+	struct weston_surface *parent;
+	struct wl_listener parent_destroy_listener;
+	struct wl_list parent_link;
+	struct wl_list parent_link_pending;
+
+	struct {
+		int32_t x;
+		int32_t y;
+		int set;
+	} position;
+
+	int has_cached_data;
+	struct weston_surface_state cached;
+	struct weston_buffer_reference cached_buffer_ref;
+
+	int synchronized;
+
+	/* Used for constructing the view tree */
+	struct wl_list unused_views;
 };
 
 enum weston_key_state_update {
@@ -1015,7 +1020,18 @@ void
 notify_touch_frame(struct weston_seat *seat);
 
 void
+weston_layer_entry_insert(struct weston_layer_entry *list,
+			  struct weston_layer_entry *entry);
+void
+weston_layer_entry_remove(struct weston_layer_entry *entry);
+void
 weston_layer_init(struct weston_layer *layer, struct wl_list *below);
+
+void
+weston_layer_set_mask(struct weston_layer *layer, int x, int y, int width, int height);
+
+void
+weston_layer_set_mask_infinite(struct weston_layer *layer);
 
 void
 weston_plane_init(struct weston_plane *plane,
@@ -1339,6 +1355,9 @@ weston_client_launch(struct weston_compositor *compositor,
 		     struct weston_process *proc,
 		     const char *path,
 		     weston_process_cleanup_func_t cleanup);
+
+struct wl_client *
+weston_client_start(struct weston_compositor *compositor, const char *path);
 
 void
 weston_watch_process(struct weston_process *process);

@@ -701,6 +701,9 @@ weston_wm_window_activate(struct wl_listener *listener, void *data)
 	}
 
 	if (window) {
+		if (window->override_redirect)
+			return;
+
 		client_message.response_type = XCB_CLIENT_MESSAGE;
 		client_message.format = 32;
 		client_message.window = window->id;
@@ -1007,12 +1010,9 @@ weston_wm_window_draw_decoration(void *data)
 
 		pixman_region32_init_rect(&window->surface->pending.input,
 					  input_x, input_y, input_w, input_h);
-		
-		shell_interface->set_margin(window->shsurf,
-					    input_x,
-					    width - input_w - input_x,
-					    input_y,
-					    height - input_h - input_y);
+
+		shell_interface->set_window_geometry(window->shsurf,
+						     input_x, input_y, input_w, input_h);
 	}
 }
 
@@ -1247,8 +1247,8 @@ weston_wm_window_handle_moveresize(struct weston_wm_window *window,
 	struct weston_shell_interface *shell_interface =
 		&wm->server->compositor->shell_interface;
 
-	if (seat->pointer->button_count != 1 || !window->view
-	    || seat->pointer->focus != window->view)
+	if (seat == NULL || seat->pointer->button_count != 1
+	    || !window->view || seat->pointer->focus != window->view)
 		return;
 
 	detail = client_message->data.data32[2];
@@ -1374,14 +1374,17 @@ weston_wm_window_handle_surface_id(struct weston_wm_window *window,
 	 * hasn't been created yet.  In that case put the window on
 	 * the unpaired window list and continue when the surface gets
 	 * created. */
-	window->surface_id = client_message->data.data32[0];
-	resource = wl_client_get_object(wm->server->client,
-					window->surface_id);
-	if (resource)
+	uint32_t id = client_message->data.data32[0];
+	resource = wl_client_get_object(wm->server->client, id);
+	if (resource) {
+		window->surface_id = 0;
 		xserver_map_shell_surface(window,
 					  wl_resource_get_user_data(resource));
-	else
+	}
+	else {
+		window->surface_id = id;
 		wl_list_insert(&wm->unpaired_window_list, &window->link);
+	}
 }
 
 static void
@@ -1402,6 +1405,12 @@ weston_wm_handle_client_message(struct weston_wm *wm,
 	       client_message->data.data32[3],
 	       client_message->data.data32[4],
 	       client_message->window);
+
+	/* The window may get created and destroyed before we actually
+	 * handle the message.  If it doesn't exist, bail.
+	 */
+	if (!window)
+		return;
 
 	if (client_message->type == wm->atom.net_wm_moveresize)
 		weston_wm_window_handle_moveresize(window, client_message);
@@ -1642,12 +1651,14 @@ weston_wm_handle_button(struct weston_wm *wm, xcb_generic_event_t *event)
 		weston_wm_window_schedule_repaint(window);
 
 	if (frame_status(window->frame) & FRAME_STATUS_MOVE) {
-		shell_interface->move(window->shsurf, seat);
+		if (seat != NULL)
+			shell_interface->move(window->shsurf, seat);
 		frame_status_clear(window->frame, FRAME_STATUS_MOVE);
 	}
 
 	if (frame_status(window->frame) & FRAME_STATUS_RESIZE) {
-		shell_interface->resize(window->shsurf, seat, location);
+		if (seat != NULL)
+			shell_interface->resize(window->shsurf, seat, location);
 		frame_status_clear(window->frame, FRAME_STATUS_RESIZE);
 	}
 
@@ -2182,15 +2193,12 @@ send_configure(struct weston_surface *surface, int32_t width, int32_t height)
 	struct theme *t = window->wm->theme;
 	int vborder, hborder;
 
-	if (window->fullscreen) {
+	if (window->decorate) {
+		hborder = 2 * t->width;
+		vborder = t->titlebar_height + t->width;
+	} else {
 		hborder = 0;
 		vborder = 0;
-	} else if (window->decorate) {
-		hborder = 2 * (t->margin + t->width);
-		vborder = 2 * t->margin + t->titlebar_height + t->width;
-	} else {
-		hborder = 2 * t->margin;
-		vborder = 2 * t->margin;
 	}
 
 	if (width > hborder)

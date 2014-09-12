@@ -265,7 +265,7 @@ bind_shooter(struct wl_client *client,
 	if (client != shooter->client) {
 		wl_resource_post_error(resource, WL_DISPLAY_ERROR_INVALID_OBJECT,
 				       "screenshooter failed: permission denied");
-		wl_resource_destroy(resource);
+		return;
 	}
 
 	wl_resource_set_implementation(resource, &screenshooter_implementation,
@@ -286,12 +286,22 @@ screenshooter_binding(struct weston_seat *seat, uint32_t time, uint32_t key,
 		      void *data)
 {
 	struct screenshooter *shooter = data;
-	const char *screenshooter_exe = LIBEXECDIR "/weston-screenshooter";
+	char *screenshooter_exe;
+	int ret;
+
+	ret = asprintf(&screenshooter_exe, "%s/%s",
+		       weston_config_get_libexec_dir(),
+		       "/weston-screenshooter");
+	if (ret < 0) {
+		weston_log("Could not construct screenshooter path.\n");
+		return;
+	}
 
 	if (!shooter->client)
 		shooter->client = weston_client_launch(shooter->ec,
 					&shooter->process,
 					screenshooter_exe, screenshooter_sigchld);
+	free(screenshooter_exe);
 }
 
 struct weston_recorder {

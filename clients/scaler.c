@@ -274,12 +274,6 @@ main(int argc, char *argv[])
 	struct timeval tv;
 	int i;
 
-	d = display_create(&argc, argv);
-	if (d == NULL) {
-		fprintf(stderr, "failed to create display: %m\n");
-		return -1;
-	}
-
 	box.mode = MODE_SRC_DST;
 
 	for (i = 1; i < argc; i++) {
@@ -295,6 +289,12 @@ main(int argc, char *argv[])
 			usage(argv[0]);
 			exit(1);
 		}
+	}
+
+	d = display_create(&argc, argv);
+	if (d == NULL) {
+		fprintf(stderr, "failed to create display: %m\n");
+		return -1;
 	}
 
 	gettimeofday(&tv, NULL);
@@ -321,6 +321,9 @@ main(int argc, char *argv[])
 
 	display_run(d);
 
+	widget_destroy(box.widget);
 	window_destroy(box.window);
+	display_destroy(d);
+
 	return 0;
 }

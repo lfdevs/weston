@@ -639,12 +639,27 @@ dnd_create(struct display *display)
 	return dnd;
 }
 
+static void
+dnd_destroy(struct dnd *dnd)
+{
+	widget_destroy(dnd->widget);
+	window_destroy(dnd->window);
+	free(dnd);
+}
+
 int
 main(int argc, char *argv[])
 {
 	struct display *d;
 	struct dnd *dnd;
-	int i;
+	int self_only = 0;
+
+	if (argc == 2 && !strcmp(argv[1], "--self-only"))
+		self_only = 1;
+	else if (argc > 1) {
+		printf("Usage: %s [OPTIONS]\n  --self-only\n", argv[0]);
+		return 1;
+	}
 
 	d = display_create(&argc, argv);
 	if (d == NULL) {
@@ -653,12 +668,13 @@ main(int argc, char *argv[])
 	}
 
 	dnd = dnd_create(d);
-
-	for (i = 1; i < argc; i++)
-		if (strcmp("--self-only", argv[i]) == 0)
-			dnd->self_only = 1;
+	if (self_only)
+		dnd->self_only = 1;
 
 	display_run(d);
+
+	dnd_destroy(dnd);
+	display_destroy(d);
 
 	return 0;
 }

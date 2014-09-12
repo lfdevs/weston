@@ -117,26 +117,10 @@ create_shm_buffer(struct display *display, struct buffer *buffer,
 
 static void
 handle_configure(void *data, struct xdg_surface *surface,
-		 int32_t width, int32_t height)
+		 int32_t width, int32_t height,
+		 struct wl_array *states, uint32_t serial)
 {
-}
-
-static void
-handle_change_state(void *data, struct xdg_surface *xdg_surface,
-		    uint32_t state,
-		    uint32_t value,
-		    uint32_t serial)
-{
-}
-
-static void
-handle_activated(void *data, struct xdg_surface *xdg_surface)
-{
-}
-
-static void
-handle_deactivated(void *data, struct xdg_surface *xdg_surface)
-{
+	xdg_surface_ack_configure(surface, serial);
 }
 
 static void
@@ -147,9 +131,6 @@ handle_delete(void *data, struct xdg_surface *xdg_surface)
 
 static const struct xdg_surface_listener xdg_surface_listener = {
 	handle_configure,
-	handle_change_state,
-	handle_activated,
-	handle_deactivated,
 	handle_delete,
 };
 
@@ -340,7 +321,7 @@ static const struct xdg_shell_listener xdg_shell_listener = {
 	xdg_shell_ping,
 };
 
-#define XDG_VERSION 3 /* The version of xdg-shell that we implement */
+#define XDG_VERSION 4 /* The version of xdg-shell that we implement */
 #ifdef static_assert
 static_assert(XDG_VERSION == XDG_SHELL_VERSION_CURRENT,
 	      "Interface version doesn't match implementation version");
@@ -412,8 +393,6 @@ create_display(void)
 		exit(1);
 	}
 
-	wl_display_get_fd(display->display);
-	
 	return display;
 }
 
