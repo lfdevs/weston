@@ -1,3 +1,12 @@
+weston (1.6.0-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Fix "weston-terminal: exits under load"
+    - Thanks Rémi Denis-Courmont for report.
+    (Closes: #760043)
+
+ -- Hector Oron <zumbi@debian.org>  Fri, 19 Sep 2014 16:38:47 +0200
+
 weston (1.5.93-2) unstable; urgency=medium
 
   [ Hector Oron ]
