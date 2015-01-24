@@ -4124,8 +4124,10 @@ load_modules(struct weston_compositor *ec, const char *modules,
 		end = strchrnul(p, ',');
 		snprintf(buffer, sizeof buffer, "%.*s", (int) (end - p), p);
 		module_init = weston_load_module(buffer, "module_init");
-		if (module_init)
-			module_init(ec, argc, argv);
+		if (!module_init)
+			return -1;
+		if (module_init(ec, argc, argv) < 0)
+			return -1;
 		p = end;
 		while (*p == ',')
 			p++;
@@ -4189,17 +4191,34 @@ usage(int error_code)
 
 		"Core options:\n\n"
 		"  --version\t\tPrint weston version\n"
-		"  -B, --backend=MODULE\tBackend module, one of drm-backend.so,\n"
-		"\t\t\t\tfbdev-backend.so, x11-backend.so or\n"
-		"\t\t\t\twayland-backend.so\n"
+		"  -B, --backend=MODULE\tBackend module, one of\n"
+#if defined(BUILD_DRM_COMPOSITOR)
+			"\t\t\t\tdrm-backend.so\n"
+#endif
+#if defined(BUILD_FBDEV_COMPOSITOR)
+			"\t\t\t\tfbdev-backend.so\n"
+#endif
+#if defined(BUILD_X11_COMPOSITOR)
+			"\t\t\t\tx11-backend.so\n"
+#endif
+#if defined(BUILD_WAYLAND_COMPOSITOR)
+			"\t\t\t\twayland-backend.so\n"
+#endif
+#if defined(BUILD_RDP_COMPOSITOR)
+			"\t\t\t\trdp-backend.so\n"
+#endif
+#if defined(BUILD_RPI_COMPOSITOR) && defined(HAVE_BCM_HOST)
+			"\t\t\t\trpi-backend.so\n"
+#endif
 		"  --shell=MODULE\tShell module, defaults to desktop-shell.so\n"
 		"  -S, --socket=NAME\tName of socket to listen on\n"
 		"  -i, --idle-time=SECS\tIdle time in seconds\n"
 		"  --modules\t\tLoad the comma-separated list of modules\n"
-		"  --log==FILE\t\tLog to the given file\n"
+		"  --log=FILE\t\tLog to the given file\n"
 		"  --no-config\t\tDo not read weston.ini\n"
 		"  -h, --help\t\tThis help message\n\n");
 
+#if defined(BUILD_DRM_COMPOSITOR)
 	fprintf(stderr,
 		"Options for drm-backend.so:\n\n"
 		"  --connector=ID\tBring up only this connector\n"
@@ -4207,12 +4226,16 @@ usage(int error_code)
 		"  --tty=TTY\t\tThe tty to use\n"
 		"  --use-pixman\t\tUse the pixman (CPU) renderer\n"
 		"  --current-mode\tPrefer current KMS mode over EDID preferred mode\n\n");
+#endif
 
+#if defined(BUILD_FBDEV_COMPOSITOR)
 	fprintf(stderr,
 		"Options for fbdev-backend.so:\n\n"
 		"  --tty=TTY\t\tThe tty to use\n"
 		"  --device=DEVICE\tThe framebuffer device to use\n\n");
+#endif
 
+#if defined(BUILD_X11_COMPOSITOR)
 	fprintf(stderr,
 		"Options for x11-backend.so:\n\n"
 		"  --width=WIDTH\t\tWidth of X window\n"
@@ -4221,17 +4244,20 @@ usage(int error_code)
 		"  --use-pixman\t\tUse the pixman (CPU) renderer\n"
 		"  --output-count=COUNT\tCreate multiple outputs\n"
 		"  --no-input\t\tDont create input devices\n\n");
+#endif
 
+#if defined(BUILD_WAYLAND_COMPOSITOR)
 	fprintf(stderr,
 		"Options for wayland-backend.so:\n\n"
 		"  --width=WIDTH\t\tWidth of Wayland surface\n"
 		"  --height=HEIGHT\tHeight of Wayland surface\n"
-		"  --scale=SCALE\tScale factor of ouput\n"
+		"  --scale=SCALE\t\tScale factor of output\n"
 		"  --fullscreen\t\tRun in fullscreen mode\n"
 		"  --use-pixman\t\tUse the pixman (CPU) renderer\n"
 		"  --output-count=COUNT\tCreate multiple outputs\n"
 		"  --sprawl\t\tCreate one fullscreen output for every parent output\n"
 		"  --display=DISPLAY\tWayland display to connect to\n\n");
+#endif
 
 #if defined(BUILD_RPI_COMPOSITOR) && defined(HAVE_BCM_HOST)
 	fprintf(stderr,
@@ -4246,18 +4272,18 @@ usage(int error_code)
 #endif
 
 #if defined(BUILD_RDP_COMPOSITOR)
-    fprintf(stderr,
-       "Options for rdp-backend.so:\n\n"
-       "  --width=WIDTH\t\tWidth of desktop\n"
-       "  --height=HEIGHT\tHeight of desktop\n"
-       "  --env-socket=SOCKET\tUse that socket as peer connection\n"
-       "  --address=ADDR\tThe address to bind\n"
-       "  --port=PORT\tThe port to listen on\n"
-       "  --no-clients-resize\tThe RDP peers will be forced to the size of the desktop\n"
-       "  --rdp4-key=FILE\tThe file containing the key for RDP4 encryption\n"
-       "  --rdp-tls-cert=FILE\tThe file containing the certificate for TLS encryption\n"
-       "  --rdp-tls-key=FILE\tThe file containing the private key for TLS encryption\n"
-       "\n");
+	fprintf(stderr,
+		"Options for rdp-backend.so:\n\n"
+		"  --width=WIDTH\t\tWidth of desktop\n"
+		"  --height=HEIGHT\tHeight of desktop\n"
+		"  --env-socket=SOCKET\tUse that socket as peer connection\n"
+		"  --address=ADDR\tThe address to bind\n"
+		"  --port=PORT\t\tThe port to listen on\n"
+		"  --no-clients-resize\tThe RDP peers will be forced to the size of the desktop\n"
+		"  --rdp4-key=FILE\tThe file containing the key for RDP4 encryption\n"
+		"  --rdp-tls-cert=FILE\tThe file containing the certificate for TLS encryption\n"
+		"  --rdp-tls-key=FILE\tThe file containing the private key for TLS encryption\n"
+		"\n");
 #endif
 
 	exit(error_code);

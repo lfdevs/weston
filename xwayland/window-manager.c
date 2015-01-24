@@ -1327,7 +1327,9 @@ weston_wm_window_handle_state(struct weston_wm_window *window,
 								WL_SHELL_SURFACE_FULLSCREEN_METHOD_DEFAULT,
 								0, NULL);
 		} else {
-			shell_interface->set_toplevel(window->shsurf);
+			if (window->shsurf)
+				shell_interface->set_toplevel(window->shsurf);
+
 			window->width = window->saved_width;
 			window->height = window->saved_height;
 			if (window->frame)
@@ -2193,7 +2195,7 @@ send_configure(struct weston_surface *surface, int32_t width, int32_t height)
 	struct theme *t = window->wm->theme;
 	int vborder, hborder;
 
-	if (window->decorate) {
+	if (window->decorate && !window->fullscreen) {
 		hborder = 2 * t->width;
 		vborder = t->titlebar_height + t->width;
 	} else {

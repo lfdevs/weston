@@ -29,7 +29,7 @@
   <interface name="wl_input_method_context" version="1">
     <description summary="input method context">
       Corresponds to a text model on input method side. An input method context
-      is created on text mode activation on the input method side. It allows to
+      is created on text model activation on the input method side. It allows to
       receive information about the text model from the application via events.
       Input method contexts do not keep state after deactivation and should be
       destroyed after deactivation is handled.
@@ -110,7 +110,7 @@
     <request name="cursor_position">
       <description summary="set cursor to a new position">
         Sets the cursor and anchor to a new position. Index is the new cursor
-        position in bytess (when >= 0 relative to the end of inserted text
+        position in bytes (when >= 0 relative to the end of inserted text
         else relative to beginning of inserted text). Anchor is the new anchor
         position in bytes (when >= 0 relative to the end of inserted text, else
         relative to beginning of inserted text). When there should be no
@@ -230,7 +230,7 @@
       <arg name="id" type="new_id" interface="wl_input_method_context"/>
     </event>
     <event name="deactivate">
-      <description summary="activate event">
+      <description summary="deactivate event">
         The text model corresponding to the context argument was deactivated.
         The input method context should be destroyed after deactivation is
         handled.
@@ -257,7 +257,7 @@
 
     <request name="set_toplevel">
       <description summary="set the surface type as a keyboard">
-	A keybaord surface is only shown, when a text model is active
+	A keyboard surface is only shown, when a text model is active
       </description>
       <arg name="output" type="object" interface="wl_output"/>
       <arg name="position" type="uint"/>
