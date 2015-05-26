@@ -21,18 +21,21 @@
  */
 
 #include "config.h"
+
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/types.h>
 #include <sys/wait.h>
 #include <string.h>
 #include <assert.h>
 #include <errno.h>
 #include <signal.h>
+
 #include "weston-test-runner.h"
 
 #define SKIP 77
+
+char __attribute__((weak)) *server_parameters="";
 
 extern const struct weston_test __start_test_section, __stop_test_section;
 
@@ -151,6 +154,12 @@ int main(int argc, char *argv[])
 		    strcmp(testname, "-h") == 0) {
 			fprintf(stderr, "Usage: %s [test-name]\n", program_invocation_short_name);
 			list_tests();
+			exit(EXIT_SUCCESS);
+		}
+
+		if (strcmp(testname, "--params") == 0 ||
+		    strcmp(testname, "-p") == 0) {
+			printf("%s", server_parameters);
 			exit(EXIT_SUCCESS);
 		}
 

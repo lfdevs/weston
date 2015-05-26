@@ -51,6 +51,7 @@
 #include "pixman-renderer.h"
 #include "../shared/config-parser.h"
 #include "../shared/image-loader.h"
+#include "presentation_timing-server-protocol.h"
 
 #define DEFAULT_AXIS_STEP_DISTANCE wl_fixed_from_int(10)
 
@@ -114,6 +115,11 @@ struct x11_output {
 	void		       *buf;
 	uint8_t			depth;
 	int32_t                 scale;
+};
+
+struct window_delete_data {
+	struct x11_compositor	*compositor;
+	xcb_window_t		window;
 };
 
 struct gl_renderer_interface *gl_renderer;
@@ -338,12 +344,10 @@ x11_input_destroy(struct x11_compositor *compositor)
 static void
 x11_output_start_repaint_loop(struct weston_output *output)
 {
-	uint32_t msec;
-	struct timeval tv;
+	struct timespec ts;
 
-	gettimeofday(&tv, NULL);
-	msec = tv.tv_sec * 1000 + tv.tv_usec / 1000;
-	weston_output_finish_frame(output, msec);
+	clock_gettime(output->compositor->presentation_clock, &ts);
+	weston_output_finish_frame(output, &ts, PRESENTATION_FEEDBACK_INVALID);
 }
 
 static int
@@ -452,8 +456,10 @@ static int
 finish_frame_handler(void *data)
 {
 	struct x11_output *output = data;
+	struct timespec ts;
 
-	x11_output_start_repaint_loop(&output->base);
+	clock_gettime(output->base.compositor->presentation_clock, &ts);
+	weston_output_finish_frame(&output->base, &ts, 0);
 
 	return 1;
 }
@@ -940,6 +946,14 @@ x11_compositor_delete_window(struct x11_compositor *c, xcb_window_t window)
 		wl_display_terminate(c->base.wl_display);
 }
 
+static void delete_cb(void *data)
+{
+	struct window_delete_data *wd = data;
+
+	x11_compositor_delete_window(wd->compositor, wd->window);
+	free(wd);
+}
+
 #ifdef HAVE_XCB_XKB
 static void
 update_xkb_state(struct x11_compositor *c, xcb_xkb_state_notify_event_t *state)
@@ -1016,8 +1030,8 @@ x11_compositor_deliver_button_event(struct x11_compositor *c,
 		update_xkb_state_from_core(c, button_event->state);
 
 	switch (button_event->detail) {
-	default:
-		button = button_event->detail + BTN_LEFT - 1;
+	case 1:
+		button = BTN_LEFT;
 		break;
 	case 2:
 		button = BTN_MIDDLE;
@@ -1055,6 +1069,9 @@ x11_compositor_deliver_button_event(struct x11_compositor *c,
 				    WL_POINTER_AXIS_HORIZONTAL_SCROLL,
 				    DEFAULT_AXIS_STEP_DISTANCE);
 		return;
+	default:
+		button = button_event->detail + BTN_SIDE - 8;
+		break;
 	}
 
 	notify_button(&c->core_seat,
@@ -1280,8 +1297,23 @@ x11_compositor_handle_event(int fd, uint32_t mask, void *data)
 			client_message = (xcb_client_message_event_t *) event;
 			atom = client_message->data.data32[0];
 			window = client_message->window;
-			if (atom == c->atom.wm_delete_window)
-				x11_compositor_delete_window(c, window);
+			if (atom == c->atom.wm_delete_window) {
+				struct wl_event_loop *loop;
+				struct window_delete_data *data = malloc(sizeof *data);
+
+				/* if malloc failed we should at least try to
+				 * delete the window, even if it may result in
+				 * a crash.
+				 */
+				if (!data) {
+					x11_compositor_delete_window(c, window);
+					break;
+				}
+				data->compositor = c;
+				data->window = window;
+				loop = wl_display_get_event_loop(c->base.wl_display);
+				wl_event_loop_add_idle(loop, delete_cb, data);
+			}
 			break;
 
 		case XCB_FOCUS_IN:
@@ -1443,31 +1475,6 @@ x11_destroy(struct weston_compositor *ec)
 	free(ec);
 }
 
-static uint32_t
-parse_transform(const char *transform, const char *output_name)
-{
-	static const struct { const char *name; uint32_t token; } names[] = {
-		{ "normal",	WL_OUTPUT_TRANSFORM_NORMAL },
-		{ "90",		WL_OUTPUT_TRANSFORM_90 },
-		{ "180",	WL_OUTPUT_TRANSFORM_180 },
-		{ "270",	WL_OUTPUT_TRANSFORM_270 },
-		{ "flipped",	WL_OUTPUT_TRANSFORM_FLIPPED },
-		{ "flipped-90",	WL_OUTPUT_TRANSFORM_FLIPPED_90 },
-		{ "flipped-180", WL_OUTPUT_TRANSFORM_FLIPPED_180 },
-		{ "flipped-270", WL_OUTPUT_TRANSFORM_FLIPPED_270 },
-	};
-	unsigned int i;
-
-	for (i = 0; i < ARRAY_LENGTH(names); i++)
-		if (strcmp(names[i].name, transform) == 0)
-			return names[i].token;
-
-	weston_log("Invalid transform \"%s\" for output %s\n",
-		   transform, output_name);
-
-	return WL_OUTPUT_TRANSFORM_NORMAL;
-}
-
 static int
 init_gl_renderer(struct x11_compositor *c)
 {
@@ -1508,6 +1515,9 @@ x11_compositor_create(struct wl_display *display,
 		return NULL;
 
 	if (weston_compositor_init(&c->base, display, argc, argv, config) < 0)
+		goto err_free;
+
+	if (weston_compositor_set_presentation_clock_software(&c->base) < 0)
 		goto err_free;
 
 	c->dpy = XOpenDisplay(NULL);
@@ -1587,7 +1597,9 @@ x11_compositor_create(struct wl_display *display,
 
 		weston_config_section_get_string(section,
 						 "transform", &t, "normal");
-		transform = parse_transform(t, name);
+		if (weston_parse_transform(t, &transform) < 0)
+			weston_log("Invalid transform \"%s\" for output %s\n",
+				   t, name);
 		free(t);
 
 		output = x11_compositor_create_output(c, x, 0,

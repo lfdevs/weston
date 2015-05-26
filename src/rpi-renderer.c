@@ -337,8 +337,7 @@ apply_opaque_region(struct wl_shm_buffer *buffer,
 	for (y = 0; y < height; y++) {
 		for (x = 0; x < width; x++) {
 			int i = y * stride / 4 + x;
-			pixman_box32_t box;
-			if (pixman_region32_contains_point (opaque_region, x, y, &box)) {
+			if (pixman_region32_contains_point (opaque_region, x, y, NULL)) {
 				dst[i] = src[i] | 0xff000000;
 			} else {
 				dst[i] = src[i];
@@ -492,12 +491,11 @@ rpir_surface_create(struct rpi_renderer *renderer)
 {
 	struct rpir_surface *surface;
 
-	surface = calloc(1, sizeof *surface);
-	if (!surface)
+	surface = zalloc(sizeof *surface);
+	if (surface == NULL)
 		return NULL;
 
 	wl_list_init(&surface->views);
-	surface->visible_views = 0;
 	surface->single_buffer = renderer->single_buffer;
 	surface->enable_opaque_regions = renderer->enable_opaque_regions;
 	rpi_resource_init(&surface->resources[0]);
@@ -577,8 +575,8 @@ rpir_view_create(struct rpir_surface *surface)
 {
 	struct rpir_view *view;
 
-	view = calloc(1, sizeof *view);
-	if (!view)
+	view = zalloc(sizeof *view);
+	if (view == NULL)
 		return NULL;
 
 	view->surface = surface;
@@ -1550,7 +1548,7 @@ rpi_renderer_attach(struct weston_surface *base, struct weston_buffer *buffer)
 		surface->buffer_type = BUFFER_TYPE_EGL;
 
 		if(surface->egl_back == NULL)
-			surface->egl_back = calloc(1, sizeof *surface->egl_back);
+			surface->egl_back = zalloc(sizeof *surface->egl_back);
 
 		weston_buffer_reference(&surface->egl_back->buffer_ref, buffer);
 		surface->egl_back->resource_handle =
@@ -1726,7 +1724,7 @@ rpi_renderer_create(struct weston_compositor *compositor,
 
 	weston_log("Initializing the DispmanX compositing renderer\n");
 
-	renderer = calloc(1, sizeof *renderer);
+	renderer = zalloc(sizeof *renderer);
 	if (renderer == NULL)
 		return -1;
 
@@ -1798,8 +1796,8 @@ rpi_renderer_output_create(struct weston_output *base,
 
 	assert(base->renderer_state == NULL);
 
-	output = calloc(1, sizeof *output);
-	if (!output)
+	output = zalloc(sizeof *output);
+	if (output == NULL)
 		return -1;
 
 	output->display = display;

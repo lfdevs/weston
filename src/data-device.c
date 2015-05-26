@@ -214,6 +214,13 @@ drag_surface_configure(struct weston_drag *drag,
 	weston_view_set_position(drag->icon, fx, fy);
 }
 
+static int
+pointer_drag_surface_get_label(struct weston_surface *surface,
+			       char *buf, size_t len)
+{
+	return snprintf(buf, len, "pointer drag icon");
+}
+
 static void
 pointer_drag_surface_configure(struct weston_surface *es,
 			       int32_t sx, int32_t sy)
@@ -224,6 +231,13 @@ pointer_drag_surface_configure(struct weston_surface *es,
 	assert(es->configure == pointer_drag_surface_configure);
 
 	drag_surface_configure(&drag->base, pointer, NULL, es, sx, sy);
+}
+
+static int
+touch_drag_surface_get_label(struct weston_surface *surface,
+			     char *buf, size_t len)
+{
+	return snprintf(buf, len, "touch drag icon");
 }
 
 static void
@@ -351,6 +365,7 @@ data_device_end_drag_grab(struct weston_drag *drag,
 			weston_view_unmap(drag->icon);
 
 		drag->icon->surface->configure = NULL;
+		weston_surface_set_label_func(drag->icon->surface, NULL);
 		pixman_region32_clear(&drag->icon->surface->pending.input);
 		wl_list_remove(&drag->icon_destroy_listener.link);
 		weston_view_destroy(drag->icon);
@@ -560,6 +575,8 @@ weston_pointer_start_drag(struct weston_pointer *pointer,
 
 		icon->configure = pointer_drag_surface_configure;
 		icon->configure_private = drag;
+		weston_surface_set_label_func(icon,
+					pointer_drag_surface_get_label);
 	} else {
 		drag->base.icon = NULL;
 	}
@@ -615,6 +632,8 @@ weston_touch_start_drag(struct weston_touch *touch,
 
 		icon->configure = touch_drag_surface_configure;
 		icon->configure_private = drag;
+		weston_surface_set_label_func(icon,
+					touch_drag_surface_get_label);
 	} else {
 		drag->base.icon = NULL;
 	}
@@ -666,11 +685,12 @@ data_device_start_drag(struct wl_client *client, struct wl_resource *resource,
 		source = wl_resource_get_user_data(source_resource);
 	if (icon_resource)
 		icon = wl_resource_get_user_data(icon_resource);
-	if (icon && icon->configure) {
-		wl_resource_post_error(icon_resource,
-				       WL_DISPLAY_ERROR_INVALID_OBJECT,
-				       "surface->configure already set");
-		return;
+
+	if (icon) {
+		if (weston_surface_set_role(icon, "wl_data_device-icon",
+					    resource,
+					    WL_DATA_DEVICE_ERROR_ROLE) < 0)
+			return;
 	}
 
 	if (is_pointer_grab)
@@ -761,10 +781,16 @@ data_device_set_selection(struct wl_client *client,
 				  wl_resource_get_user_data(source_resource),
 				  serial);
 }
+static void
+data_device_release(struct wl_client *client, struct wl_resource *resource)
+{
+	wl_resource_destroy(resource);
+}
 
 static const struct wl_data_device_interface data_device_interface = {
 	data_device_start_drag,
 	data_device_set_selection,
+	data_device_release
 };
 
 static void
@@ -844,7 +870,9 @@ get_data_device(struct wl_client *client,
 	struct wl_resource *resource;
 
 	resource = wl_resource_create(client,
-				      &wl_data_device_interface, 1, id);
+				      &wl_data_device_interface,
+				      wl_resource_get_version(manager_resource),
+				      id);
 	if (resource == NULL) {
 		wl_resource_post_no_memory(manager_resource);
 		return;
@@ -867,9 +895,9 @@ bind_manager(struct wl_client *client,
 {
 	struct wl_resource *resource;
 
-	resource =
-		wl_resource_create(client,
-				   &wl_data_device_manager_interface, 1, id);
+	resource = wl_resource_create(client,
+				      &wl_data_device_manager_interface,
+				      version, id);
 	if (resource == NULL) {
 		wl_client_post_no_memory(client);
 		return;
@@ -909,7 +937,7 @@ WL_EXPORT int
 wl_data_device_manager_init(struct wl_display *display)
 {
 	if (wl_global_create(display,
-			     &wl_data_device_manager_interface, 1,
+			     &wl_data_device_manager_interface, 2,
 			     NULL, bind_manager) == NULL)
 		return -1;
 

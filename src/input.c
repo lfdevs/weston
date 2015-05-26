@@ -423,12 +423,15 @@ static const struct weston_keyboard_grab_interface
 static void
 pointer_unmap_sprite(struct weston_pointer *pointer)
 {
-	if (weston_surface_is_mapped(pointer->sprite->surface))
-		weston_surface_unmap(pointer->sprite->surface);
+	struct weston_surface *surface = pointer->sprite->surface;
+
+	if (weston_surface_is_mapped(surface))
+		weston_surface_unmap(surface);
 
 	wl_list_remove(&pointer->sprite_destroy_listener.link);
-	pointer->sprite->surface->configure = NULL;
-	pointer->sprite->surface->configure_private = NULL;
+	surface->configure = NULL;
+	surface->configure_private = NULL;
+	weston_surface_set_label_func(surface, NULL);
 	weston_view_destroy(pointer->sprite);
 	pointer->sprite = NULL;
 }
@@ -751,14 +754,13 @@ weston_keyboard_set_focus(struct weston_keyboard *keyboard,
 	wl_signal_emit(&keyboard->focus_signal, keyboard);
 }
 
+/* Users of this function must manually manage the keyboard focus */
 WL_EXPORT void
 weston_keyboard_start_grab(struct weston_keyboard *keyboard,
 			   struct weston_keyboard_grab *grab)
 {
 	keyboard->grab = grab;
 	grab->keyboard = keyboard;
-
-	/* XXX focus? */
 }
 
 WL_EXPORT void
@@ -1319,8 +1321,6 @@ notify_key(struct weston_seat *seat, uint32_t time, uint32_t key,
 
 	if (state == WL_KEYBOARD_KEY_STATE_PRESSED) {
 		weston_compositor_idle_inhibit(compositor);
-		keyboard->grab_key = key;
-		keyboard->grab_time = time;
 	} else {
 		weston_compositor_idle_release(compositor);
 	}
@@ -1358,6 +1358,13 @@ notify_key(struct weston_seat *seat, uint32_t time, uint32_t key,
 				      wl_display_get_serial(compositor->wl_display),
 				      key,
 				      state);
+	}
+
+	if (state == WL_KEYBOARD_KEY_STATE_PRESSED) {
+		keyboard->grab_serial =
+			wl_display_get_serial(compositor->wl_display);
+		keyboard->grab_time = time;
+		keyboard->grab_key = key;
 	}
 }
 
@@ -1581,6 +1588,13 @@ notify_touch_frame(struct weston_seat *seat)
 	grab->interface->frame(grab);
 }
 
+static int
+pointer_cursor_surface_get_label(struct weston_surface *surface,
+				 char *buf, size_t len)
+{
+	return snprintf(buf, len, "cursor");
+}
+
 static void
 pointer_cursor_surface_configure(struct weston_surface *es,
 				 int32_t dx, int32_t dy)
@@ -1634,14 +1648,11 @@ pointer_set_cursor(struct wl_client *client, struct wl_resource *resource,
 	if (pointer->focus_serial - serial > UINT32_MAX / 2)
 		return;
 
-	if (surface && pointer->sprite && surface != pointer->sprite->surface) {
-		if (surface->configure) {
-			wl_resource_post_error(surface->resource,
-					       WL_DISPLAY_ERROR_INVALID_OBJECT,
-					       "surface->configure already "
-					       "set");
+	if (surface) {
+		if (weston_surface_set_role(surface, "wl_pointer-cursor",
+					    resource,
+					    WL_POINTER_ERROR_ROLE) < 0)
 			return;
-		}
 	}
 
 	if (pointer->sprite)
@@ -1655,6 +1666,8 @@ pointer_set_cursor(struct wl_client *client, struct wl_resource *resource,
 
 	surface->configure = pointer_cursor_surface_configure;
 	surface->configure_private = pointer;
+	weston_surface_set_label_func(surface,
+				      pointer_cursor_surface_get_label);
 	pointer->sprite = weston_view_create(surface);
 	pointer->hotspot_x = x;
 	pointer->hotspot_y = y;
@@ -1729,7 +1742,7 @@ static const struct wl_keyboard_interface keyboard_interface = {
 	keyboard_release
 };
 
-static int
+static bool
 should_send_modifiers_to_client(struct weston_seat *seat,
 				struct wl_client *client)
 {
@@ -1737,15 +1750,15 @@ should_send_modifiers_to_client(struct weston_seat *seat,
 	    seat->keyboard->focus &&
 	    seat->keyboard->focus->resource &&
 	    wl_resource_get_client(seat->keyboard->focus->resource) == client)
-		return 1;
+		return true;
 
 	if (seat->pointer &&
 	    seat->pointer->focus &&
 	    seat->pointer->focus->surface->resource &&
 	    wl_resource_get_client(seat->pointer->focus->surface->resource) == client)
-		return 1;
+		return true;
 
-	return 0;
+	return false;
 }
 
 static void
@@ -2169,6 +2182,7 @@ WL_EXPORT void
 weston_seat_release_keyboard(struct weston_seat *seat)
 {
 	seat->keyboard_device_count--;
+	assert(seat->keyboard_device_count >= 0);
 	if (seat->keyboard_device_count == 0) {
 		weston_keyboard_set_focus(seat->keyboard, NULL);
 		weston_keyboard_cancel_grab(seat->keyboard);
@@ -2217,6 +2231,11 @@ weston_seat_release_pointer(struct weston_seat *seat)
 
 		weston_pointer_reset_state(pointer);
 		seat_send_updated_caps(seat);
+
+		/* seat->pointer is intentionally not destroyed so that
+		 * a newly attached pointer on this seat will retain
+		 * the previous cursor co-ordinates.
+		 */
 	}
 }
 

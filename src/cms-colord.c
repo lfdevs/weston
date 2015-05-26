@@ -83,16 +83,16 @@ colord_idle_cancel_for_output(struct cms_colord *cms, struct weston_output *o)
 	g_mutex_unlock(&cms->pending_mutex);
 }
 
-static int
+static bool
 edid_value_valid(const char *str)
 {
 	if (str == NULL)
-		return 0;
+		return false;
 	if (str[0] == '\0')
-		return 0;
+		return false;
 	if (strcmp(str, "unknown") == 0)
-		return 0;
-	return 1;
+		return false;
+	return true;
 }
 
 static gchar *
@@ -212,10 +212,11 @@ colord_device_changed_cb(CdDevice *device, struct cms_output *ocms)
 static void
 colord_notifier_output_destroy(struct wl_listener *listener, void *data)
 {
-	struct cms_colord *cms =
-		container_of(listener, struct cms_colord, destroy_listener);
+	struct cms_output *ocms =
+		container_of(listener, struct cms_output, destroy_listener);
 	struct weston_output *o = (struct weston_output *) data;
-	struct cms_output *ocms;
+	struct cms_colord *cms = ocms->cms;
+
 	gboolean ret;
 	gchar *device_id;
 	GError *error = NULL;
@@ -223,11 +224,6 @@ colord_notifier_output_destroy(struct wl_listener *listener, void *data)
 	colord_idle_cancel_for_output(cms, o);
 	device_id = get_output_id(cms, o);
 	weston_log("colord: output removed %s\n", device_id);
-	ocms = g_hash_table_lookup(cms->devices, device_id);
-	if (!ocms) {
-		weston_log("colord: failed to delete device\n");
-		goto out;
-	}
 	g_signal_handlers_disconnect_by_data(ocms->device, ocms);
 	ret = cd_client_delete_device_sync (cms->client,
 					    ocms->device,

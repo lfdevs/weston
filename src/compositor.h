@@ -28,6 +28,8 @@
 extern "C" {
 #endif
 
+#include <stdbool.h>
+#include <time.h>
 #include <pixman.h>
 #include <xkbcommon/xkbcommon.h>
 
@@ -38,6 +40,7 @@ extern "C" {
 #include "matrix.h"
 #include "config-parser.h"
 #include "zalloc.h"
+#include "timeline-object.h"
 
 #ifndef MIN
 #define MIN(x,y) (((x) < (y)) ? (x) : (y))
@@ -118,6 +121,7 @@ struct weston_shell_interface {
 	void (*set_window_geometry)(struct shell_surface *shsurf,
 				    int32_t x, int32_t y,
 				    int32_t width, int32_t height);
+	void (*set_maximized)(struct shell_surface *shsurf);
 };
 
 struct weston_animation {
@@ -172,12 +176,6 @@ enum dpms_enum {
 	WESTON_DPMS_OFF
 };
 
-enum weston_mode_switch_op {
-	WESTON_MODE_SWITCH_SET_NATIVE,
-	WESTON_MODE_SWITCH_SET_TEMPORARY,
-	WESTON_MODE_SWITCH_RESTORE_NATIVE
-};
-
 struct weston_output {
 	uint32_t id;
 	char *name;
@@ -201,9 +199,11 @@ struct weston_output {
 	struct wl_signal frame_signal;
 	struct wl_signal destroy_signal;
 	int move_x, move_y;
-	uint32_t frame_time;
+	uint32_t frame_time; /* presentation timestamp in milliseconds */
+	uint64_t msc;        /* media stream counter */
 	int disable_planes;
 	int destroying;
+	struct wl_list feedback_list;
 
 	char *make, *model, *serial_number;
 	uint32_t subpixel;
@@ -236,6 +236,8 @@ struct weston_output {
 			  uint16_t *r,
 			  uint16_t *g,
 			  uint16_t *b);
+
+	struct weston_timeline_object timeline;
 };
 
 struct weston_pointer_grab;
@@ -663,6 +665,10 @@ struct weston_compositor {
 
 	int32_t kb_repeat_rate;
 	int32_t kb_repeat_delay;
+
+	clockid_t presentation_clock;
+
+	int exit_code;
 };
 
 struct weston_buffer {
@@ -810,6 +816,9 @@ struct weston_view {
 	 * displayed on.
 	 */
 	uint32_t output_mask;
+
+	/* Per-surface Presentation feedback flags, controlled by backend. */
+	uint32_t psf_flags;
 };
 
 struct weston_surface_state {
@@ -831,6 +840,9 @@ struct weston_surface_state {
 
 	/* wl_surface.frame */
 	struct wl_list frame_callback_list;
+
+	/* presentation.feedback */
+	struct wl_list feedback_list;
 
 	/* wl_surface.set_buffer_transform */
 	/* wl_surface.set_scaling_factor */
@@ -871,12 +883,13 @@ struct weston_surface {
 	uint32_t output_mask;
 
 	struct wl_list frame_callback_list;
+	struct wl_list feedback_list;
 
 	struct weston_buffer_reference buffer_ref;
 	struct weston_buffer_viewport buffer_viewport;
 	int32_t width_from_buffer; /* before applying viewport */
 	int32_t height_from_buffer;
-	int keep_buffer; /* bool for backends to prevent early release */
+	bool keep_buffer; /* for backends to prevent early release */
 
 	/* wl_viewport resource for this surface */
 	struct wl_resource *viewport_resource;
@@ -892,6 +905,7 @@ struct weston_surface {
 	 */
 	void (*configure)(struct weston_surface *es, int32_t sx, int32_t sy);
 	void *configure_private;
+	int (*get_label)(struct weston_surface *surface, char *buf, size_t len);
 
 	/* Parent's list of its sub-surfaces, weston_subsurface:parent_link.
 	 * Contains also the parent itself as a dummy weston_subsurface,
@@ -899,6 +913,17 @@ struct weston_surface {
 	 */
 	struct wl_list subsurface_list; /* weston_subsurface::parent_link */
 	struct wl_list subsurface_list_pending; /* ...::parent_link_pending */
+
+	/*
+	 * For tracking protocol role assignments. Different roles may
+	 * have the same configure hook, e.g. in shell.c. Configure hook
+	 * may get reset, this will not.
+	 * XXX: map configure functions 1:1 to roles, and never reset it,
+	 * and replace role_name with configure.
+	 */
+	const char *role_name;
+
+	struct weston_timeline_object timeline;
 };
 
 struct weston_subsurface {
@@ -963,10 +988,10 @@ weston_view_from_global_fixed(struct weston_view *view,
 			      wl_fixed_t x, wl_fixed_t y,
 			      wl_fixed_t *vx, wl_fixed_t *vy);
 
-WL_EXPORT void
+void
 weston_surface_to_buffer_float(struct weston_surface *surface,
 			       float x, float y, float *bx, float *by);
-WL_EXPORT void
+void
 weston_surface_to_buffer(struct weston_surface *surface,
 			 int sx, int sy, int *bx, int *by);
 pixman_box32_t
@@ -1045,8 +1070,13 @@ weston_compositor_stack_plane(struct weston_compositor *ec,
 			      struct weston_plane *plane,
 			      struct weston_plane *above);
 
+/* An invalid flag in presented_flags to catch logic errors. */
+#define PRESENTATION_FEEDBACK_INVALID (1U << 31)
+
 void
-weston_output_finish_frame(struct weston_output *output, uint32_t msecs);
+weston_output_finish_frame(struct weston_output *output,
+			   const struct timespec *stamp,
+			   uint32_t presented_flags);
 void
 weston_output_schedule_repaint(struct weston_output *output);
 void
@@ -1187,16 +1217,16 @@ void
 weston_view_set_transform_parent(struct weston_view *view,
 				 struct weston_view *parent);
 
-int
+bool
 weston_view_is_mapped(struct weston_view *view);
 
 void
 weston_view_schedule_repaint(struct weston_view *view);
 
-int
+bool
 weston_surface_is_mapped(struct weston_surface *surface);
 
-WL_EXPORT void
+void
 weston_surface_set_size(struct weston_surface *surface,
 			int32_t width, int32_t height);
 
@@ -1221,6 +1251,17 @@ weston_surface_unmap(struct weston_surface *surface);
 struct weston_surface *
 weston_surface_get_main_surface(struct weston_surface *surface);
 
+int
+weston_surface_set_role(struct weston_surface *surface,
+			const char *role_name,
+			struct wl_resource *error_resource,
+			uint32_t error_code);
+
+void
+weston_surface_set_label_func(struct weston_surface *surface,
+			      int (*desc)(struct weston_surface *,
+					  char *, size_t));
+
 struct weston_buffer *
 weston_buffer_from_resource(struct wl_resource *resource);
 
@@ -1234,8 +1275,17 @@ weston_compositor_get_time(void);
 int
 weston_compositor_init(struct weston_compositor *ec, struct wl_display *display,
 		       int *argc, char *argv[], struct weston_config *config);
+int
+weston_compositor_set_presentation_clock(struct weston_compositor *compositor,
+					 clockid_t clk_id);
+int
+weston_compositor_set_presentation_clock_software(
+					struct weston_compositor *compositor);
 void
 weston_compositor_shutdown(struct weston_compositor *ec);
+void
+weston_compositor_exit_with_code(struct weston_compositor *compositor,
+				 int exit_code);
 void
 weston_output_init_zoom(struct weston_output *output);
 void
@@ -1402,8 +1452,15 @@ void
 weston_surface_destroy(struct weston_surface *surface);
 
 int
-weston_output_switch_mode(struct weston_output *output, struct weston_mode *mode,
-			int32_t scale, enum weston_mode_switch_op op);
+weston_output_mode_set_native(struct weston_output *output,
+			      struct weston_mode *mode,
+			      int32_t scale);
+int
+weston_output_mode_switch_to_temporary(struct weston_output *output,
+				       struct weston_mode *mode,
+				       int32_t scale);
+int
+weston_output_mode_switch_to_native(struct weston_output *output);
 
 int
 noop_renderer_init(struct weston_compositor *ec);
@@ -1434,6 +1491,12 @@ weston_transformed_region(int width, int height,
 
 void *
 weston_load_module(const char *name, const char *entrypoint);
+
+int
+weston_parse_transform(const char *transform, uint32_t *out);
+
+const char *
+weston_transform_to_string(uint32_t output_transform);
 
 #ifdef  __cplusplus
 }

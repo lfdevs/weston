@@ -23,15 +23,12 @@
 #include "config.h"
 
 #include <string.h>
-
-#include "weston-test-client-helper.h"
 #include <stdio.h>
-#include <poll.h>
-#include <time.h>
-
 #include <EGL/egl.h>
 #include <wayland-egl.h>
 #include <GLES2/gl2.h>
+
+#include "weston-test-client-helper.h"
 
 #define fail(msg) { fprintf(stderr, "%s failed\n", msg); return -1; }
 
@@ -126,6 +123,9 @@ TEST(test_buffer_count)
 	int i;
 
 	test_data.client = client_create(10, 10, 10, 10);
+	if (!test_data.client->has_wl_drm)
+		skip("compositor has not bound its display to EGL\n");
+
 	if (init_egl(&test_data) < 0)
 		skip("could not initialize egl, "
 		     "possibly using the headless backend\n");

@@ -1,0 +1,33 @@
+# pack-refs with: peeled fully-peeled 
+6127cfdc80ede303cb6e3ca7e15aeede47d0d07a refs/remotes/origin/debian-experimental
+e8e9f6e5d96a57d24cc901f82f8ab33380568340 refs/remotes/origin/debian-unstable
+0d145c3f97caa27e41f1af7372ae4ce5a215131f refs/remotes/origin/pristine-tar
+8d28e4f512eb50474f401ae6ec7937321fe2f6e1 refs/remotes/origin/ubuntu
+dbd8606a2a9425605102db9e722289934ab7b8b4 refs/remotes/origin/upstream-experimental
+53fd7d70dc34007f0dc86621ed94c6f71fa35bf9 refs/remotes/origin/upstream-unstable
+f99bde188cb63d5ad432be66ed776662c5aaf6cc refs/tags/1.6.1
+^9d27677ca4e455612a09813fea7c04263a900784
+08f10be851f1cc604f0af9464e176c43a7184511 refs/tags/wayland-1.6.0-2
+^e8e9f6e5d96a57d24cc901f82f8ab33380568340
+a695c9f9a10f1bc070767d877be7c7b4bbe2fd61 refs/tags/weston-0.85.0-1
+^5877c75e8c4ee566386c013717b51b5b06ee70f1
+1f66373c2761d68261a5e28477dc04dfa0904d1f refs/tags/weston-1.1.1-1
+^adf9dcc1d9c83a67d4efde7499cfa1f56af863be
+f463accbd62e726e74548ec98c3ce12263fd2bee refs/tags/weston-1.3.0-1
+^93ae88b893ad12d67f369c6b601e014b13bddea2
+3387319f2e66106f8f11ef01978f5a1a749f621f refs/tags/weston-1.4.0-1
+^bfca9856ffbdaaca8eff9b8d8019fed48532d9dc
+b7dd44aa2443587ae4ea6d6e5bf451057d400374 refs/tags/weston-1.5.0-1
+^79c8b54910c3b50a1a9dd9010a07aad54115510b
+c18add3bc86e5d98b77642acb63d0f3d44de4fee refs/tags/weston-1.5.0-2
+^58bfd59f5007436123ad55a7828a1ea9c91e6813
+c33cf390f8492beb94dea2fbb7b9edfe9e89e416 refs/tags/weston-1.5.0-3
+^b00c73f9536b5c459a8a78608515107f4b4ad4b5
+9fd0d17f120e625b557f1fd0770542e968eb28e4 refs/tags/weston-1.5.93-1
+^38b327a84fe461b59c9ada4a572de75fa74d2eab
+88da4fc7503c0b70fd954493728f04e1f0d4b127 refs/tags/weston-1.5.93-2
+^4b656bc6a82b6b062dae3645ff6e480579472eff
+0ec89be8a547180023f6b8a010258fdb32145917 refs/tags/weston-1.6.0-1
+^474b8be0f041b7b39686979ab0c0c4e8b270f984
+218608e675105c051c34b9c5211dabc6acef79b1 refs/tags/weston-1.6.1-1
+^46504d5ed80764bf6b0869486869af59498cfa52

@@ -464,8 +464,9 @@ weston_recorder_free(struct weston_recorder *recorder)
 {
 	if (recorder == NULL)
 		return;
-	free(recorder->rect);
+
 	free(recorder->tmpbuf);
+	free(recorder->rect);
 	free(recorder->frame);
 	free(recorder);
 }
@@ -481,7 +482,7 @@ weston_recorder_create(struct weston_output *output, const char *filename)
 
 	do_yflip = !!(compositor->capabilities & WESTON_CAP_CAPTURE_YFLIP);
 
-	recorder = malloc(sizeof *recorder);
+	recorder = zalloc(sizeof *recorder);
 	if (recorder == NULL) {
 		weston_log("%s: out of memory\n", __func__);
 		return;
@@ -491,21 +492,20 @@ weston_recorder_create(struct weston_output *output, const char *filename)
 	size = stride * 4 * output->current_mode->height;
 	recorder->frame = zalloc(size);
 	recorder->rect = malloc(size);
-	recorder->total = 0;
-	recorder->count = 0;
-	recorder->destroying = 0;
 	recorder->output = output;
 
 	if ((recorder->frame == NULL) || (recorder->rect == NULL)) {
 		weston_log("%s: out of memory\n", __func__);
-		weston_recorder_free(recorder);
-		return;
+		goto err_recorder;
 	}
 
-	if (do_yflip)
-		recorder->tmpbuf = NULL;
-	else
+	if (!do_yflip) {
 		recorder->tmpbuf = malloc(size);
+		if (recorder->tmpbuf == NULL) {
+			weston_log("%s: out of memory\n", __func__);
+			goto err_recorder;
+		}
+	}
 
 	header.magic = WCAP_HEADER_MAGIC;
 
@@ -519,8 +519,7 @@ weston_recorder_create(struct weston_output *output, const char *filename)
 		break;
 	default:
 		weston_log("unknown recorder format\n");
-		weston_recorder_free(recorder);
-		return;
+		goto err_recorder;
 	}
 
 	recorder->fd = open(filename,
@@ -528,8 +527,7 @@ weston_recorder_create(struct weston_output *output, const char *filename)
 
 	if (recorder->fd < 0) {
 		weston_log("problem opening output file %s: %m\n", filename);
-		weston_recorder_free(recorder);
-		return;
+		goto err_recorder;
 	}
 
 	header.width = output->current_mode->width;
@@ -540,6 +538,12 @@ weston_recorder_create(struct weston_output *output, const char *filename)
 	wl_signal_add(&output->frame_signal, &recorder->frame_listener);
 	output->disable_planes++;
 	weston_output_damage(output);
+
+	return;
+
+err_recorder:
+	weston_recorder_free(recorder);
+	return;
 }
 
 static void
@@ -554,8 +558,7 @@ weston_recorder_destroy(struct weston_recorder *recorder)
 static void
 recorder_binding(struct weston_seat *seat, uint32_t time, uint32_t key, void *data)
 {
-	struct weston_seat *ws = (struct weston_seat *) seat;
-	struct weston_compositor *ec = ws->compositor;
+	struct weston_compositor *ec = seat->compositor;
 	struct weston_output *output;
 	struct wl_listener *listener = NULL;
 	struct weston_recorder *recorder;

@@ -42,8 +42,9 @@
 #include "compositor.h"
 #include "launcher-util.h"
 #include "pixman-renderer.h"
-#include "udev-input.h"
+#include "libinput-seat.h"
 #include "gl-renderer.h"
+#include "presentation_timing-server-protocol.h"
 
 struct fbdev_compositor {
 	struct weston_compositor base;
@@ -114,12 +115,10 @@ to_fbdev_compositor(struct weston_compositor *base)
 static void
 fbdev_output_start_repaint_loop(struct weston_output *output)
 {
-	uint32_t msec;
-	struct timeval tv;
+	struct timespec ts;
 
-	gettimeofday(&tv, NULL);
-	msec = tv.tv_sec * 1000 + tv.tv_usec / 1000;
-	weston_output_finish_frame(output, msec);
+	clock_gettime(output->compositor->presentation_clock, &ts);
+	weston_output_finish_frame(output, &ts, PRESENTATION_FEEDBACK_INVALID);
 }
 
 static void
@@ -222,8 +221,10 @@ static int
 finish_frame_handler(void *data)
 {
 	struct fbdev_output *output = data;
+	struct timespec ts;
 
-	fbdev_output_start_repaint_loop(&output->base);
+	clock_gettime(output->base.compositor->presentation_clock, &ts);
+	weston_output_finish_frame(&output->base, &ts, 0);
 
 	return 1;
 }
@@ -510,8 +511,8 @@ fbdev_output_create(struct fbdev_compositor *compositor,
 
 	weston_log("Creating fbdev output.\n");
 
-	output = calloc(1, sizeof *output);
-	if (!output)
+	output = zalloc(sizeof *output);
+	if (output == NULL)
 		return -1;
 
 	output->compositor = compositor;
@@ -535,10 +536,6 @@ fbdev_output_create(struct fbdev_compositor *compositor,
 	output->base.start_repaint_loop = fbdev_output_start_repaint_loop;
 	output->base.repaint = fbdev_output_repaint;
 	output->base.destroy = fbdev_output_destroy;
-	output->base.assign_planes = NULL;
-	output->base.set_backlight = NULL;
-	output->base.set_dpms = NULL;
-	output->base.switch_mode = NULL;
 
 	/* only one static mode in list */
 	output->mode.flags =
@@ -847,7 +844,7 @@ session_notify(struct wl_listener *listener, void *data)
 				 &compositor->base.output_list, link) {
 			output->repaint_needed = 0;
 		}
-	};
+	}
 }
 
 static void
@@ -875,13 +872,17 @@ fbdev_compositor_create(struct wl_display *display, int *argc, char *argv[],
 
 	weston_log("initializing fbdev backend\n");
 
-	compositor = calloc(1, sizeof *compositor);
+	compositor = zalloc(sizeof *compositor);
 	if (compositor == NULL)
 		return NULL;
 
 	if (weston_compositor_init(&compositor->base, display, argc, argv,
 	                           config) < 0)
 		goto out_free;
+
+	if (weston_compositor_set_presentation_clock_software(
+							&compositor->base) < 0)
+		goto out_compositor;
 
 	compositor->udev = udev_new();
 	if (compositor->udev == NULL) {
@@ -893,8 +894,9 @@ fbdev_compositor_create(struct wl_display *display, int *argc, char *argv[],
 	compositor->session_listener.notify = session_notify;
 	wl_signal_add(&compositor->base.session_signal,
 		      &compositor->session_listener);
-	compositor->base.launcher =
-		weston_launcher_connect(&compositor->base, param->tty, "seat0");
+	compositor->base.launcher = weston_launcher_connect(&compositor->base,
+							    param->tty, "seat0",
+							    false);
 	if (!compositor->base.launcher) {
 		weston_log("fatal: fbdev backend should be run "
 			   "using weston-launch binary or as root\n");

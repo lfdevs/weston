@@ -1,3 +1,16 @@
+weston (1.7.0-1) unstable; urgency=medium
+
+  [ Timo Aaltonen ]
+  * New upstream release.
+  * control: Bump libinput and libwayland-dev build-deps.
+  * install: Add new files.
+
+  [ Emilio Pozuelo Monfort ]
+  * Remove Cyril from Uploaders. Thanks for your past work!
+  * Upload to unstable.
+
+ -- Emilio Pozuelo Monfort <pochu@debian.org>  Wed, 27 May 2015 01:07:50 +0200
+
 weston (1.6.1-1) experimental; urgency=medium
 
   * New upstream bugfix release:

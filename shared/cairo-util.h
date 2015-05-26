@@ -32,8 +32,8 @@ void
 surface_flush_device(cairo_surface_t *surface);
 
 void
-tile_mask(cairo_t *cr, cairo_surface_t *surface,
-	  int x, int y, int width, int height, int margin, int top_margin);
+render_shadow(cairo_t *cr, cairo_surface_t *surface,
+	      int x, int y, int width, int height, int margin, int top_margin);
 
 void
 tile_source(cairo_t *cr, cairo_surface_t *surface,
@@ -216,6 +216,13 @@ frame_touch_up(struct frame *frame, void *data, int32_t id);
 enum theme_location
 frame_double_click(struct frame *frame, void *pointer,
 		   uint32_t button, enum frame_button_state state);
+
+void
+frame_double_touch_down(struct frame *frame, void *data, int32_t id,
+			int x, int y);
+
+void
+frame_double_touch_up(struct frame *frame, void *data, int32_t id);
 
 void
 frame_repaint(struct frame *frame, cairo_t *cr);

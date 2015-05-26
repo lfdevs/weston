@@ -47,9 +47,10 @@
 #include "compositor.h"
 #include "gl-renderer.h"
 #include "pixman-renderer.h"
-#include "udev-input.h"
+#include "libinput-seat.h"
 #include "launcher-util.h"
 #include "vaapi-recorder.h"
+#include "presentation_timing-server-protocol.h"
 
 #ifndef DRM_CAP_TIMESTAMP_MONOTONIC
 #define DRM_CAP_TIMESTAMP_MONOTONIC 0x6
@@ -118,7 +119,6 @@ struct drm_compositor {
 
 	uint32_t prev_state;
 
-	clockid_t clock;
 	struct udev_input input;
 
 	uint32_t cursor_width;
@@ -226,11 +226,10 @@ static void
 drm_output_set_cursor(struct drm_output *output);
 
 static int
-drm_sprite_crtc_supported(struct weston_output *output_base, uint32_t supported)
+drm_sprite_crtc_supported(struct drm_output *output, uint32_t supported)
 {
-	struct weston_compositor *ec = output_base->compositor;
-	struct drm_compositor *c =(struct drm_compositor *) ec;
-	struct drm_output *output = (struct drm_output *) output_base;
+	struct weston_compositor *ec = output->base.compositor;
+	struct drm_compositor *c = (struct drm_compositor *)ec;
 	int crtc;
 
 	for (crtc = 0; crtc < c->num_crtcs; crtc++) {
@@ -349,8 +348,8 @@ drm_fb_get_from_bo(struct gbm_bo *bo,
 	if (fb)
 		return fb;
 
-	fb = calloc(1, sizeof *fb);
-	if (!fb)
+	fb = zalloc(sizeof *fb);
+	if (fb == NULL)
 		return NULL;
 
 	fb->bo = bo;
@@ -463,10 +462,9 @@ drm_output_check_scanout_format(struct drm_output *output,
 }
 
 static struct weston_plane *
-drm_output_prepare_scanout_view(struct weston_output *_output,
+drm_output_prepare_scanout_view(struct drm_output *output,
 				struct weston_view *ev)
 {
-	struct drm_output *output = (struct drm_output *) _output;
 	struct drm_compositor *c =
 		(struct drm_compositor *) output->base.compositor;
 	struct weston_buffer *buffer = ev->surface->buffer_ref.buffer;
@@ -647,7 +645,7 @@ drm_output_repaint(struct weston_output *output_base,
 		};
 
 		if ((!s->current && !s->next) ||
-		    !drm_sprite_crtc_supported(output_base, s->possible_crtcs))
+		    !drm_sprite_crtc_supported(output, s->possible_crtcs))
 			continue;
 
 		if (s->next && !compositor->sprites_hidden)
@@ -700,7 +698,6 @@ drm_output_start_repaint_loop(struct weston_output *output_base)
 	struct drm_compositor *compositor = (struct drm_compositor *)
 		output_base->compositor;
 	uint32_t fb_id;
-	uint32_t msec;
 	struct timespec ts;
 
 	if (output->destroy_pending)
@@ -723,9 +720,20 @@ drm_output_start_repaint_loop(struct weston_output *output_base)
 
 finish_frame:
 	/* if we cannot page-flip, immediately finish frame */
-	clock_gettime(compositor->clock, &ts);
-	msec = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
-	weston_output_finish_frame(output_base, msec);
+	clock_gettime(compositor->base.presentation_clock, &ts);
+	weston_output_finish_frame(output_base, &ts,
+				   PRESENTATION_FEEDBACK_INVALID);
+}
+
+static void
+drm_output_update_msc(struct drm_output *output, unsigned int seq)
+{
+	uint64_t msc_hi = output->base.msc >> 32;
+
+	if (seq < (output->base.msc & 0xffffffff))
+		msc_hi++;
+
+	output->base.msc = (msc_hi << 32) + seq;
 }
 
 static void
@@ -734,8 +742,11 @@ vblank_handler(int fd, unsigned int frame, unsigned int sec, unsigned int usec,
 {
 	struct drm_sprite *s = (struct drm_sprite *)data;
 	struct drm_output *output = s->output;
-	uint32_t msecs;
+	struct timespec ts;
+	uint32_t flags = PRESENTATION_FEEDBACK_KIND_HW_COMPLETION |
+			 PRESENTATION_FEEDBACK_KIND_HW_CLOCK;
 
+	drm_output_update_msc(output, frame);
 	output->vblank_pending = 0;
 
 	drm_output_release_fb(output, s->current);
@@ -743,8 +754,9 @@ vblank_handler(int fd, unsigned int frame, unsigned int sec, unsigned int usec,
 	s->next = NULL;
 
 	if (!output->page_flip_pending) {
-		msecs = sec * 1000 + usec / 1000;
-		weston_output_finish_frame(&output->base, msecs);
+		ts.tv_sec = sec;
+		ts.tv_nsec = usec * 1000;
+		weston_output_finish_frame(&output->base, &ts, flags);
 	}
 }
 
@@ -756,7 +768,12 @@ page_flip_handler(int fd, unsigned int frame,
 		  unsigned int sec, unsigned int usec, void *data)
 {
 	struct drm_output *output = (struct drm_output *) data;
-	uint32_t msecs;
+	struct timespec ts;
+	uint32_t flags = PRESENTATION_FEEDBACK_KIND_VSYNC |
+			 PRESENTATION_FEEDBACK_KIND_HW_COMPLETION |
+			 PRESENTATION_FEEDBACK_KIND_HW_CLOCK;
+
+	drm_output_update_msc(output, frame);
 
 	/* We don't set page_flip_pending on start_repaint_loop, in that case
 	 * we just want to page flip to the current buffer to get an accurate
@@ -772,8 +789,9 @@ page_flip_handler(int fd, unsigned int frame,
 	if (output->destroy_pending)
 		drm_output_destroy(&output->base);
 	else if (!output->vblank_pending) {
-		msecs = sec * 1000 + usec / 1000;
-		weston_output_finish_frame(&output->base, msecs);
+		ts.tv_sec = sec;
+		ts.tv_nsec = usec * 1000;
+		weston_output_finish_frame(&output->base, &ts, flags);
 
 		/* We can't call this from frame_notify, because the output's
 		 * repaint needed flag is cleared just after that */
@@ -819,11 +837,11 @@ drm_view_transform_supported(struct weston_view *ev)
 }
 
 static struct weston_plane *
-drm_output_prepare_overlay_view(struct weston_output *output_base,
+drm_output_prepare_overlay_view(struct drm_output *output,
 				struct weston_view *ev)
 {
-	struct weston_compositor *ec = output_base->compositor;
-	struct drm_compositor *c =(struct drm_compositor *) ec;
+	struct weston_compositor *ec = output->base.compositor;
+	struct drm_compositor *c = (struct drm_compositor *)ec;
 	struct weston_buffer_viewport *viewport = &ev->surface->buffer_viewport;
 	struct drm_sprite *s;
 	int found = 0;
@@ -836,16 +854,16 @@ drm_output_prepare_overlay_view(struct weston_output *output_base,
 	if (c->gbm == NULL)
 		return NULL;
 
-	if (viewport->buffer.transform != output_base->transform)
+	if (viewport->buffer.transform != output->base.transform)
 		return NULL;
 
-	if (viewport->buffer.scale != output_base->current_scale)
+	if (viewport->buffer.scale != output->base.current_scale)
 		return NULL;
 
 	if (c->sprites_are_broken)
 		return NULL;
 
-	if (ev->output_mask != (1u << output_base->id))
+	if (ev->output_mask != (1u << output->base.id))
 		return NULL;
 
 	if (ev->surface->buffer_ref.buffer == NULL)
@@ -861,7 +879,7 @@ drm_output_prepare_overlay_view(struct weston_output *output_base,
 		return NULL;
 
 	wl_list_for_each(s, &c->sprite_list, link) {
-		if (!drm_sprite_crtc_supported(output_base, s->possible_crtcs))
+		if (!drm_sprite_crtc_supported(output, s->possible_crtcs))
 			continue;
 
 		if (!s->next) {
@@ -905,13 +923,13 @@ drm_output_prepare_overlay_view(struct weston_output *output_base,
 	 */
 	pixman_region32_init(&dest_rect);
 	pixman_region32_intersect(&dest_rect, &ev->transform.boundingbox,
-				  &output_base->region);
-	pixman_region32_translate(&dest_rect, -output_base->x, -output_base->y);
+				  &output->base.region);
+	pixman_region32_translate(&dest_rect, -output->base.x, -output->base.y);
 	box = pixman_region32_extents(&dest_rect);
-	tbox = weston_transformed_rect(output_base->width,
-				       output_base->height,
-				       output_base->transform,
-				       output_base->current_scale,
+	tbox = weston_transformed_rect(output->base.width,
+				       output->base.height,
+				       output->base.transform,
+				       output->base.current_scale,
 				       *box);
 	s->dest_x = tbox.x1;
 	s->dest_y = tbox.y1;
@@ -921,7 +939,7 @@ drm_output_prepare_overlay_view(struct weston_output *output_base,
 
 	pixman_region32_init(&src_rect);
 	pixman_region32_intersect(&src_rect, &ev->transform.boundingbox,
-				  &output_base->region);
+				  &output->base.region);
 	box = pixman_region32_extents(&src_rect);
 
 	weston_view_from_global_fixed(ev,
@@ -963,23 +981,22 @@ drm_output_prepare_overlay_view(struct weston_output *output_base,
 }
 
 static struct weston_plane *
-drm_output_prepare_cursor_view(struct weston_output *output_base,
+drm_output_prepare_cursor_view(struct drm_output *output,
 			       struct weston_view *ev)
 {
 	struct drm_compositor *c =
-		(struct drm_compositor *) output_base->compositor;
+		(struct drm_compositor *)output->base.compositor;
 	struct weston_buffer_viewport *viewport = &ev->surface->buffer_viewport;
-	struct drm_output *output = (struct drm_output *) output_base;
 
 	if (c->gbm == NULL)
 		return NULL;
 	if (output->base.transform != WL_OUTPUT_TRANSFORM_NORMAL)
 		return NULL;
-	if (viewport->buffer.scale != output_base->current_scale)
+	if (viewport->buffer.scale != output->base.current_scale)
 		return NULL;
 	if (output->cursor_view)
 		return NULL;
-	if (ev->output_mask != (1u << output_base->id))
+	if (ev->output_mask != (1u << output->base.id))
 		return NULL;
 	if (c->cursors_are_broken)
 		return NULL;
@@ -1054,10 +1071,11 @@ drm_output_set_cursor(struct drm_output *output)
 }
 
 static void
-drm_assign_planes(struct weston_output *output)
+drm_assign_planes(struct weston_output *output_base)
 {
 	struct drm_compositor *c =
-		(struct drm_compositor *) output->compositor;
+		(struct drm_compositor *)output_base->compositor;
+	struct drm_output *output = (struct drm_output *)output_base;
 	struct weston_view *ev, *next;
 	pixman_region32_t overlap, surface_overlap;
 	struct weston_plane *primary, *next_plane;
@@ -1093,9 +1111,9 @@ drm_assign_planes(struct weston_output *output)
 		    (es->buffer_ref.buffer &&
 		    (!wl_shm_buffer_get(es->buffer_ref.buffer->resource) ||
 		     (ev->surface->width <= 64 && ev->surface->height <= 64))))
-			es->keep_buffer = 1;
+			es->keep_buffer = true;
 		else
-			es->keep_buffer = 0;
+			es->keep_buffer = false;
 
 		pixman_region32_init(&surface_overlap);
 		pixman_region32_intersect(&surface_overlap, &overlap,
@@ -1112,10 +1130,23 @@ drm_assign_planes(struct weston_output *output)
 			next_plane = drm_output_prepare_overlay_view(output, ev);
 		if (next_plane == NULL)
 			next_plane = primary;
+
 		weston_view_move_to_plane(ev, next_plane);
+
 		if (next_plane == primary)
 			pixman_region32_union(&overlap, &overlap,
 					      &ev->transform.boundingbox);
+
+		if (next_plane == primary ||
+		    next_plane == &output->cursor_plane) {
+			/* cursor plane involves a copy */
+			ev->psf_flags = 0;
+		} else {
+			/* All other planes are a direct scanout of a
+			 * single client buffer.
+			 */
+			ev->psf_flags = PRESENTATION_FEEDBACK_KIND_ZERO_COPY;
+		}
 
 		pixman_region32_fini(&surface_overlap);
 	}
@@ -1282,6 +1313,7 @@ init_drm(struct drm_compositor *ec, struct udev_device *device)
 	const char *filename, *sysnum;
 	uint64_t cap;
 	int fd, ret;
+	clockid_t clk_id;
 
 	sysnum = udev_device_get_sysnum(device);
 	if (sysnum)
@@ -1307,9 +1339,15 @@ init_drm(struct drm_compositor *ec, struct udev_device *device)
 
 	ret = drmGetCap(fd, DRM_CAP_TIMESTAMP_MONOTONIC, &cap);
 	if (ret == 0 && cap == 1)
-		ec->clock = CLOCK_MONOTONIC;
+		clk_id = CLOCK_MONOTONIC;
 	else
-		ec->clock = CLOCK_REALTIME;
+		clk_id = CLOCK_REALTIME;
+
+	if (weston_compositor_set_presentation_clock(&ec->base, clk_id) < 0) {
+		weston_log("Error: failed to set presentation clock %d.\n",
+			   clk_id);
+		return -1;
+	}
 
 	ret = drmGetCap(fd, DRM_CAP_CURSOR_WIDTH, &cap);
 	if (ret == 0)
@@ -1842,31 +1880,6 @@ parse_modeline(const char *s, drmModeModeInfo *mode)
 	return 0;
 }
 
-static uint32_t
-parse_transform(const char *transform, const char *output_name)
-{
-	static const struct { const char *name; uint32_t token; } names[] = {
-		{ "normal",	WL_OUTPUT_TRANSFORM_NORMAL },
-		{ "90",		WL_OUTPUT_TRANSFORM_90 },
-		{ "180",	WL_OUTPUT_TRANSFORM_180 },
-		{ "270",	WL_OUTPUT_TRANSFORM_270 },
-		{ "flipped",	WL_OUTPUT_TRANSFORM_FLIPPED },
-		{ "flipped-90",	WL_OUTPUT_TRANSFORM_FLIPPED_90 },
-		{ "flipped-180", WL_OUTPUT_TRANSFORM_FLIPPED_180 },
-		{ "flipped-270", WL_OUTPUT_TRANSFORM_FLIPPED_270 },
-	};
-	unsigned int i;
-
-	for (i = 0; i < ARRAY_LENGTH(names); i++)
-		if (strcmp(names[i].name, transform) == 0)
-			return names[i].token;
-
-	weston_log("Invalid transform \"%s\" for output %s\n",
-		   transform, output_name);
-
-	return WL_OUTPUT_TRANSFORM_NORMAL;
-}
-
 static void
 setup_output_seat_constraint(struct drm_compositor *ec,
 			     struct weston_output *output,
@@ -1979,7 +1992,10 @@ create_output_for_connector(struct drm_compositor *ec,
 
 	weston_config_section_get_int(section, "scale", &scale, 1);
 	weston_config_section_get_string(section, "transform", &s, "normal");
-	transform = parse_transform(s, output->base.name);
+	if (weston_parse_transform(s, &transform) < 0)
+		weston_log("Invalid transform \"%s\" for output %s\n",
+			   s, output->base.name);
+
 	free(s);
 
 	if (get_gbm_format_from_section(section,
@@ -2776,7 +2792,7 @@ drm_compositor_create(struct wl_display *display,
 
 	/* Check if we run drm-backend using weston-launch */
 	ec->base.launcher = weston_launcher_connect(&ec->base, param->tty,
-						    param->seat_id);
+						    param->seat_id, true);
 	if (ec->base.launcher == NULL) {
 		weston_log("fatal: drm backend should be run "
 			   "using weston-launch binary or as root\n");

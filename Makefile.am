@@ -8,10 +8,9 @@ module_LTLIBRARIES =
 noinst_LTLIBRARIES =
 BUILT_SOURCES =
 
-# Do not run xwayland test while it is known broken.
-AM_DISTCHECK_CONFIGURE_FLAGS = --disable-setuid-install --disable-xwayland-test
+AM_DISTCHECK_CONFIGURE_FLAGS = --disable-setuid-install
 
-EXTRA_DIST = weston.ini.in
+EXTRA_DIST = weston.ini.in ivi-shell/weston.ini.in
 
 weston.ini : $(srcdir)/weston.ini.in
 	$(AM_V_GEN)$(SED) \
@@ -20,7 +19,14 @@ weston.ini : $(srcdir)/weston.ini.in
 		-e 's|@libexecdir[@]|$(libexecdir)|g' \
 		$< > $@
 
-all-local : weston.ini
+ivi-shell/weston.ini : $(srcdir)/ivi-shell/weston.ini.in
+	$(AM_V_GEN)$(SED) \
+		-e 's|@bindir[@]|$(bindir)|g' \
+		-e 's|@abs_top_builddir[@]|$(abs_top_builddir)|g' \
+		-e 's|@libexecdir[@]|$(libexecdir)|g' \
+		$< > $@
+
+all-local : weston.ini ivi-shell/weston.ini
 
 AM_CFLAGS = $(GCC_CFLAGS)
 
@@ -36,7 +42,7 @@ AM_CPPFLAGS = 					\
 	-DLIBEXECDIR='"$(libexecdir)"'		\
 	-DBINDIR='"$(bindir)"'
 
-CLEANFILES = weston.ini $(BUILT_SOURCES)
+CLEANFILES = weston.ini ivi-shell/weston.ini $(BUILT_SOURCES)
 
 bin_PROGRAMS += weston
 
@@ -62,6 +68,9 @@ weston_SOURCES =					\
 	src/noop-renderer.c				\
 	src/pixman-renderer.c				\
 	src/pixman-renderer.h				\
+	src/timeline.c					\
+	src/timeline.h					\
+	src/timeline-object.h				\
 	shared/matrix.c					\
 	shared/matrix.h					\
 	shared/zalloc.h					\
@@ -78,6 +87,8 @@ nodist_weston_SOURCES =					\
 	protocol/input-method-server-protocol.h		\
 	protocol/workspaces-protocol.c			\
 	protocol/workspaces-server-protocol.h		\
+	protocol/presentation_timing-protocol.c		\
+	protocol/presentation_timing-server-protocol.h	\
 	protocol/scaler-protocol.c			\
 	protocol/scaler-server-protocol.h
 
@@ -144,10 +155,15 @@ endif # BUILD_WESTON_LAUNCH
 pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = src/weston.pc
 
+wayland_sessiondir = $(datadir)/wayland-sessions
+wayland_session_DATA = src/weston.desktop
+dist_wayland_session_DATA = $(wayland_session_DATA)
+
 westonincludedir = $(includedir)/weston
 westoninclude_HEADERS =				\
 	src/version.h				\
 	src/compositor.h			\
+	src/timeline-object.h			\
 	shared/matrix.h				\
 	shared/config-parser.h			\
 	shared/zalloc.h
@@ -182,25 +198,12 @@ x11_backend_la_CFLAGS =				\
 x11_backend_la_SOURCES = src/compositor-x11.c
 endif
 
-INPUT_BACKEND_SOURCES = src/udev-input.h
-
-if ENABLE_LIBINPUT_BACKEND
 INPUT_BACKEND_LIBS = $(LIBINPUT_BACKEND_LIBS)
-INPUT_BACKEND_SOURCES +=			\
+INPUT_BACKEND_SOURCES =				\
 	src/libinput-seat.c			\
 	src/libinput-seat.h			\
 	src/libinput-device.c			\
 	src/libinput-device.h
-else
-INPUT_BACKEND_SOURCES +=			\
-	src/filter.c				\
-	src/filter.h				\
-	src/udev-seat.c				\
-	src/udev-seat.h				\
-	src/evdev.c				\
-	src/evdev.h				\
-	src/evdev-touchpad.c
-endif
 
 if ENABLE_DRM_COMPOSITOR
 module_LTLIBRARIES += drm-backend.la
@@ -364,6 +367,11 @@ libexec_PROGRAMS +=				\
 	weston-keyboard				\
 	weston-simple-im
 
+if ENABLE_IVI_SHELL
+libexec_PROGRAMS +=				\
+	weston-ivi-shell-user-interface
+endif
+
 demo_clients =					\
 	weston-flower				\
 	weston-image				\
@@ -391,6 +399,7 @@ demo_clients +=					\
 	weston-simple-shm			\
 	weston-simple-damage			\
 	weston-simple-touch			\
+	weston-presentation-shm			\
 	weston-multi-resource
 
 weston_simple_shm_SOURCES = clients/simple-shm.c
@@ -398,7 +407,9 @@ nodist_weston_simple_shm_SOURCES =		\
 	protocol/xdg-shell-protocol.c		\
 	protocol/xdg-shell-client-protocol.h	\
 	protocol/fullscreen-shell-protocol.c	\
-	protocol/fullscreen-shell-client-protocol.h
+	protocol/fullscreen-shell-client-protocol.h	\
+	protocol/ivi-application-protocol.c		\
+	protocol/ivi-application-client-protocol.h
 weston_simple_shm_CFLAGS = $(AM_CFLAGS) $(SIMPLE_CLIENT_CFLAGS)
 weston_simple_shm_LDADD = $(SIMPLE_CLIENT_LIBS) libshared.la
 
@@ -417,6 +428,13 @@ weston_simple_touch_SOURCES = clients/simple-touch.c
 weston_simple_touch_CFLAGS = $(AM_CFLAGS) $(SIMPLE_CLIENT_CFLAGS)
 weston_simple_touch_LDADD = $(SIMPLE_CLIENT_LIBS) libshared.la
 
+weston_presentation_shm_SOURCES = clients/presentation-shm.c
+nodist_weston_presentation_shm_SOURCES =		\
+	protocol/presentation_timing-protocol.c		\
+	protocol/presentation_timing-client-protocol.h
+weston_presentation_shm_CFLAGS = $(AM_CFLAGS) $(SIMPLE_CLIENT_CFLAGS)
+weston_presentation_shm_LDADD = $(SIMPLE_CLIENT_LIBS) libshared.la -lm
+
 weston_multi_resource_SOURCES = clients/multi-resource.c
 weston_multi_resource_CFLAGS = $(AM_CFLAGS) $(SIMPLE_CLIENT_CFLAGS)
 weston_multi_resource_LDADD = $(SIMPLE_CLIENT_LIBS) libshared.la -lrt -lm
@@ -427,7 +445,9 @@ demo_clients += weston-simple-egl
 weston_simple_egl_SOURCES = clients/simple-egl.c
 nodist_weston_simple_egl_SOURCES =		\
 	protocol/xdg-shell-protocol.c		\
-	protocol/xdg-shell-client-protocol.h
+	protocol/xdg-shell-client-protocol.h		\
+	protocol/ivi-application-protocol.c		\
+	protocol/ivi-application-client-protocol.h
 weston_simple_egl_CFLAGS = $(AM_CFLAGS) $(SIMPLE_EGL_CLIENT_CFLAGS)
 weston_simple_egl_LDADD = $(SIMPLE_EGL_CLIENT_LIBS) -lm
 endif
@@ -445,8 +465,12 @@ nodist_libtoytoolkit_la_SOURCES =			\
 	protocol/scaler-client-protocol.h		\
 	protocol/workspaces-protocol.c			\
 	protocol/workspaces-client-protocol.h		\
+	protocol/presentation_timing-protocol.c		\
+	protocol/presentation_timing-client-protocol.h	\
 	protocol/xdg-shell-protocol.c			\
-	protocol/xdg-shell-client-protocol.h
+	protocol/xdg-shell-client-protocol.h		\
+	protocol/ivi-application-protocol.c		\
+	protocol/ivi-application-client-protocol.h
 
 BUILT_SOURCES += $(nodist_libtoytoolkit_la_SOURCES)
 
@@ -578,6 +602,9 @@ weston_simple_im_LDADD = $(CLIENT_LIBS)
 weston_simple_im_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
 weston_info_SOURCES = clients/weston-info.c
+nodist_weston_info_SOURCES =				\
+	protocol/presentation_timing-protocol.c		\
+	protocol/presentation_timing-client-protocol.h
 weston_info_LDADD = $(WESTON_INFO_LIBS) libshared.la
 weston_info_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
@@ -587,6 +614,17 @@ nodist_weston_desktop_shell_SOURCES =			\
 	protocol/desktop-shell-protocol.c
 weston_desktop_shell_LDADD = libtoytoolkit.la
 weston_desktop_shell_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
+
+if ENABLE_IVI_SHELL
+weston_ivi_shell_user_interface_SOURCES = clients/ivi-shell-user-interface.c
+nodist_weston_ivi_shell_user_interface_SOURCES =			\
+	protocol/ivi-hmi-controller-client-protocol.h			\
+	protocol/ivi-hmi-controller-protocol.c				\
+	protocol/ivi-application-client-protocol.h			\
+        protocol/ivi-application-protocol.c
+weston_ivi_shell_user_interface_LDADD = libtoytoolkit.la
+weston_ivi_shell_user_interface_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
+endif
 
 if BUILD_FULL_GL_CLIENTS
 demo_clients += weston-gears
@@ -634,8 +672,11 @@ BUILT_SOURCES +=					\
 	protocol/fullscreen-shell-protocol.c		\
 	protocol/fullscreen-shell-client-protocol.h	\
 	protocol/xdg-shell-protocol.c			\
-	protocol/xdg-shell-client-protocol.h
-
+	protocol/xdg-shell-client-protocol.h		\
+	protocol/ivi-hmi-controller-protocol.c		\
+	protocol/ivi-hmi-controller-client-protocol.h	\
+	protocol/ivi-application-protocol.c		\
+	protocol/ivi-application-client-protocol.h
 
 westondatadir = $(datadir)/weston
 dist_westondata_DATA =				\
@@ -647,7 +688,19 @@ dist_westondata_DATA =				\
 	data/icon_window.png			\
 	data/sign_close.png			\
 	data/sign_maximize.png			\
-	data/sign_minimize.png
+	data/sign_minimize.png			\
+	data/background.png                     \
+	data/tiling.png                         \
+	data/fullscreen.png                     \
+	data/panel.png                          \
+	data/random.png                         \
+	data/sidebyside.png                     \
+	data/home.png                           \
+	data/icon_ivi_clickdot.png              \
+	data/icon_ivi_flower.png                \
+	data/icon_ivi_simple-egl.png            \
+	data/icon_ivi_simple-shm.png            \
+	data/icon_ivi_smoke.png
 
 
 if BUILD_WCAP_TOOLS
@@ -717,6 +770,46 @@ nodist_fullscreen_shell_la_SOURCES =			\
 
 BUILT_SOURCES += $(nodist_fullscreen_shell_la_SOURCES)
 endif
+
+if ENABLE_IVI_SHELL
+
+module_LTLIBRARIES +=				\
+	$(ivi_shell)				\
+	$(hmi_controller)
+
+ivi_shell = ivi-shell.la
+ivi_shell_la_LDFLAGS = -module -avoid-version
+ivi_shell_la_LIBADD = $(COMPOSITOR_LIBS) libshared.la
+ivi_shell_la_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS)
+ivi_shell_la_SOURCES =				\
+	ivi-shell/ivi-layout-export.h		\
+	ivi-shell/ivi-layout-private.h		\
+	ivi-shell/ivi-layout.c			\
+	ivi-shell/ivi-layout-transition.c	\
+	ivi-shell/ivi-shell.h			\
+	ivi-shell/ivi-shell.c			\
+	ivi-shell/input-panel-ivi.c
+nodist_ivi_shell_la_SOURCES =			\
+	protocol/ivi-application-protocol.c		\
+	protocol/ivi-application-server-protocol.h
+
+BUILT_SOURCES += $(nodist_ivi_shell_la_SOURCES)
+
+hmi_controller = hmi-controller.la
+hmi_controller_la_LDFLAGS = -module -avoid-version
+hmi_controller_la_LIBADD = $(COMPOSITOR_LIBS) libshared.la
+hmi_controller_la_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS)
+hmi_controller_la_SOURCES =				\
+	ivi-shell/ivi-layout-export.h			\
+	ivi-shell/hmi-controller.c
+nodist_hmi_controller_la_SOURCES =			\
+	protocol/ivi-hmi-controller-protocol.c		\
+	protocol/ivi-hmi-controller-server-protocol.h
+
+BUILT_SOURCES += $(nodist_hmi_controller_la_SOURCES)
+
+endif
+
 
 if ENABLE_SCREEN_SHARING
 
@@ -835,6 +928,8 @@ weston_tests =					\
 	event.weston				\
 	button.weston				\
 	text.weston				\
+	presentation.weston			\
+	roles.weston				\
 	subsurface.weston
 
 
@@ -937,6 +1032,17 @@ subsurface_weston_SOURCES = tests/subsurface-test.c
 subsurface_weston_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
 subsurface_weston_LDADD = libtest-client.la
 
+presentation_weston_SOURCES = tests/presentation-test.c
+nodist_presentation_weston_SOURCES =		\
+	protocol/presentation_timing-protocol.c	\
+	protocol/presentation_timing-client-protocol.h
+presentation_weston_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
+presentation_weston_LDADD = libtest-client.la
+
+roles_weston_SOURCES = tests/roles-test.c
+roles_weston_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
+roles_weston_LDADD = libtest-client.la
+
 if ENABLE_EGL
 weston_tests += buffer-count.weston
 buffer_count_weston_SOURCES = tests/buffer-count-test.c
@@ -987,7 +1093,10 @@ EXTRA_DIST +=					\
 	protocol/wayland-test.xml		\
 	protocol/xdg-shell.xml			\
 	protocol/fullscreen-shell.xml		\
-	protocol/scaler.xml
+	protocol/presentation_timing.xml	\
+	protocol/scaler.xml			\
+	protocol/ivi-application.xml		\
+	protocol/ivi-hmi-controller.xml
 
 man_MANS = weston.1 weston.ini.5
 

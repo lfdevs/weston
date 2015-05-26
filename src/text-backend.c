@@ -23,6 +23,7 @@
 
 #include "config.h"
 
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -47,7 +48,7 @@ struct text_input {
 
 	pixman_box32_t cursor_rectangle;
 
-	uint32_t input_panel_visible;
+	bool input_panel_visible;
 };
 
 struct text_input_manager {
@@ -82,8 +83,6 @@ struct input_method_context {
 	struct text_input *model;
 	struct input_method *input_method;
 
-	struct wl_list link;
-
 	struct wl_resource *keyboard;
 };
 
@@ -104,11 +103,14 @@ struct text_backend {
 	struct wl_listener destroy_listener;
 };
 
-static void input_method_context_create(struct text_input *model,
-					struct input_method *input_method);
-static void input_method_context_end_keyboard_grab(struct input_method_context *context);
+static void
+input_method_context_create(struct text_input *model,
+			    struct input_method *input_method);
+static void
+input_method_context_end_keyboard_grab(struct input_method_context *context);
 
-static void input_method_init_seat(struct weston_seat *seat);
+static void
+input_method_init_seat(struct weston_seat *seat);
 
 static void
 deactivate_text_input(struct text_input *text_input,
@@ -299,7 +301,7 @@ text_input_show_input_panel(struct wl_client *client,
 	struct text_input *text_input = wl_resource_get_user_data(resource);
 	struct weston_compositor *ec = text_input->ec;
 
-	text_input->input_panel_visible = 1;
+	text_input->input_panel_visible = true;
 
 	if (!wl_list_empty(&text_input->input_methods)) {
 		wl_signal_emit(&ec->show_input_panel_signal, text_input->surface);
@@ -314,7 +316,7 @@ text_input_hide_input_panel(struct wl_client *client,
 	struct text_input *text_input = wl_resource_get_user_data(resource);
 	struct weston_compositor *ec = text_input->ec;
 
-	text_input->input_panel_visible = 0;
+	text_input->input_panel_visible = false;
 
 	if (!wl_list_empty(&text_input->input_methods))
 		wl_signal_emit(&ec->hide_input_panel_signal, ec);
@@ -357,7 +359,9 @@ static void text_input_manager_create_text_input(struct wl_client *client,
 	struct text_input_manager *text_input_manager = wl_resource_get_user_data(resource);
 	struct text_input *text_input;
 
-	text_input = calloc(1, sizeof *text_input);
+	text_input = zalloc(sizeof *text_input);
+	if (text_input == NULL)
+		return;
 
 	text_input->resource =
 		wl_resource_create(client, &wl_text_input_interface, 1, id);
@@ -409,7 +413,9 @@ text_input_manager_create(struct weston_compositor *ec)
 {
 	struct text_input_manager *text_input_manager;
 
-	text_input_manager = calloc(1, sizeof *text_input_manager);
+	text_input_manager = zalloc(sizeof *text_input_manager);
+	if (text_input_manager == NULL)
+		return;
 
 	text_input_manager->ec = ec;
 
@@ -726,7 +732,7 @@ input_method_context_create(struct text_input *model,
 	if (!input_method->input_method_binding)
 		return;
 
-	context = calloc(1, sizeof *context);
+	context = zalloc(sizeof *context);
 	if (context == NULL)
 		return;
 
@@ -917,7 +923,9 @@ handle_seat_created(struct wl_listener *listener,
 	struct input_method *input_method;
 	struct weston_compositor *ec = seat->compositor;
 
-	input_method = calloc(1, sizeof *input_method);
+	input_method = zalloc(sizeof *input_method);
+	if (input_method == NULL)
+		return;
 
 	input_method->seat = seat;
 	input_method->model = NULL;
@@ -976,7 +984,9 @@ text_backend_init(struct weston_compositor *ec)
 {
 	struct text_backend *text_backend;
 
-	text_backend = calloc(1, sizeof(*text_backend));
+	text_backend = zalloc(sizeof(*text_backend));
+	if (text_backend == NULL)
+		return -1;
 
 	text_backend->compositor = ec;
 

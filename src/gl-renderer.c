@@ -25,6 +25,7 @@
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -70,6 +71,7 @@ struct gl_border_image {
 struct gl_output_state {
 	EGLSurface egl_surface;
 	pixman_region32_t buffer_damage[BUFFER_DAMAGE_COUNT];
+	int buffer_damage_index;
 	enum gl_border_status border_damage[BUFFER_DAMAGE_COUNT];
 	struct gl_border_image borders[4];
 	enum gl_border_status border_status;
@@ -295,6 +297,55 @@ calculate_edges(struct weston_view *ev, pixman_box32_t *rect,
 	return n;
 }
 
+static bool
+merge_down(pixman_box32_t *a, pixman_box32_t *b, pixman_box32_t *merge)
+{
+	if (a->x1 == b->x1 && a->x2 == b->x2 && a->y1 == b->y2) {
+		merge->x1 = a->x1;
+		merge->x2 = a->x2;
+		merge->y1 = b->y1;
+		merge->y2 = a->y2;
+		return true;
+	}
+	return false;
+}
+
+static int
+compress_bands(pixman_box32_t *inrects, int nrects,
+		   pixman_box32_t **outrects)
+{
+	bool merged;
+	pixman_box32_t *out, merge_rect;
+	int i, j, nout;
+
+	if (!nrects) {
+		*outrects = NULL;
+		return 0;
+	}
+
+	/* nrects is an upper bound - we're not too worried about
+	 * allocating a little extra
+	 */
+	out = malloc(sizeof(pixman_box32_t) * nrects);
+	out[0] = inrects[0];
+	nout = 1;
+	for (i = 1; i < nrects; i++) {
+		for (j = 0; j < nout; j++) {
+			merged = merge_down(&inrects[i], &out[j], &merge_rect);
+			if (merged) {
+				out[j] = merge_rect;
+				break;
+			}
+		}
+		if (!merged) {
+			out[nout] = inrects[i];
+			nout++;
+		}
+	}
+	*outrects = out;
+	return nout;
+}
+
 static int
 texture_region(struct weston_view *ev, pixman_region32_t *region,
 		pixman_region32_t *surf_region)
@@ -305,11 +356,20 @@ texture_region(struct weston_view *ev, pixman_region32_t *region,
 	GLfloat *v, inv_width, inv_height;
 	unsigned int *vtxcnt, nvtx = 0;
 	pixman_box32_t *rects, *surf_rects;
-	int i, j, k, nrects, nsurf;
-
-	rects = pixman_region32_rectangles(region, &nrects);
+	pixman_box32_t *raw_rects;
+	int i, j, k, nrects, nsurf, raw_nrects;
+	bool used_band_compression;
+	raw_rects = pixman_region32_rectangles(region, &raw_nrects);
 	surf_rects = pixman_region32_rectangles(surf_region, &nsurf);
 
+	if (raw_nrects < 4) {
+		used_band_compression = false;
+		nrects = raw_nrects;
+		rects = raw_rects;
+	} else {
+		nrects = compress_bands(raw_rects, raw_nrects, &rects);
+		used_band_compression = true;
+	}
 	/* worst case we can have 8 vertices per rect (ie. clipped into
 	 * an octagon):
 	 */
@@ -368,6 +428,8 @@ texture_region(struct weston_view *ev, pixman_region32_t *region,
 		}
 	}
 
+	if (used_band_compression)
+		free(rects);
 	return nvtx;
 }
 
@@ -815,7 +877,7 @@ output_get_damage(struct weston_output *output,
 		*border_damage = BORDER_ALL_DIRTY;
 	} else {
 		for (i = 0; i < buffer_age - 1; i++)
-			*border_damage |= go->border_damage[i];
+			*border_damage |= go->border_damage[(go->buffer_damage_index + i) % BUFFER_DAMAGE_COUNT];
 
 		if (*border_damage & BORDER_SIZE_CHANGED) {
 			/* If we've had a resize, we have to do a full
@@ -826,7 +888,7 @@ output_get_damage(struct weston_output *output,
 			for (i = 0; i < buffer_age - 1; i++)
 				pixman_region32_union(buffer_damage,
 						      buffer_damage,
-						      &go->buffer_damage[i]);
+						      &go->buffer_damage[(go->buffer_damage_index + i) % BUFFER_DAMAGE_COUNT]);
 		}
 	}
 }
@@ -838,19 +900,15 @@ output_rotate_damage(struct weston_output *output,
 {
 	struct gl_output_state *go = get_output_state(output);
 	struct gl_renderer *gr = get_renderer(output->compositor);
-	int i;
 
 	if (!gr->has_egl_buffer_age)
 		return;
 
-	for (i = BUFFER_DAMAGE_COUNT - 1; i >= 1; i--) {
-		go->border_damage[i] = go->border_damage[i - 1];
-		pixman_region32_copy(&go->buffer_damage[i],
-				     &go->buffer_damage[i - 1]);
-	}
+	go->buffer_damage_index += BUFFER_DAMAGE_COUNT - 1;
+	go->buffer_damage_index %= BUFFER_DAMAGE_COUNT;
 
-	go->border_damage[0] = border_status;
-	pixman_region32_copy(&go->buffer_damage[0], output_damage);
+	pixman_region32_copy(&go->buffer_damage[go->buffer_damage_index], output_damage);
+	go->border_damage[go->buffer_damage_index] = border_status;
 }
 
 static void
@@ -1355,8 +1413,8 @@ gl_renderer_create_surface(struct weston_surface *surface)
 	struct gl_surface_state *gs;
 	struct gl_renderer *gr = get_renderer(surface->compositor);
 
-	gs = calloc(1, sizeof *gs);
-	if (!gs)
+	gs = zalloc(sizeof *gs);
+	if (gs == NULL)
 		return -1;
 
 	/* A buffer is never attached to solid color surfaces, yet
@@ -1758,9 +1816,8 @@ gl_renderer_output_create(struct weston_output *output,
 		return -1;
 	}
 
-	go = calloc(1, sizeof *go);
-
-	if (!go)
+	go = zalloc(sizeof *go);
+	if (go == NULL)
 		return -1;
 
 	go->egl_surface =
@@ -1921,8 +1978,7 @@ gl_renderer_create(struct weston_compositor *ec, EGLNativeDisplayType display,
 	struct gl_renderer *gr;
 	EGLint major, minor;
 
-	gr = calloc(1, sizeof *gr);
-
+	gr = zalloc(sizeof *gr);
 	if (gr == NULL)
 		return -1;
 

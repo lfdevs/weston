@@ -305,12 +305,10 @@ rdp_peer_refresh_region(pixman_region32_t *region, freerdp_peer *peer)
 static void
 rdp_output_start_repaint_loop(struct weston_output *output)
 {
-	uint32_t msec;
-	struct timeval tv;
+	struct timespec ts;
 
-	gettimeofday(&tv, NULL);
-	msec = tv.tv_sec * 1000 + tv.tv_usec / 1000;
-	weston_output_finish_frame(output, msec);
+	clock_gettime(output->compositor->presentation_clock, &ts);
+	weston_output_finish_frame(output, &ts, PRESENTATION_FEEDBACK_INVALID);
 }
 
 static int
@@ -352,7 +350,11 @@ rdp_output_destroy(struct weston_output *output_base)
 static int
 finish_frame_handler(void *data)
 {
-	rdp_output_start_repaint_loop(data);
+	struct rdp_output *output = data;
+	struct timespec ts;
+
+	clock_gettime(output->base.compositor->presentation_clock, &ts);
+	weston_output_finish_frame(&output->base, &ts, 0);
 
 	return 1;
 }
@@ -805,7 +807,7 @@ xf_peer_post_connect(freerdp_peer* client)
 				weston_log("client mode not found\n");
 				return FALSE;
 			}
-			weston_output_switch_mode(&output->base, target_mode, 1, WESTON_MODE_SWITCH_SET_NATIVE);
+			weston_output_mode_set_native(&output->base, target_mode, 1);
 			output->base.width = new_mode.width;
 			output->base.height = new_mode.height;
 		}
@@ -1114,6 +1116,9 @@ rdp_compositor_create(struct wl_display *display,
 			goto err_free_strings;
 		c->tls_enabled = 1;
 	}
+
+	if (weston_compositor_set_presentation_clock_software(&c->base) < 0)
+		goto err_compositor;
 
 	if (pixman_renderer_init(&c->base) < 0)
 		goto err_compositor;

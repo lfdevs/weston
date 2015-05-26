@@ -46,7 +46,8 @@
 #include "compositor.h"
 #include "rpi-renderer.h"
 #include "launcher-util.h"
-#include "udev-input.h"
+#include "libinput-seat.h"
+#include "presentation_timing-server-protocol.h"
 
 #if 0
 #define DBG(...) \
@@ -61,6 +62,7 @@ struct rpi_output;
 struct rpi_flippipe {
 	int readfd;
 	int writefd;
+	clockid_t clk_id;
 	struct wl_event_source *source;
 };
 
@@ -113,29 +115,19 @@ to_rpi_compositor(struct weston_compositor *base)
 	return container_of(base, struct rpi_compositor, base);
 }
 
-static uint64_t
-rpi_get_current_time(void)
-{
-	struct timeval tv;
-
-	/* XXX: use CLOCK_MONOTONIC instead? */
-	gettimeofday(&tv, NULL);
-	return (uint64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
-}
-
 static void
 rpi_flippipe_update_complete(DISPMANX_UPDATE_HANDLE_T update, void *data)
 {
 	/* This function runs in a different thread. */
 	struct rpi_flippipe *flippipe = data;
-	uint64_t time;
+	struct timespec ts;
 	ssize_t ret;
 
 	/* manufacture flip completion timestamp */
-	time = rpi_get_current_time();
+	clock_gettime(flippipe->clk_id, &ts);
 
-	ret = write(flippipe->writefd, &time, sizeof time);
-	if (ret != sizeof time)
+	ret = write(flippipe->writefd, &ts, sizeof ts);
+	if (ret != sizeof ts)
 		weston_log("ERROR: %s failed to write, ret %zd, errno %d\n",
 			   __func__, ret, errno);
 }
@@ -159,26 +151,27 @@ rpi_dispmanx_update_submit(DISPMANX_UPDATE_HANDLE_T update,
 }
 
 static void
-rpi_output_update_complete(struct rpi_output *output, uint64_t time);
+rpi_output_update_complete(struct rpi_output *output,
+			   const struct timespec *stamp);
 
 static int
 rpi_flippipe_handler(int fd, uint32_t mask, void *data)
 {
 	struct rpi_output *output = data;
 	ssize_t ret;
-	uint64_t time;
+	struct timespec ts;
 
 	if (mask != WL_EVENT_READABLE)
 		weston_log("ERROR: unexpected mask 0x%x in %s\n",
 			   mask, __func__);
 
-	ret = read(fd, &time, sizeof time);
-	if (ret != sizeof time) {
+	ret = read(fd, &ts, sizeof ts);
+	if (ret != sizeof ts) {
 		weston_log("ERROR: %s failed to read, ret %zd, errno %d\n",
 			   __func__, ret, errno);
 	}
 
-	rpi_output_update_complete(output, time);
+	rpi_output_update_complete(output, &ts);
 
 	return 1;
 }
@@ -194,6 +187,7 @@ rpi_flippipe_init(struct rpi_flippipe *flippipe, struct rpi_output *output)
 
 	flippipe->readfd = fd[0];
 	flippipe->writefd = fd[1];
+	flippipe->clk_id = output->compositor->base.presentation_clock;
 
 	loop = wl_display_get_event_loop(output->compositor->base.wl_display);
 	flippipe->source = wl_event_loop_add_fd(loop, flippipe->readfd,
@@ -220,10 +214,11 @@ rpi_flippipe_release(struct rpi_flippipe *flippipe)
 static void
 rpi_output_start_repaint_loop(struct weston_output *output)
 {
-	uint64_t time;
+	struct timespec ts;
 
-	time = rpi_get_current_time();
-	weston_output_finish_frame(output, time);
+	/* XXX: do a phony dispmanx update and trigger on its completion? */
+	clock_gettime(output->compositor->presentation_clock, &ts);
+	weston_output_finish_frame(output, &ts, PRESENTATION_FEEDBACK_INVALID);
 }
 
 static int
@@ -254,11 +249,16 @@ rpi_output_repaint(struct weston_output *base, pixman_region32_t *damage)
 }
 
 static void
-rpi_output_update_complete(struct rpi_output *output, uint64_t time)
+rpi_output_update_complete(struct rpi_output *output,
+			   const struct timespec *stamp)
 {
-	DBG("frame update complete(%" PRIu64 ")\n", time);
+	uint32_t flags = PRESENTATION_FEEDBACK_KIND_VSYNC |
+			 PRESENTATION_FEEDBACK_KIND_HW_COMPLETION;
+
+	DBG("frame update complete(%ld.%09ld)\n",
+	    (long)stamp->tv_sec, (long)stamp->tv_nsec);
 	rpi_renderer_finish_frame(&output->base);
-	weston_output_finish_frame(&output->base, time);
+	weston_output_finish_frame(&output->base, stamp, flags);
 }
 
 static void
@@ -286,38 +286,6 @@ rpi_output_destroy(struct weston_output *base)
 	free(output);
 }
 
-static const char *transform_names[] = {
-	[WL_OUTPUT_TRANSFORM_NORMAL] = "normal",
-	[WL_OUTPUT_TRANSFORM_90] = "90",
-	[WL_OUTPUT_TRANSFORM_180] = "180",
-	[WL_OUTPUT_TRANSFORM_270] = "270",
-	[WL_OUTPUT_TRANSFORM_FLIPPED] = "flipped",
-	[WL_OUTPUT_TRANSFORM_FLIPPED_90] = "flipped-90",
-	[WL_OUTPUT_TRANSFORM_FLIPPED_180] = "flipped-180",
-	[WL_OUTPUT_TRANSFORM_FLIPPED_270] = "flipped-270",
-};
-
-static int
-str2transform(const char *name)
-{
-	unsigned i;
-
-	for (i = 0; i < ARRAY_LENGTH(transform_names); i++)
-		if (strcmp(name, transform_names[i]) == 0)
-			return i;
-
-	return -1;
-}
-
-static const char *
-transform2str(uint32_t output_transform)
-{
-	if (output_transform >= ARRAY_LENGTH(transform_names))
-		return "<illegal value>";
-
-	return transform_names[output_transform];
-}
-
 static int
 rpi_output_create(struct rpi_compositor *compositor, uint32_t transform)
 {
@@ -326,8 +294,8 @@ rpi_output_create(struct rpi_compositor *compositor, uint32_t transform)
 	int ret;
 	float mm_width, mm_height;
 
-	output = calloc(1, sizeof *output);
-	if (!output)
+	output = zalloc(sizeof *output);
+	if (output == NULL)
 		return -1;
 
 	output->compositor = compositor;
@@ -395,9 +363,10 @@ rpi_output_create(struct rpi_compositor *compositor, uint32_t transform)
 	weston_log_continue(STAMP_SPACE "guessing %d Hz and 96 dpi\n",
 			    output->mode.refresh / 1000);
 	weston_log_continue(STAMP_SPACE "orientation: %s\n",
-			    transform2str(output->base.transform));
+			    weston_transform_to_string(output->base.transform));
 
-	if (!strncmp(transform2str(output->base.transform), "flipped", 7))
+	if (!strncmp(weston_transform_to_string(output->base.transform),
+						"flipped", 7))
 		weston_log("warning: flipped output transforms may not work\n");
 
 	return 0;
@@ -495,13 +464,17 @@ rpi_compositor_create(struct wl_display *display, int *argc, char *argv[],
 
 	weston_log("initializing Raspberry Pi backend\n");
 
-	compositor = calloc(1, sizeof *compositor);
+	compositor = zalloc(sizeof *compositor);
 	if (compositor == NULL)
 		return NULL;
 
 	if (weston_compositor_init(&compositor->base, display, argc, argv,
 				   config) < 0)
 		goto out_free;
+
+	if (weston_compositor_set_presentation_clock_software(
+							&compositor->base) < 0)
+		goto out_compositor;
 
 	compositor->udev = udev_new();
 	if (compositor->udev == NULL) {
@@ -512,8 +485,9 @@ rpi_compositor_create(struct wl_display *display, int *argc, char *argv[],
 	compositor->session_listener.notify = session_notify;
 	wl_signal_add(&compositor->base.session_signal,
 		      &compositor ->session_listener);
-	compositor->base.launcher =
-		weston_launcher_connect(&compositor->base, param->tty, "seat0");
+	compositor->base.launcher = weston_launcher_connect(&compositor->base,
+							    param->tty, "seat0",
+							    false);
 	if (!compositor->base.launcher) {
 		weston_log("Failed to initialize tty.\n");
 		goto out_udev;
@@ -581,7 +555,6 @@ backend_init(struct wl_display *display, int *argc, char *argv[],
 	     struct weston_config *config)
 {
 	const char *transform = "normal";
-	int ret;
 
 	struct rpi_parameters param = {
 		.tty = 0, /* default to current tty */
@@ -601,11 +574,8 @@ backend_init(struct wl_display *display, int *argc, char *argv[],
 
 	parse_options(rpi_options, ARRAY_LENGTH(rpi_options), argc, argv);
 
-	ret = str2transform(transform);
-	if (ret < 0)
+	if (weston_parse_transform(transform, &param.output_transform) < 0)
 		weston_log("invalid transform \"%s\"\n", transform);
-	else
-		param.output_transform = ret;
 
 	return rpi_compositor_create(display, argc, argv, config, &param);
 }

@@ -1,6 +1,6 @@
 m4_define([weston_major_version], [1])
-m4_define([weston_minor_version], [6])
-m4_define([weston_micro_version], [1])
+m4_define([weston_minor_version], [7])
+m4_define([weston_micro_version], [0])
 m4_define([weston_version],
           [weston_major_version.weston_minor_version.weston_micro_version])
 
@@ -9,7 +9,7 @@ AC_INIT([weston],
         [weston_version],
         [https://bugs.freedesktop.org/enter_bug.cgi?product=Wayland&component=weston&version=weston_version],
         [weston],
-        [http://wayland.freedesktop.org/])
+        [http://wayland.freedesktop.org])
 
 AC_SUBST([WESTON_VERSION_MAJOR], [weston_major_version])
 AC_SUBST([WESTON_VERSION_MINOR], [weston_minor_version])
@@ -59,7 +59,7 @@ AC_CHECK_HEADERS([execinfo.h])
 
 AC_CHECK_FUNCS([mkostemp strchrnul initgroups posix_fallocate])
 
-COMPOSITOR_MODULES="wayland-server >= 1.5.91 pixman-1 >= 0.25.2"
+COMPOSITOR_MODULES="wayland-server >= 1.7.0 pixman-1 >= 0.25.2"
 
 AC_ARG_ENABLE(egl, [  --disable-egl],,
               enable_egl=yes)
@@ -100,10 +100,10 @@ if test x$enable_xwayland = xyes; then
 
   AC_ARG_WITH(xserver-path, AS_HELP_STRING([--with-xserver-path=PATH],
               [Path to X server]), [XSERVER_PATH="$withval"],
-              [XSERVER_PATH="$bindir/Xwayland"])
+              [XSERVER_PATH="/usr/bin/Xwayland"])
   AC_SUBST([XSERVER_PATH])
   if test x$enable_xwayland_test = xyes; then
-    PKG_CHECK_MODULES([XWAYLAND_TEST], xcb xcb-dri2 libdrm)
+    PKG_CHECK_MODULES([XWAYLAND_TEST], x11)
   fi
 fi
 
@@ -155,15 +155,7 @@ if test x$enable_drm_compositor = xyes; then
 fi
 
 
-AC_ARG_ENABLE(libinput-backend, [  --disable-libinput-backend],,
-	      enable_libinput_backend=yes)
-AM_CONDITIONAL([ENABLE_LIBINPUT_BACKEND], [test x$enable_libinput_backend = xyes])
-if test x$enable_libinput_backend = xyes; then
-  AC_DEFINE([BUILD_LIBINPUT_BACKEND], [1], [Build the libinput input device backend])
-  PKG_CHECK_MODULES(LIBINPUT_BACKEND, [libinput >= 0.6.0 libinput < 0.8.0])
-fi
-
-
+PKG_CHECK_MODULES(LIBINPUT_BACKEND, [libinput >= 0.8.0])
 PKG_CHECK_MODULES(COMPOSITOR, [$COMPOSITOR_MODULES])
 
 AC_ARG_ENABLE(wayland-compositor, [  --enable-wayland-compositor],,
@@ -181,6 +173,9 @@ AC_ARG_ENABLE(headless-compositor, [  --enable-headless-compositor],,
 	      enable_headless_compositor=yes)
 AM_CONDITIONAL(ENABLE_HEADLESS_COMPOSITOR,
 	       test x$enable_headless_compositor = xyes)
+if test x$enable_headless_compositor = xyes; then
+  AC_DEFINE([BUILD_HEADLESS_COMPOSITOR], [1], [Build the headless compositor])
+fi
 
 
 AC_ARG_ENABLE(rpi-compositor,
@@ -297,7 +292,7 @@ AC_SUBST(JPEG_LIBS)
 
 PKG_CHECK_MODULES(CAIRO, [cairo])
 
-PKG_CHECK_MODULES(TEST_CLIENT, [wayland-client])
+PKG_CHECK_MODULES(TEST_CLIENT, [wayland-client >= 1.7.0])
 
 AC_ARG_ENABLE(simple-clients,
               AS_HELP_STRING([--disable-simple-clients],
@@ -434,6 +429,13 @@ if test "x$enable_dbus" != "xno"; then
 fi
 AM_CONDITIONAL(ENABLE_DBUS, test "x$enable_dbus" = "xyes")
 
+# ivi-shell support
+AC_ARG_ENABLE(ivi-shell,
+              AS_HELP_STRING([--disable-ivi-shell],
+                             [do not build ivi-shell server plugin and client]),,
+	      enable_ivi_shell=yes)
+AM_CONDITIONAL(ENABLE_IVI_SHELL, test "x$enable_ivi_shell" = "xyes")
+
 AC_ARG_ENABLE(wcap-tools, [  --disable-wcap-tools],, enable_wcap_tools=yes)
 AM_CONDITIONAL(BUILD_WCAP_TOOLS, test x$enable_wcap_tools = xyes)
 if test x$enable_wcap_tools = xyes; then
@@ -523,6 +525,8 @@ AC_MSG_RESULT([
 	XWayland			${enable_xwayland}
 	dbus				${enable_dbus}
 
+	ivi-shell			${enable_ivi_shell}
+
 	Build wcap utility		${enable_wcap_tools}
 	Build Fullscreen Shell		${enable_fullscreen_shell}
 
@@ -537,8 +541,6 @@ AC_MSG_RESULT([
 	FBDEV Compositor		${enable_fbdev_compositor}
 	RDP Compositor			${enable_rdp_compositor}
 	Screen Sharing			${enable_screen_sharing}
-
-	libinput Backend		${enable_libinput_backend}
 
 	Raspberry Pi BCM headers	${have_bcm_host}
 

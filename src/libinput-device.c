@@ -59,6 +59,17 @@ handle_keyboard_key(struct libinput_device *libinput_device,
 {
 	struct evdev_device *device =
 		libinput_device_get_user_data(libinput_device);
+	int key_state =
+		libinput_event_keyboard_get_key_state(keyboard_event);
+	int seat_key_count =
+		libinput_event_keyboard_get_seat_key_count(keyboard_event);
+
+	/* Ignore key events that are not seat wide state changes. */
+	if ((key_state == LIBINPUT_KEY_STATE_PRESSED &&
+	     seat_key_count != 1) ||
+	    (key_state == LIBINPUT_KEY_STATE_RELEASED &&
+	     seat_key_count != 0))
+		return;
 
 	notify_key(device->seat,
 		   libinput_event_keyboard_get_time(keyboard_event),
@@ -119,11 +130,60 @@ handle_pointer_button(struct libinput_device *libinput_device,
 {
 	struct evdev_device *device =
 		libinput_device_get_user_data(libinput_device);
+	int button_state =
+		libinput_event_pointer_get_button_state(pointer_event);
+	int seat_button_count =
+		libinput_event_pointer_get_seat_button_count(pointer_event);
+
+	/* Ignore button events that are not seat wide state changes. */
+	if ((button_state == LIBINPUT_BUTTON_STATE_PRESSED &&
+	     seat_button_count != 1) ||
+	    (button_state == LIBINPUT_BUTTON_STATE_RELEASED &&
+	     seat_button_count != 0))
+		return;
 
 	notify_button(device->seat,
 		      libinput_event_pointer_get_time(pointer_event),
 		      libinput_event_pointer_get_button(pointer_event),
 		      libinput_event_pointer_get_button_state(pointer_event));
+}
+
+static double
+normalize_scroll(struct libinput_event_pointer *pointer_event,
+		 enum libinput_pointer_axis axis)
+{
+	static int warned;
+	enum libinput_pointer_axis_source source;
+	double value;
+
+	source = libinput_event_pointer_get_axis_source(pointer_event);
+	/* libinput < 0.8 sent wheel click events with value 10. Since 0.8
+	   the value is the angle of the click in degrees. To keep
+	   backwards-compat with existing clients, we just send multiples of
+	   the click count.
+	 */
+	switch (source) {
+	case LIBINPUT_POINTER_AXIS_SOURCE_WHEEL:
+		value = 10 * libinput_event_pointer_get_axis_value_discrete(
+								   pointer_event,
+								   axis);
+		break;
+	case LIBINPUT_POINTER_AXIS_SOURCE_FINGER:
+	case LIBINPUT_POINTER_AXIS_SOURCE_CONTINUOUS:
+		value = libinput_event_pointer_get_axis_value(pointer_event,
+							      axis);
+		break;
+	default:
+		value = 0;
+		if (warned < 5) {
+			weston_log("Unknown scroll source %d. Event discarded\n",
+				   source);
+			warned++;
+		}
+		break;
+	}
+
+	return value;
 }
 
 static void
@@ -133,12 +193,25 @@ handle_pointer_axis(struct libinput_device *libinput_device,
 	struct evdev_device *device =
 		libinput_device_get_user_data(libinput_device);
 	double value;
+	enum libinput_pointer_axis axis;
 
-	value = libinput_event_pointer_get_axis_value(pointer_event);
-	notify_axis(device->seat,
-		    libinput_event_pointer_get_time(pointer_event),
-		    libinput_event_pointer_get_axis(pointer_event),
-		    wl_fixed_from_double(value));
+	axis = LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL;
+	if (libinput_event_pointer_has_axis(pointer_event, axis)) {
+		value = normalize_scroll(pointer_event, axis);
+		notify_axis(device->seat,
+			    libinput_event_pointer_get_time(pointer_event),
+			    WL_POINTER_AXIS_VERTICAL_SCROLL,
+			    wl_fixed_from_double(value));
+	}
+
+	axis = LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL;
+	if (libinput_event_pointer_has_axis(pointer_event, axis)) {
+		value = normalize_scroll(pointer_event, axis);
+		notify_axis(device->seat,
+			    libinput_event_pointer_get_time(pointer_event),
+			    WL_POINTER_AXIS_HORIZONTAL_SCROLL,
+			    wl_fixed_from_double(value));
+	}
 }
 
 static void
@@ -470,7 +543,7 @@ evdev_notify_keyboard_focus(struct weston_seat *seat,
 {
 	struct wl_array keys;
 
-	if (!seat->keyboard_device_count > 0)
+	if (seat->keyboard_device_count == 0)
 		return;
 
 	wl_array_init(&keys);

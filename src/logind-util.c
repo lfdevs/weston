@@ -51,6 +51,7 @@
 
 struct weston_logind {
 	struct weston_compositor *compositor;
+	bool sync_drm;
 	char *seat;
 	char *sid;
 	unsigned int vtnr;
@@ -286,13 +287,35 @@ weston_logind_set_active(struct weston_logind *wl, bool active)
 }
 
 static void
+parse_active(struct weston_logind *wl, DBusMessage *m, DBusMessageIter *iter)
+{
+	DBusMessageIter sub;
+	dbus_bool_t b;
+
+	if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_VARIANT)
+		return;
+
+	dbus_message_iter_recurse(iter, &sub);
+
+	if (dbus_message_iter_get_arg_type(&sub) != DBUS_TYPE_BOOLEAN)
+		return;
+
+	dbus_message_iter_get_basic(&sub, &b);
+
+	/* If the backend requested DRM master-device synchronization, we only
+	 * wake-up the compositor once the master-device is up and running. For
+	 * other backends, we immediately forward the Active-change event. */
+	if (!wl->sync_drm || !b)
+		weston_logind_set_active(wl, b);
+}
+
+static void
 get_active_cb(DBusPendingCall *pending, void *data)
 {
 	struct weston_logind *wl = data;
+	DBusMessageIter iter;
 	DBusMessage *m;
-	DBusMessageIter iter, sub;
 	int type;
-	dbus_bool_t b;
 
 	dbus_pending_call_unref(wl->pending_active);
 	wl->pending_active = NULL;
@@ -302,23 +325,10 @@ get_active_cb(DBusPendingCall *pending, void *data)
 		return;
 
 	type = dbus_message_get_type(m);
-	if (type != DBUS_MESSAGE_TYPE_METHOD_RETURN)
-		goto err_unref;
+	if (type == DBUS_MESSAGE_TYPE_METHOD_RETURN &&
+	    dbus_message_iter_init(m, &iter))
+		parse_active(wl, m, &iter);
 
-	if (!dbus_message_iter_init(m, &iter) ||
-	    dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_VARIANT)
-		goto err_unref;
-
-	dbus_message_iter_recurse(&iter, &sub);
-
-	if (dbus_message_iter_get_arg_type(&sub) != DBUS_TYPE_BOOLEAN)
-		goto err_unref;
-
-	dbus_message_iter_get_basic(&sub, &b);
-	if (!b)
-		weston_logind_set_active(wl, false);
-
-err_unref:
 	dbus_message_unref(m);
 }
 
@@ -403,7 +413,6 @@ property_changed(struct weston_logind *wl, DBusMessage *m)
 {
 	DBusMessageIter iter, sub, entry;
 	const char *interface, *name;
-	dbus_bool_t b;
 
 	if (!dbus_message_iter_init(m, &iter) ||
 	    dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_STRING)
@@ -428,12 +437,8 @@ property_changed(struct weston_logind *wl, DBusMessage *m)
 			goto error;
 
 		if (!strcmp(name, "Active")) {
-			if (dbus_message_iter_get_arg_type(&entry) == DBUS_TYPE_BOOLEAN) {
-				dbus_message_iter_get_basic(&entry, &b);
-				if (!b)
-					weston_logind_set_active(wl, false);
-				return;
-			}
+			parse_active(wl, m, &entry);
+			return;
 		}
 
 		dbus_message_iter_next(&sub);
@@ -490,7 +495,7 @@ device_paused(struct weston_logind *wl, DBusMessage *m)
 	if (!strcmp(type, "pause"))
 		weston_logind_pause_device_complete(wl, major, minor);
 
-	if (major == DRM_MAJOR)
+	if (wl->sync_drm && major == DRM_MAJOR)
 		weston_logind_set_active(wl, false);
 }
 
@@ -516,7 +521,7 @@ device_resumed(struct weston_logind *wl, DBusMessage *m)
 	 * there is no need for us to handle this event for evdev. For DRM, we
 	 * notify the compositor to wake up. */
 
-	if (major == DRM_MAJOR)
+	if (wl->sync_drm && major == DRM_MAJOR)
 		weston_logind_set_active(wl, true);
 }
 
@@ -692,14 +697,10 @@ signal_event(int fd, uint32_t mask, void *data)
 		return 0;
 	}
 
-	switch (sig.ssi_signo) {
-	case SIGUSR1:
+	if (sig.ssi_signo == (unsigned int)SIGRTMIN)
 		ioctl(wl->vt, VT_RELDISP, 1);
-		break;
-	case SIGUSR2:
+	else if (sig.ssi_signo == (unsigned int)SIGRTMIN + 1)
 		ioctl(wl->vt, VT_RELDISP, VT_ACKACQ);
-		break;
-	}
 
 	return 0;
 }
@@ -767,9 +768,21 @@ weston_logind_setup_vt(struct weston_logind *wl)
 		goto err_kbmode;
 	}
 
+	/*
+	 * SIGRTMIN is used as global VT-release signal, SIGRTMIN + 1 is used
+	 * as VT-acquire signal. Note that SIGRT* must be tested on runtime, as
+	 * their exact values are not known at compile-time. POSIX requires 32
+	 * of them to be available, though.
+	 */
+	if (SIGRTMIN + 1 > SIGRTMAX) {
+		weston_log("logind: not enough RT signals available: %u-%u\n",
+			   SIGRTMIN, SIGRTMAX);
+		return -EINVAL;
+	}
+
 	sigemptyset(&mask);
-	sigaddset(&mask, SIGUSR1);
-	sigaddset(&mask, SIGUSR2);
+	sigaddset(&mask, SIGRTMIN);
+	sigaddset(&mask, SIGRTMIN + 1);
 	sigprocmask(SIG_BLOCK, &mask, NULL);
 
 	wl->sfd = signalfd(-1, &mask, SFD_NONBLOCK | SFD_CLOEXEC);
@@ -790,8 +803,8 @@ weston_logind_setup_vt(struct weston_logind *wl)
 	}
 
 	mode.mode = VT_PROCESS;
-	mode.relsig = SIGUSR1;
-	mode.acqsig = SIGUSR2;
+	mode.relsig = SIGRTMIN;
+	mode.acqsig = SIGRTMIN + 1;
 	if (ioctl(wl->vt, VT_SETMODE, &mode) < 0) {
 		r = -errno;
 		weston_log("logind: cannot take over VT: %m\n");
@@ -827,20 +840,21 @@ weston_logind_destroy_vt(struct weston_logind *wl)
 WL_EXPORT int
 weston_logind_connect(struct weston_logind **out,
 		      struct weston_compositor *compositor,
-		      const char *seat_id, int tty)
+		      const char *seat_id, int tty, bool sync_drm)
 {
 	struct weston_logind *wl;
 	struct wl_event_loop *loop;
 	char *t;
 	int r;
 
-	wl = calloc(1, sizeof(*wl));
-	if (!wl) {
+	wl = zalloc(sizeof(*wl));
+	if (wl == NULL) {
 		r = -ENOMEM;
 		goto err_out;
 	}
 
 	wl->compositor = compositor;
+	wl->sync_drm = sync_drm;
 
 	wl->seat = strdup(seat_id);
 	if (!wl->seat) {

@@ -37,6 +37,10 @@
 #include "xdg-shell-client-protocol.h"
 #include "fullscreen-shell-client-protocol.h"
 
+#include <sys/types.h>
+#include "ivi-application-client-protocol.h"
+#define IVI_SURFACE_ID 9000
+
 struct display {
 	struct wl_display *display;
 	struct wl_registry *registry;
@@ -45,6 +49,7 @@ struct display {
 	struct _wl_fullscreen_shell *fshell;
 	struct wl_shm *shm;
 	uint32_t formats;
+	struct ivi_application *ivi_application;
 };
 
 struct buffer {
@@ -58,6 +63,7 @@ struct window {
 	int width, height;
 	struct wl_surface *surface;
 	struct xdg_surface *xdg_surface;
+	struct ivi_surface *ivi_surface;
 	struct buffer buffers[2];
 	struct buffer *prev_buffer;
 	struct wl_callback *callback;
@@ -134,6 +140,17 @@ static const struct xdg_surface_listener xdg_surface_listener = {
 	handle_delete,
 };
 
+static void
+handle_ivi_surface_configure(void *data, struct ivi_surface *ivi_surface,
+			     int32_t width, int32_t height)
+{
+	/* Simple-shm is resizable */
+}
+
+static const struct ivi_surface_listener ivi_surface_listener = {
+	handle_ivi_surface_configure,
+};
+
 static struct window *
 create_window(struct display *display, int width, int height)
 {
@@ -160,11 +177,25 @@ create_window(struct display *display, int width, int height)
 					 &xdg_surface_listener, window);
 
 		xdg_surface_set_title(window->xdg_surface, "simple-shm");
+
 	} else if (display->fshell) {
 		_wl_fullscreen_shell_present_surface(display->fshell,
 						     window->surface,
 						     _WL_FULLSCREEN_SHELL_PRESENT_METHOD_DEFAULT,
 						     NULL);
+	} else if (display->ivi_application ) {
+		uint32_t id_ivisurf = IVI_SURFACE_ID + (uint32_t)getpid();
+		window->ivi_surface =
+			ivi_application_surface_create(display->ivi_application,
+						       id_ivisurf, window->surface);
+		if (window->ivi_surface == NULL) {
+			fprintf(stderr, "Failed to create ivi_client_surface\n");
+			abort();
+		}
+
+		ivi_surface_add_listener(window->ivi_surface,
+					 &ivi_surface_listener, window);
+
 	} else {
 		assert(0);
 	}
@@ -350,6 +381,11 @@ registry_handle_global(void *data, struct wl_registry *registry,
 					  id, &wl_shm_interface, 1);
 		wl_shm_add_listener(d->shm, &shm_listener, d);
 	}
+	else if (strcmp(interface, "ivi_application") == 0) {
+		d->ivi_application =
+			wl_registry_bind(registry, id,
+					 &ivi_application_interface, 1);
+	}
 }
 
 static void
@@ -387,6 +423,46 @@ create_display(void)
 	}
 
 	wl_display_roundtrip(display->display);
+
+	/*
+	 * Why do we need two roundtrips here?
+	 *
+	 * wl_display_get_registry() sends a request to the server, to which
+	 * the server replies by emitting the wl_registry.global events.
+	 * The first wl_display_roundtrip() sends wl_display.sync. The server
+	 * first processes the wl_display.get_registry which includes sending
+	 * the global events, and then processes the sync. Therefore when the
+	 * sync (roundtrip) returns, we are guaranteed to have received and
+	 * processed all the global events.
+	 *
+	 * While we are inside the first wl_display_roundtrip(), incoming
+	 * events are dispatched, which causes registry_handle_global() to
+	 * be called for each global. One of these globals is wl_shm.
+	 * registry_handle_global() sends wl_registry.bind request for the
+	 * wl_shm global. However, wl_registry.bind request is sent after
+	 * the first wl_display.sync, so the reply to the sync comes before
+	 * the initial events of the wl_shm object.
+	 *
+	 * The initial events that get sent as a reply to binding to wl_shm
+	 * include wl_shm.format. These tell us which pixel formats are
+	 * supported, and we need them before we can create buffers. They
+	 * don't change at runtime, so we receive them as part of init.
+	 *
+	 * When the reply to the first sync comes, the server may or may not
+	 * have sent the initial wl_shm events. Therefore we need the second
+	 * wl_display_roundtrip() call here.
+	 *
+	 * The server processes the wl_registry.bind for wl_shm first, and
+	 * the second wl_display.sync next. During our second call to
+	 * wl_display_roundtrip() the initial wl_shm events are received and
+	 * processed. Finally, when the reply to the second wl_display.sync
+	 * arrives, it guarantees we have processed all wl_shm initial events.
+	 *
+	 * This sequence contains two examples on how wl_display_roundtrip()
+	 * can be used to guarantee, that all reply events to a request
+	 * have been received and processed. This is a general Wayland
+	 * technique.
+	 */
 
 	if (!(display->formats & (1 << WL_SHM_FORMAT_XRGB8888))) {
 		fprintf(stderr, "WL_SHM_FORMAT_XRGB32 not available\n");
@@ -451,6 +527,12 @@ main(int argc, char **argv)
 		ret = wl_display_dispatch(display->display);
 
 	fprintf(stderr, "simple-shm exiting\n");
+
+	if (window->display->ivi_application) {
+		ivi_surface_destroy(window->ivi_surface);
+		ivi_application_destroy(window->display->ivi_application);
+	}
+
 	destroy_window(window);
 	destroy_display(display);
 

@@ -20,7 +20,7 @@
  * OF THIS SOFTWARE.
  */
 
-#include <config.h>
+#include "config.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -31,17 +31,6 @@
 
 #include "../shared/os-compatibility.h"
 #include "weston-test-client-helper.h"
-
-static inline void *
-xzalloc(size_t size)
-{
-	void *p;
-
-	p = calloc(1, size);
-	assert(p);
-
-	return p;
-}
 
 int
 surface_contains(struct surface *surface, int x, int y)
@@ -101,7 +90,7 @@ move_client(struct client *client, int x, int y)
 	client->surface->y = y;
 	wl_test_move_surface(client->test->wl_test, surface->wl_surface,
 			     surface->x, surface->y);
-	/* The attach here is necessary because commit() will call congfigure
+	/* The attach here is necessary because commit() will call configure
 	 * only on surfaces newly attached, and the one that sets the surface
 	 * position is the configure. */
 	wl_surface_attach(surface->wl_surface, surface->wl_buffer, 0, 0);
@@ -493,6 +482,8 @@ handle_global(void *data, struct wl_registry *registry,
 					 &wl_test_interface, 1);
 		wl_test_add_listener(test->wl_test, &test_listener, test);
 		client->test = test;
+	} else if (strcmp(interface, "wl_drm") == 0) {
+		client->has_wl_drm = true;
 	}
 }
 
