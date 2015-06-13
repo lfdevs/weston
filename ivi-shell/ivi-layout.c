@@ -464,6 +464,11 @@ init_surface_properties(struct ivi_layout_surface_properties *prop)
 {
 	memset(prop, 0, sizeof *prop);
 	prop->opacity = wl_fixed_from_double(1.0);
+	/*
+	 * FIXME: this shall be finxed by ivi-layout-transition.
+	 */
+	prop->dest_width = 1;
+	prop->dest_height = 1;
 }
 
 /**
@@ -719,9 +724,14 @@ update_scale(struct ivi_layout_layer *ivilayer,
 		return;
 	}
 
-	if (ivisurf->prop.dest_width == 0 && ivisurf->prop.dest_height == 0) {
-		ivisurf->prop.dest_width  = ivisurf->surface->width_from_buffer;
-		ivisurf->prop.dest_height = ivisurf->surface->height_from_buffer;
+	if (ivisurf->prop.source_width == 0 || ivisurf->prop.source_height == 0) {
+		weston_log("ivi-shell: source rectangle is not yet set by ivi_layout_surface_set_source_rectangle\n");
+		return;
+	}
+
+	if (ivisurf->prop.dest_width == 0 || ivisurf->prop.dest_height == 0) {
+		weston_log("ivi-shell: destination rectangle is not yet set by ivi_layout_surface_set_destination_rectangle\n");
+		return;
 	}
 
 	lw = ((float)ivilayer->prop.dest_width  / (float)ivilayer->prop.source_width );
@@ -2459,6 +2469,34 @@ ivi_layout_surface_get_weston_surface(struct ivi_layout_surface *ivisurf)
 }
 
 static int32_t
+ivi_layout_surface_get_size(struct ivi_layout_surface *ivisurf,
+			    int32_t *width, int32_t *height,
+			    int32_t *stride)
+{
+	int32_t w;
+	int32_t h;
+	const size_t bytespp = 4; /* PIXMAN_a8b8g8r8 */
+
+	if (ivisurf == NULL || ivisurf->surface == NULL) {
+		weston_log("%s: invalid argument\n", __func__);
+		return IVI_FAILED;
+	}
+
+	weston_surface_get_content_size(ivisurf->surface, &w, &h);
+
+	if (width != NULL)
+		*width = w;
+
+	if (height != NULL)
+		*height = h;
+
+	if (stride != NULL)
+		*stride = w * bytespp;
+
+	return IVI_SUCCEEDED;
+}
+
+static int32_t
 ivi_layout_layer_add_notification(struct ivi_layout_layer *ivilayer,
 				  layer_property_notification_func callback,
 				  void *userdata)
@@ -2666,6 +2704,25 @@ ivi_layout_surface_set_transition(struct ivi_layout_surface *ivisurf,
 	return 0;
 }
 
+static int32_t
+ivi_layout_surface_dump(struct weston_surface *surface,
+			void *target, size_t size,int32_t x, int32_t y,
+			int32_t width, int32_t height)
+{
+	int result = 0;
+
+	if (surface == NULL) {
+		weston_log("%s: invalid argument\n", __func__);
+		return IVI_FAILED;
+	}
+
+	result = weston_surface_copy_content(
+		surface, target, size,
+		x, y, width, height);
+
+	return result == 0 ? IVI_SUCCEEDED : IVI_FAILED;
+}
+
 /**
  * methods of interaction between ivi-shell with ivi-layout
  */
@@ -2691,29 +2748,10 @@ ivi_layout_surface_configure(struct ivi_layout_surface *ivisurf,
 			     int32_t width, int32_t height)
 {
 	struct ivi_layout *layout = get_instance();
-	int32_t in_init = 0;
-	ivisurf->surface->width_from_buffer  = width;
-	ivisurf->surface->height_from_buffer = height;
 
-	if (ivisurf->prop.source_width == 0 || ivisurf->prop.source_height == 0) {
-		in_init = 1;
-	}
-
-	/* FIXME: when sourceHeight/Width is used as clipping range in image buffer */
-	/* if (ivisurf->prop.sourceWidth == 0 || ivisurf->prop.sourceHeight == 0) { */
-		ivisurf->pending.prop.source_width = width;
-		ivisurf->pending.prop.source_height = height;
-		ivisurf->prop.source_width = width;
-		ivisurf->prop.source_height = height;
-	/* } */
-
-	ivisurf->event_mask |= IVI_NOTIFICATION_CONFIGURE;
-
-	if (in_init) {
-		wl_signal_emit(&layout->surface_notification.configure_changed, ivisurf);
-	} else {
-		ivi_layout_commit_changes();
-	}
+	/* emit callback which is set by ivi-layout api user */
+	wl_signal_emit(&layout->surface_notification.configure_changed,
+		       ivisurf);
 }
 
 static int32_t
@@ -2930,7 +2968,13 @@ static struct ivi_controller_interface ivi_controller_interface = {
 	 * animation
 	 */
 	.transition_move_layer_cancel	= ivi_layout_transition_move_layer_cancel,
-	.layer_set_fade_info		= ivi_layout_layer_set_fade_info
+	.layer_set_fade_info		= ivi_layout_layer_set_fade_info,
+
+	/**
+	 * surface content dumping for debugging
+	 */
+	.surface_get_size		= ivi_layout_surface_get_size,
+	.surface_dump			= ivi_layout_surface_dump,
 };
 
 int
@@ -2953,12 +2997,14 @@ load_controller_modules(struct weston_compositor *compositor, const char *module
 		snprintf(buffer, sizeof buffer, "%.*s", (int)(end - p), p);
 
 		controller_module_init = weston_load_module(buffer, "controller_module_init");
-		if (controller_module_init)
-			if(controller_module_init(compositor, argc, argv,
-					       &ivi_controller_interface,
-					       sizeof(struct ivi_controller_interface)) != 0) {
-				weston_log("ivi-shell: Initialization of controller module fails");
-				return -1;
+		if (!controller_module_init)
+			return -1;
+
+		if (controller_module_init(compositor, argc, argv,
+					   &ivi_controller_interface,
+				sizeof(struct ivi_controller_interface)) != 0) {
+			weston_log("ivi-shell: Initialization of controller module fails");
+			return -1;
 		}
 
 		p = end;

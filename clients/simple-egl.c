@@ -46,6 +46,8 @@
 #include "protocol/ivi-application-client-protocol.h"
 #define IVI_SURFACE_ID 9000
 
+#include "../shared/platform.h"
+
 #ifndef EGL_EXT_swap_buffers_with_damage
 #define EGL_EXT_swap_buffers_with_damage 1
 typedef EGLBoolean (EGLAPIENTRYP PFNEGLSWAPBUFFERSWITHDAMAGEEXTPROC)(EGLDisplay dpy, EGLSurface surface, EGLint *rects, EGLint n_rects);
@@ -151,7 +153,9 @@ init_egl(struct display *display, struct window *window)
 	if (window->opaque || window->buffer_size == 16)
 		config_attribs[9] = 0;
 
-	display->egl.dpy = eglGetDisplay(display->display);
+	display->egl.dpy =
+		weston_platform_get_egl_display(EGL_PLATFORM_WAYLAND_KHR,
+						display->display, NULL);
 	assert(display->egl.dpy);
 
 	ret = eglInitialize(display->egl.dpy, &major, &minor);
@@ -382,9 +386,10 @@ create_surface(struct window *window)
 				     window->geometry.width,
 				     window->geometry.height);
 	window->egl_surface =
-		eglCreateWindowSurface(display->egl.dpy,
-				       display->egl.conf,
-				       window->native, NULL);
+		weston_platform_create_egl_surface(display->egl.dpy,
+						   display->egl.conf,
+						   window->native, NULL);
+
 
 	if (display->shell) {
 		create_xdg_surface(window, display);
@@ -741,7 +746,7 @@ static const struct xdg_shell_listener xdg_shell_listener = {
 	xdg_shell_ping,
 };
 
-#define XDG_VERSION 4 /* The version of xdg-shell that we implement */
+#define XDG_VERSION 5 /* The version of xdg-shell that we implement */
 #ifdef static_assert
 static_assert(XDG_VERSION == XDG_SHELL_VERSION_CURRENT,
 	      "Interface version doesn't match implementation version");

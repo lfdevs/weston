@@ -58,7 +58,7 @@ headless_output_start_repaint_loop(struct weston_output *output)
 {
 	struct timespec ts;
 
-	clock_gettime(output->compositor->presentation_clock, &ts);
+	weston_compositor_read_presentation_clock(output->compositor, &ts);
 	weston_output_finish_frame(output, &ts, PRESENTATION_FEEDBACK_INVALID);
 }
 
@@ -68,7 +68,7 @@ finish_frame_handler(void *data)
 	struct headless_output *output = data;
 	struct timespec ts;
 
-	clock_gettime(output->base.compositor->presentation_clock, &ts);
+	weston_compositor_read_presentation_clock(output->base.compositor, &ts);
 	weston_output_finish_frame(&output->base, &ts, 0);
 
 	return 1;
@@ -128,7 +128,7 @@ headless_compositor_create_output(struct headless_compositor *c,
 		WL_OUTPUT_MODE_CURRENT | WL_OUTPUT_MODE_PREFERRED;
 	output->mode.width = param->width;
 	output->mode.height = param->height;
-	output->mode.refresh = 60;
+	output->mode.refresh = 60000;
 	wl_list_init(&output->base.mode_list);
 	wl_list_insert(&output->base.mode_list, &output->mode.link);
 
@@ -169,7 +169,7 @@ headless_compositor_create_output(struct headless_compositor *c,
 						  output->image);
 	}
 
-	wl_list_insert(c->base.output_list.prev, &output->base.link);
+	weston_compositor_add_output(&c->base, &output->base);
 
 	return 0;
 }

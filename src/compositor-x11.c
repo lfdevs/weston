@@ -346,7 +346,7 @@ x11_output_start_repaint_loop(struct weston_output *output)
 {
 	struct timespec ts;
 
-	clock_gettime(output->compositor->presentation_clock, &ts);
+	weston_compositor_read_presentation_clock(output->compositor, &ts);
 	weston_output_finish_frame(output, &ts, PRESENTATION_FEEDBACK_INVALID);
 }
 
@@ -458,7 +458,7 @@ finish_frame_handler(void *data)
 	struct x11_output *output = data;
 	struct timespec ts;
 
-	clock_gettime(output->base.compositor->presentation_clock, &ts);
+	weston_compositor_read_presentation_clock(output->base.compositor, &ts);
 	weston_output_finish_frame(&output->base, &ts, 0);
 
 	return 1;
@@ -898,10 +898,16 @@ x11_compositor_create_output(struct x11_compositor *c, int x, int y,
 			return NULL;
 		}
 	} else {
+		/* eglCreatePlatformWindowSurfaceEXT takes a Window*
+		 * but eglCreateWindowSurface takes a Window. */
+		Window xid = (Window) output->window;
+
 		ret = gl_renderer->output_create(&output->base,
 						 (EGLNativeWindowType) output->window,
+						 &xid,
 						 gl_renderer->opaque_attribs,
-						 NULL);
+						 NULL,
+						 0);
 		if (ret < 0)
 			return NULL;
 	}
@@ -910,7 +916,7 @@ x11_compositor_create_output(struct x11_compositor *c, int x, int y,
 	output->finish_frame_timer =
 		wl_event_loop_add_timer(loop, finish_frame_handler, output);
 
-	wl_list_insert(c->base.output_list.prev, &output->base.link);
+	weston_compositor_add_output(&c->base, &output->base);
 
 	weston_log("x11 output %dx%d, window id %d\n",
 		   width, height, output->window);
@@ -1454,6 +1460,8 @@ x11_compositor_get_wm_info(struct x11_compositor *c)
 		if (atom[i] == c->atom.net_wm_state_fullscreen)
 			c->has_net_wm_state_fullscreen = 1;
 	}
+
+	free(reply);
 }
 
 static void
@@ -1485,8 +1493,8 @@ init_gl_renderer(struct x11_compositor *c)
 	if (!gl_renderer)
 		return -1;
 
-	ret = gl_renderer->create(&c->base, (EGLNativeDisplayType) c->dpy,
-				  gl_renderer->opaque_attribs, NULL);
+	ret = gl_renderer->create(&c->base, EGL_PLATFORM_X11_KHR, (void *) c->dpy,
+				  gl_renderer->opaque_attribs, NULL, 0);
 
 	return ret;
 }

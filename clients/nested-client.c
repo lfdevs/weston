@@ -32,6 +32,8 @@
 #include <GLES2/gl2.h>
 #include <EGL/egl.h>
 
+#include "../shared/platform.h"
+
 struct window;
 struct seat;
 
@@ -277,7 +279,9 @@ nested_client_create(void)
 	/* get globals */
 	wl_display_roundtrip(client->display);
 
-	client->egl_display = eglGetDisplay(client->display);
+	client->egl_display =
+		weston_platform_get_egl_display(EGL_PLATFORM_WAYLAND_KHR,
+						client->display, NULL);
 	if (client->egl_display == NULL)
 		return NULL;
 
@@ -305,10 +309,9 @@ nested_client_create(void)
 	client->native = wl_egl_window_create(client->surface,
 					      client->width, client->height);
 
-	client->egl_surface =
-		eglCreateWindowSurface(client->egl_display,
-				       client->egl_config,
-				       client->native, NULL);
+	client->egl_surface = weston_platform_create_egl_surface(client->egl_display,
+								 client->egl_config,
+								 client->native, NULL);
 
 	eglMakeCurrent(client->egl_display, client->egl_surface,
 		       client->egl_surface, client->egl_context);

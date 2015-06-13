@@ -94,6 +94,10 @@ struct motif_wm_hints {
 #define MWM_DECOR_MINIMIZE      (1L << 5)
 #define MWM_DECOR_MAXIMIZE      (1L << 6)
 
+#define MWM_DECOR_EVERYTHING \
+	(MWM_DECOR_BORDER | MWM_DECOR_RESIZEH | MWM_DECOR_TITLE | \
+	 MWM_DECOR_MENU | MWM_DECOR_MINIMIZE | MWM_DECOR_MAXIMIZE)
+
 #define MWM_INPUT_MODELESS 0
 #define MWM_INPUT_PRIMARY_APPLICATION_MODAL 1
 #define MWM_INPUT_SYSTEM_MODAL 2
@@ -195,6 +199,15 @@ wm_log_continue(const char *fmt, ...)
 #endif
 }
 
+static bool __attribute__ ((warn_unused_result))
+wm_lookup_window(struct weston_wm *wm, xcb_window_t hash,
+		 struct weston_wm_window **window)
+{
+	*window = hash_table_lookup(wm->window_hash, hash);
+	if (*window)
+		return true;
+	return false;
+}
 
 const char *
 get_atom_name(xcb_connection_t *c, xcb_atom_t atom)
@@ -403,6 +416,7 @@ weston_wm_window_read_properties(struct weston_wm_window *window)
 	uint32_t *xid;
 	xcb_atom_t *atom;
 	uint32_t i;
+	char name[1024];
 
 	if (!window->properties_dirty)
 		return;
@@ -415,7 +429,7 @@ weston_wm_window_read_properties(struct weston_wm_window *window)
 					     props[i].atom,
 					     XCB_ATOM_ANY, 0, 2048);
 
-	window->decorate = !window->override_redirect;
+	window->decorate = window->override_redirect ? 0 : MWM_DECOR_EVERYTHING;
 	window->size_hints.flags = 0;
 	window->motif_hints.flags = 0;
 	window->delete_window = 0;
@@ -447,8 +461,9 @@ weston_wm_window_read_properties(struct weston_wm_window *window)
 			break;
 		case XCB_ATOM_WINDOW:
 			xid = xcb_get_property_value(reply);
-			*(struct weston_wm_window **) p =
-				hash_table_lookup(wm->window_hash, *xid);
+			if (!wm_lookup_window(wm, *xid, p))
+				weston_log("XCB_ATOM_WINDOW contains window"
+					   " id not found in hash table.\n");
 			break;
 		case XCB_ATOM_CARDINAL:
 		case XCB_ATOM_ATOM:
@@ -458,10 +473,10 @@ weston_wm_window_read_properties(struct weston_wm_window *window)
 		case TYPE_WM_PROTOCOLS:
 			atom = xcb_get_property_value(reply);
 			for (i = 0; i < reply->value_len; i++)
-				if (atom[i] == wm->atom.wm_delete_window)
+				if (atom[i] == wm->atom.wm_delete_window) {
 					window->delete_window = 1;
-			break;
-
+					break;
+				}
 			break;
 		case TYPE_WM_NORMAL_HINTS:
 			memcpy(&window->size_hints,
@@ -471,21 +486,28 @@ weston_wm_window_read_properties(struct weston_wm_window *window)
 		case TYPE_NET_WM_STATE:
 			window->fullscreen = 0;
 			atom = xcb_get_property_value(reply);
-			for (i = 0; i < reply->value_len; i++)
+			for (i = 0; i < reply->value_len; i++) {
 				if (atom[i] == wm->atom.net_wm_state_fullscreen)
 					window->fullscreen = 1;
 				if (atom[i] == wm->atom.net_wm_state_maximized_vert)
 					window->maximized_vert = 1;
 				if (atom[i] == wm->atom.net_wm_state_maximized_horz)
 					window->maximized_horz = 1;
+			}
 			break;
 		case TYPE_MOTIF_WM_HINTS:
 			memcpy(&window->motif_hints,
 			       xcb_get_property_value(reply),
 			       sizeof window->motif_hints);
-			if (window->motif_hints.flags & MWM_HINTS_DECORATIONS)
-				window->decorate =
-					window->motif_hints.decorations;
+			if (window->motif_hints.flags & MWM_HINTS_DECORATIONS) {
+				if (window->motif_hints.decorations & MWM_DECOR_ALL)
+					/* MWM_DECOR_ALL means all except the other values listed. */
+					window->decorate =
+						MWM_DECOR_EVERYTHING & (~window->motif_hints.decorations);
+				else
+					window->decorate =
+						window->motif_hints.decorations;
+			}
 			break;
 		default:
 			break;
@@ -493,10 +515,28 @@ weston_wm_window_read_properties(struct weston_wm_window *window)
 		free(reply);
 	}
 
+	if (window->pid > 0) {
+		gethostname(name, sizeof(name));
+		for (i = 0; i < sizeof(name); i++) {
+			if (name[i] == '\0')
+				break;
+		}
+		if (i == sizeof(name))
+			name[0] = '\0'; /* ignore stupid hostnames */
+
+		/* this is only one heuristic to guess the PID of a client is
+		* valid, assuming it's compliant with icccm and ewmh.
+		* Non-compliants and remote applications of course fail. */
+		if (!window->machine || strcmp(window->machine, name))
+			window->pid = 0;
+	}
+
 	if (window->shsurf && window->name)
 		shell_interface->set_title(window->shsurf, window->name);
 	if (window->frame && window->name)
 		frame_set_title(window->frame, window->name);
+	if (window->shsurf && window->pid > 0)
+		shell_interface->set_pid(window->shsurf, window->pid);
 }
 
 static void
@@ -574,7 +614,8 @@ weston_wm_handle_configure_request(struct weston_wm *wm, xcb_generic_event_t *ev
 	       configure_request->x, configure_request->y,
 	       configure_request->width, configure_request->height);
 
-	window = hash_table_lookup(wm->window_hash, configure_request->window);
+	if (!wm_lookup_window(wm, configure_request->window, &window))
+		return;
 
 	if (window->fullscreen) {
 		weston_wm_window_send_configure_notify(window);
@@ -640,7 +681,9 @@ weston_wm_handle_configure_notify(struct weston_wm *wm, xcb_generic_event_t *eve
 	       configure_notify->x, configure_notify->y,
 	       configure_notify->width, configure_notify->height);
 
-	window = hash_table_lookup(wm->window_hash, configure_notify->window);
+	if (!wm_lookup_window(wm, configure_notify->window, &window))
+		return;
+
 	window->x = configure_notify->x;
 	window->y = configure_notify->y;
 	if (window->override_redirect) {
@@ -657,17 +700,10 @@ weston_wm_kill_client(struct wl_listener *listener, void *data)
 {
 	struct weston_surface *surface = data;
 	struct weston_wm_window *window = get_wm_window(surface);
-	char name[1024];
-
 	if (!window)
 		return;
 
-	gethostname(name, 1024);
-
-	/* this is only one heuristic to guess the PID of a client is valid,
-	 * assuming it's compliant with icccm and ewmh. Non-compliants and
-	 * remote applications of course fail. */
-	if (!strcmp(window->machine, name) && window->pid != 0)
+	if (window->pid > 0)
 		kill(window->pid, SIGKILL);
 }
 
@@ -707,6 +743,8 @@ weston_wm_window_activate(struct wl_listener *listener, void *data)
 	}
 
 	if (window) {
+		uint32_t values[1];
+
 		if (window->override_redirect)
 			return;
 
@@ -723,6 +761,10 @@ weston_wm_window_activate(struct wl_listener *listener, void *data)
 
 		xcb_set_input_focus (wm->conn, XCB_INPUT_FOCUS_POINTER_ROOT,
 				     window->id, XCB_TIME_CURRENT_TIME);
+
+		values[0] = XCB_STACK_MODE_ABOVE;
+		xcb_configure_window (wm->conn, window->frame_id,
+				      XCB_CONFIG_WINDOW_STACK_MODE, values);
 	} else {
 		xcb_set_input_focus (wm->conn,
 				     XCB_INPUT_FOCUS_POINTER_ROOT,
@@ -913,7 +955,8 @@ weston_wm_handle_map_request(struct weston_wm *wm, xcb_generic_event_t *event)
 		return;
 	}
 
-	window = hash_table_lookup(wm->window_hash, map_request->window);
+	if (!wm_lookup_window(wm, map_request->window, &window))
+		return;
 
 	weston_wm_window_read_properties(window);
 
@@ -965,7 +1008,17 @@ weston_wm_handle_unmap_notify(struct weston_wm *wm, xcb_generic_event_t *event)
 		 * as it may come in after we've destroyed the window. */
 		return;
 
-	window = hash_table_lookup(wm->window_hash, unmap_notify->window);
+	if (!wm_lookup_window(wm, unmap_notify->window, &window))
+		return;
+
+	if (window->surface_id) {
+		/* Make sure we're not on the unpaired surface list or we
+		 * could be assigned a surface during surface creation that
+		 * was mapped before this unmap request.
+		 */
+		wl_list_remove(&window->link);
+		window->surface_id = 0;
+	}
 	if (wm->focus_window == window)
 		wm->focus_window = NULL;
 	if (window->surface)
@@ -1038,14 +1091,14 @@ weston_wm_window_draw_decoration(void *data)
 
 		pixman_region32_fini(&window->surface->pending.input);
 
-		if (window->fullscreen) {
-			input_x = 0;
-			input_y = 0;
-			input_w = window->width;
-			input_h = window->height;
-		} else if (window->decorate) {
+		if (window->decorate && !window->fullscreen) {
 			frame_input_rect(window->frame, &input_x, &input_y,
 					 &input_w, &input_h);
+		} else {
+			input_x = x;
+			input_y = y;
+			input_w = width;
+			input_h = height;
 		}
 
 		pixman_region32_init_rect(&window->surface->pending.input,
@@ -1094,8 +1147,7 @@ weston_wm_handle_property_notify(struct weston_wm *wm, xcb_generic_event_t *even
 		(xcb_property_notify_event_t *) event;
 	struct weston_wm_window *window;
 
-	window = hash_table_lookup(wm->window_hash, property_notify->window);
-	if (!window)
+	if (!wm_lookup_window(wm, property_notify->window, &window))
 		return;
 
 	window->properties_dirty = 1;
@@ -1173,6 +1225,9 @@ weston_wm_window_destroy(struct weston_wm_window *window)
 	if (window->surface_id)
 		wl_list_remove(&window->link);
 
+	if (window->surface)
+		wl_list_remove(&window->surface_destroy_listener.link);
+
 	hash_table_remove(window->wm->window_hash, window->id);
 	free(window);
 }
@@ -1213,7 +1268,9 @@ weston_wm_handle_destroy_notify(struct weston_wm *wm, xcb_generic_event_t *event
 	if (our_resource(wm, destroy_notify->window))
 		return;
 
-	window = hash_table_lookup(wm->window_hash, destroy_notify->window);
+	if (!wm_lookup_window(wm, destroy_notify->window, &window))
+		return;
+
 	weston_wm_window_destroy(window);
 }
 
@@ -1234,8 +1291,8 @@ weston_wm_handle_reparent_notify(struct weston_wm *wm, xcb_generic_event_t *even
 					reparent_notify->x, reparent_notify->y,
 					reparent_notify->override_redirect);
 	} else if (!our_resource(wm, reparent_notify->parent)) {
-		window = hash_table_lookup(wm->window_hash,
-					   reparent_notify->window);
+		if (!wm_lookup_window(wm, reparent_notify->window, &window))
+			return;
 		weston_wm_window_destroy(window);
 	}
 }
@@ -1473,8 +1530,6 @@ weston_wm_handle_client_message(struct weston_wm *wm,
 		(xcb_client_message_event_t *) event;
 	struct weston_wm_window *window;
 
-	window = hash_table_lookup(wm->window_hash, client_message->window);
-
 	wm_log("XCB_CLIENT_MESSAGE (%s %d %d %d %d %d win %d)\n",
 	       get_atom_name(wm->conn, client_message->type),
 	       client_message->data.data32[0],
@@ -1487,7 +1542,7 @@ weston_wm_handle_client_message(struct weston_wm *wm,
 	/* The window may get created and destroyed before we actually
 	 * handle the message.  If it doesn't exist, bail.
 	 */
-	if (!window)
+	if (!wm_lookup_window(wm, client_message->window, &window))
 		return;
 
 	if (client_message->type == wm->atom.net_wm_moveresize)
@@ -1703,8 +1758,8 @@ weston_wm_handle_button(struct weston_wm *wm, xcb_generic_event_t *event)
 	       button->response_type == XCB_BUTTON_PRESS ?
 	       "PRESS" : "RELEASE", button->detail);
 
-	window = hash_table_lookup(wm->window_hash, button->event);
-	if (!window || !window->decorate)
+	if (!wm_lookup_window(wm, button->event, &window) ||
+	    !window->decorate)
 		return;
 
 	if (button->detail != 1 && button->detail != 2)
@@ -1767,8 +1822,8 @@ weston_wm_handle_motion(struct weston_wm *wm, xcb_generic_event_t *event)
 	enum theme_location location;
 	int cursor;
 
-	window = hash_table_lookup(wm->window_hash, motion->event);
-	if (!window || !window->decorate)
+	if (!wm_lookup_window(wm, motion->event, &window) ||
+	    !window->decorate)
 		return;
 
 	location = frame_pointer_motion(window->frame, NULL,
@@ -1788,8 +1843,8 @@ weston_wm_handle_enter(struct weston_wm *wm, xcb_generic_event_t *event)
 	enum theme_location location;
 	int cursor;
 
-	window = hash_table_lookup(wm->window_hash, enter->event);
-	if (!window || !window->decorate)
+	if (!wm_lookup_window(wm, enter->event, &window) ||
+	    !window->decorate)
 		return;
 
 	location = frame_pointer_enter(window->frame, NULL,
@@ -1807,8 +1862,8 @@ weston_wm_handle_leave(struct weston_wm *wm, xcb_generic_event_t *event)
 	xcb_leave_notify_event_t *leave = (xcb_leave_notify_event_t *) event;
 	struct weston_wm_window *window;
 
-	window = hash_table_lookup(wm->window_hash, leave->event);
-	if (!window || !window->decorate)
+	if (!wm_lookup_window(wm, leave->event, &window) ||
+	    !window->decorate)
 		return;
 
 	frame_pointer_leave(window->frame, NULL);
@@ -2378,7 +2433,8 @@ weston_wm_window_type_inactive(struct weston_wm_window *window)
 	       window->type == wm->atom.net_wm_window_type_dropdown ||
 	       window->type == wm->atom.net_wm_window_type_dnd ||
 	       window->type == wm->atom.net_wm_window_type_combo ||
-	       window->type == wm->atom.net_wm_window_type_popup;
+	       window->type == wm->atom.net_wm_window_type_popup ||
+	       window->type == wm->atom.net_wm_window_type_utility;
 }
 
 static void
@@ -2429,6 +2485,8 @@ xserver_map_shell_surface(struct weston_wm_window *window,
 
 	if (window->name)
 		shell_interface->set_title(window->shsurf, window->name);
+	if (window->pid > 0)
+		shell_interface->set_pid(window->shsurf, window->pid);
 
 	if (window->fullscreen) {
 		window->saved_width = window->width;

@@ -26,9 +26,10 @@
 #include <assert.h>
 #include <signal.h>
 #include <unistd.h>
+#include <string.h>
 
 #include "../src/compositor.h"
-#include "wayland-test-server-protocol.h"
+#include "weston-test-server-protocol.h"
 
 #ifdef ENABLE_EGL
 #include <EGL/egl.h>
@@ -40,6 +41,7 @@ struct weston_test {
 	struct weston_compositor *compositor;
 	struct weston_layer layer;
 	struct weston_process process;
+	struct weston_seat seat;
 };
 
 struct weston_test_surface {
@@ -69,14 +71,7 @@ test_client_sigchld(struct weston_process *process, int status)
 static struct weston_seat *
 get_seat(struct weston_test *test)
 {
-	struct wl_list *seat_list;
-	struct weston_seat *seat;
-
-	seat_list = &test->compositor->seat_list;
-	assert(wl_list_length(seat_list) == 1);
-	seat = container_of(seat_list->next, struct weston_seat, link);
-
-	return seat;
+	return &test->seat;
 }
 
 static void
@@ -85,7 +80,7 @@ notify_pointer_position(struct weston_test *test, struct wl_resource *resource)
 	struct weston_seat *seat = get_seat(test);
 	struct weston_pointer *pointer = seat->pointer;
 
-	wl_test_send_pointer_position(resource, pointer->x, pointer->y);
+	weston_test_send_pointer_position(resource, pointer->x, pointer->y);
 }
 
 static void
@@ -195,6 +190,44 @@ send_key(struct wl_client *client, struct wl_resource *resource,
 	notify_key(seat, 100, key, state, STATE_UPDATE_AUTOMATIC);
 }
 
+static void
+device_release(struct wl_client *client,
+	       struct wl_resource *resource, const char *device)
+{
+	struct weston_test *test = wl_resource_get_user_data(resource);
+	struct weston_seat *seat = get_seat(test);
+
+	if (strcmp(device, "pointer") == 0) {
+		weston_seat_release_pointer(seat);
+	} else if (strcmp(device, "keyboard") == 0) {
+		weston_seat_release_keyboard(seat);
+	} else if (strcmp(device, "touch") == 0) {
+		weston_seat_release_touch(seat);
+	} else if (strcmp(device, "seat") == 0) {
+		weston_seat_release(seat);
+	} else {
+		assert(0 && "Unsupported device");
+	}
+}
+
+static void
+device_add(struct wl_client *client,
+	   struct wl_resource *resource, const char *device)
+{
+	struct weston_test *test = wl_resource_get_user_data(resource);
+	struct weston_seat *seat = get_seat(test);
+
+	if (strcmp(device, "pointer") == 0) {
+		weston_seat_init_pointer(seat);
+	} else if (strcmp(device, "keyboard") == 0) {
+		weston_seat_init_keyboard(seat, NULL);
+	} else if (strcmp(device, "touch") == 0) {
+		weston_seat_init_touch(seat);
+	} else {
+		assert(0 && "Unsupported device");
+	}
+}
+
 #ifdef ENABLE_EGL
 static int
 is_egl_buffer(struct wl_resource *resource)
@@ -233,16 +266,261 @@ get_n_buffers(struct wl_client *client, struct wl_resource *resource)
 	}
 #endif /* ENABLE_EGL */
 
-	wl_test_send_n_egl_buffers(resource, n_buffers);
+	weston_test_send_n_egl_buffers(resource, n_buffers);
 }
 
-static const struct wl_test_interface test_implementation = {
+enum weston_test_screenshot_outcome {
+	WESTON_TEST_SCREENSHOT_SUCCESS,
+	WESTON_TEST_SCREENSHOT_NO_MEMORY,
+	WESTON_TEST_SCREENSHOT_BAD_BUFFER
+	};
+
+typedef void (*weston_test_screenshot_done_func_t)(void *data,
+						   enum weston_test_screenshot_outcome outcome);
+
+struct test_screenshot {
+	struct weston_compositor *compositor;
+	struct wl_global *global;
+	struct wl_client *client;
+	struct weston_process process;
+	struct wl_listener destroy_listener;
+};
+
+struct test_screenshot_frame_listener {
+	struct wl_listener listener;
+	struct weston_buffer *buffer;
+	weston_test_screenshot_done_func_t done;
+	void *data;
+};
+
+static void
+copy_bgra_yflip(uint8_t *dst, uint8_t *src, int height, int stride)
+{
+	uint8_t *end;
+
+	end = dst + height * stride;
+	while (dst < end) {
+		memcpy(dst, src, stride);
+		dst += stride;
+		src -= stride;
+	}
+}
+
+
+static void
+copy_bgra(uint8_t *dst, uint8_t *src, int height, int stride)
+{
+	/* TODO: optimize this out */
+	memcpy(dst, src, height * stride);
+}
+
+static void
+copy_row_swap_RB(void *vdst, void *vsrc, int bytes)
+{
+	uint32_t *dst = vdst;
+	uint32_t *src = vsrc;
+	uint32_t *end = dst + bytes / 4;
+
+	while (dst < end) {
+		uint32_t v = *src++;
+		/*                    A R G B */
+		uint32_t tmp = v & 0xff00ff00;
+		tmp |= (v >> 16) & 0x000000ff;
+		tmp |= (v << 16) & 0x00ff0000;
+		*dst++ = tmp;
+	}
+}
+
+static void
+copy_rgba_yflip(uint8_t *dst, uint8_t *src, int height, int stride)
+{
+	uint8_t *end;
+
+	end = dst + height * stride;
+	while (dst < end) {
+		copy_row_swap_RB(dst, src, stride);
+		dst += stride;
+		src -= stride;
+	}
+}
+
+static void
+copy_rgba(uint8_t *dst, uint8_t *src, int height, int stride)
+{
+	uint8_t *end;
+
+	end = dst + height * stride;
+	while (dst < end) {
+		copy_row_swap_RB(dst, src, stride);
+		dst += stride;
+		src += stride;
+	}
+}
+
+static void
+test_screenshot_frame_notify(struct wl_listener *listener, void *data)
+{
+	struct test_screenshot_frame_listener *l =
+		container_of(listener,
+			     struct test_screenshot_frame_listener, listener);
+	struct weston_output *output = data;
+	struct weston_compositor *compositor = output->compositor;
+	int32_t stride;
+	uint8_t *pixels, *d, *s;
+
+	output->disable_planes--;
+	wl_list_remove(&listener->link);
+	stride = l->buffer->width * (PIXMAN_FORMAT_BPP(compositor->read_format) / 8);
+	pixels = malloc(stride * l->buffer->height);
+
+	if (pixels == NULL) {
+		l->done(l->data, WESTON_TEST_SCREENSHOT_NO_MEMORY);
+		free(l);
+		return;
+	}
+
+	// FIXME: Needs to handle output transformations
+
+	compositor->renderer->read_pixels(output,
+					  compositor->read_format,
+					  pixels,
+					  0, 0,
+					  output->current_mode->width,
+					  output->current_mode->height);
+
+	stride = wl_shm_buffer_get_stride(l->buffer->shm_buffer);
+
+	d = wl_shm_buffer_get_data(l->buffer->shm_buffer);
+	s = pixels + stride * (l->buffer->height - 1);
+
+	wl_shm_buffer_begin_access(l->buffer->shm_buffer);
+
+	/* XXX: It would be nice if we used Pixman to do all this rather
+	 *  than our own implementation
+	 */
+	switch (compositor->read_format) {
+	case PIXMAN_a8r8g8b8:
+	case PIXMAN_x8r8g8b8:
+		if (compositor->capabilities & WESTON_CAP_CAPTURE_YFLIP)
+			copy_bgra_yflip(d, s, output->current_mode->height, stride);
+		else
+			copy_bgra(d, pixels, output->current_mode->height, stride);
+		break;
+	case PIXMAN_x8b8g8r8:
+	case PIXMAN_a8b8g8r8:
+		if (compositor->capabilities & WESTON_CAP_CAPTURE_YFLIP)
+			copy_rgba_yflip(d, s, output->current_mode->height, stride);
+		else
+			copy_rgba(d, pixels, output->current_mode->height, stride);
+		break;
+	default:
+		break;
+	}
+
+	wl_shm_buffer_end_access(l->buffer->shm_buffer);
+
+	l->done(l->data, WESTON_TEST_SCREENSHOT_SUCCESS);
+	free(pixels);
+	free(l);
+}
+
+static bool
+weston_test_screenshot_shoot(struct weston_output *output,
+			     struct weston_buffer *buffer,
+			     weston_test_screenshot_done_func_t done,
+			     void *data)
+{
+	struct test_screenshot_frame_listener *l;
+
+	/* Get the shm buffer resource the client created */
+	if (!wl_shm_buffer_get(buffer->resource)) {
+		done(data, WESTON_TEST_SCREENSHOT_BAD_BUFFER);
+		return false;
+	}
+
+	buffer->shm_buffer = wl_shm_buffer_get(buffer->resource);
+	buffer->width = wl_shm_buffer_get_width(buffer->shm_buffer);
+	buffer->height = wl_shm_buffer_get_height(buffer->shm_buffer);
+
+	/* Verify buffer is big enough */
+	if (buffer->width < output->current_mode->width ||
+		buffer->height < output->current_mode->height) {
+		done(data, WESTON_TEST_SCREENSHOT_BAD_BUFFER);
+		return false;
+	}
+
+	/* allocate the frame listener */
+	l = malloc(sizeof *l);
+	if (l == NULL) {
+		done(data, WESTON_TEST_SCREENSHOT_NO_MEMORY);
+		return false;
+	}
+
+	/* Set up the listener */
+	l->buffer = buffer;
+	l->done = done;
+	l->data = data;
+	l->listener.notify = test_screenshot_frame_notify;
+	wl_signal_add(&output->frame_signal, &l->listener);
+
+	/* Fire off a repaint */
+	output->disable_planes++;
+	weston_output_schedule_repaint(output);
+
+	return true;
+}
+
+static void
+capture_screenshot_done(void *data, enum weston_test_screenshot_outcome outcome)
+{
+	struct wl_resource *resource = data;
+
+	switch (outcome) {
+	case WESTON_TEST_SCREENSHOT_SUCCESS:
+		weston_test_send_capture_screenshot_done(resource);
+		break;
+	case WESTON_TEST_SCREENSHOT_NO_MEMORY:
+		wl_resource_post_no_memory(resource);
+		break;
+	default:
+		break;
+	}
+}
+
+
+/**
+ * Grabs a snapshot of the screen.
+ */
+static void
+capture_screenshot(struct wl_client *client,
+		   struct wl_resource *resource,
+		   struct wl_resource *output_resource,
+		   struct wl_resource *buffer_resource)
+{
+	struct weston_output *output =
+		wl_resource_get_user_data(output_resource);
+	struct weston_buffer *buffer =
+		weston_buffer_from_resource(buffer_resource);
+
+	if (buffer == NULL) {
+		wl_resource_post_no_memory(resource);
+		return;
+	}
+
+	weston_test_screenshot_shoot(output, buffer,
+				     capture_screenshot_done, resource);
+}
+
+static const struct weston_test_interface test_implementation = {
 	move_surface,
 	move_pointer,
 	send_button,
 	activate_surface,
 	send_key,
+	device_release,
+	device_add,
 	get_n_buffers,
+	capture_screenshot,
 };
 
 static void
@@ -251,7 +529,7 @@ bind_test(struct wl_client *client, void *data, uint32_t version, uint32_t id)
 	struct weston_test *test = data;
 	struct wl_resource *resource;
 
-	resource = wl_resource_create(client, &wl_test_interface, 1, id);
+	resource = wl_resource_create(client, &weston_test_interface, 1, id);
 	if (!resource) {
 		wl_client_post_no_memory(client);
 		return;
@@ -304,9 +582,17 @@ module_init(struct weston_compositor *ec,
 	test->compositor = ec;
 	weston_layer_init(&test->layer, &ec->cursor_layer.link);
 
-	if (wl_global_create(ec->wl_display, &wl_test_interface, 1,
+	if (wl_global_create(ec->wl_display, &weston_test_interface, 1,
 			     test, bind_test) == NULL)
 		return -1;
+
+	/* create our own seat */
+	weston_seat_init(&test->seat, ec, "test-seat");
+
+	/* add devices */
+	weston_seat_init_pointer(&test->seat);
+	weston_seat_init_keyboard(&test->seat, NULL);
+	weston_seat_init_touch(&test->seat);
 
 	loop = wl_display_get_event_loop(ec->wl_display);
 	wl_event_loop_add_idle(loop, idle_launch_client, test);

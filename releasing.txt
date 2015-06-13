@@ -11,8 +11,10 @@ To make a release of Weston and/or Wayland, follow these steps.
       configure.ac which typically need updated as well.  Then commit
       your changes:
 
+      $ export RELEASE_NUMBER="x.y.z"
+      $ export RELEASE_NAME="[alpha|RC1|RC2|official|point]"
       $ git status
-      $ git commit configure.ac -m "configure.ac: bump to version x.y.z for the xxx release"
+      $ git commit configure.ac -m "configure.ac: bump to version $RELEASE_NUMBER for the $RELEASE_NAME release"
       $ git push
 
   2.  For Weston releases, install Xwayland, either from your distro or
@@ -21,6 +23,14 @@ To make a release of Weston and/or Wayland, follow these steps.
       this in the following env var:
 
       export DISTCHECK_CONFIGURE_FLAGS="--with-xserver-path=<your-Xwayland-path>"
+
+      If you're using a locally installed libinput or other dependency
+      libraries, you'll likely need to set a few other environment
+      variables:
+
+      export WLD="<path-to-your-local-installation>"
+      export LD_LIBRARY_PATH=$WLD/lib
+      export PKG_CONFIG_PATH=$WLD/lib/pkgconfig:$WLD/share/pkgconfig/
 
   3.  Run the release.sh script to generate the tarballs, sign and
       upload them, and generate a release announcement template.
@@ -33,6 +43,14 @@ To make a release of Weston and/or Wayland, follow these steps.
       a testsuite error that can't be fixed for some reason, you can
       skip testsuite by specifying the --dist argument.  Pass --help to
       see other supported options.
+
+      $ release.sh .
+
+      For wayland, also publish the publican documentation to
+      wayland.freedesktop.org:
+
+      $ ./publish-doc
+
 
   4.  Compose the release announcements.  The script will generate
       *.x.y.0.announce files with a list of changes and tags, one for
@@ -49,21 +67,27 @@ To make a release of Weston and/or Wayland, follow these steps.
   7.  Update releases.html in wayland-web with links to tarballs and
       the release email URL.
 
-      $ git commit releases.html -m "Add x.y.z release"
+      The register_release script in wayland-web will generate an HTML
+      snippet that can be pasted into releases.html (or e.g. in emacs
+      insert it via "C-u M-! register_release x.y.z RC2") and
+      customized.
+
+      Once satisfied:
+
+      $ git commit ./releases.html -m "Add ${RELEASE_NUMBER} release"
       $ git push
-      $ rsync -avz * wayland.freedesktop.org:/srv/wayland.freedesktop.org/www/
+      $ ./deploy
 
   8.  Update topic in #wayland to point to the release announcement URL
 
-
-For x.y.0 releases, also create the x.y branch.  The x.y branch is for
-bug fixes and conservative changes to the x.y.0 release, and is where
-we release x.y.z releases from.  Creating the x.y branch opens up
-master for new development and lets new development move on.  We've
-done this both after the x.y.0 release (to focus development on bug
-fixing for the x.y.1 release for a little longer) or before the x.y.0
-release (like we did with the 1.5.0 release, to unblock master
-development early). 
+For x.y.0 releases, also create the release series x.y branch.  The x.y
+branch is for bug fixes and conservative changes to the x.y.0 release,
+and is where we release x.y.z releases from.  Creating the x.y branch
+opens up master for new development and lets new development move on.
+We've done this both after the x.y.0 release (to focus development on
+bug fixing for the x.y.1 release for a little longer) or before the
+x.y.0 release (like we did with the 1.5.0 release, to unblock master
+development early).
 
     $ git branch x.y
     $ git push origin x.y

@@ -312,8 +312,15 @@ frame_done(void *data, struct wl_callback *callback, uint32_t time)
 	wl_callback_destroy(callback);
 
 	/* XXX: use the presentation extension for proper timings */
-	ts.tv_sec = time / 1000;
-	ts.tv_nsec = (time % 1000) * 1000000;
+
+	/*
+	 * This is the fallback case, where Presentation extension is not
+	 * available from the parent compositor. We do not know the base for
+	 * 'time', so we cannot feed it to finish_frame(). Do the only thing
+	 * we can, and pretend finish_frame time is when we process this
+	 * event.
+	 */
+	weston_compositor_read_presentation_clock(output->compositor, &ts);
 	weston_output_finish_frame(output, &ts, 0);
 }
 
@@ -639,8 +646,10 @@ wayland_output_init_gl_renderer(struct wayland_output *output)
 
 	if (gl_renderer->output_create(&output->base,
 				       output->gl.egl_window,
+				       output->gl.egl_window,
 				       gl_renderer->alpha_attribs,
-				       NULL) < 0)
+				       NULL,
+				       0) < 0)
 		goto cleanup_window;
 
 	return 0;
@@ -1049,7 +1058,7 @@ wayland_output_create(struct wayland_compositor *c, int x, int y,
 	output->base.set_dpms = NULL;
 	output->base.switch_mode = wayland_output_switch_mode;
 
-	wl_list_insert(c->base.output_list.prev, &output->base.link);
+	weston_compositor_add_output(&c->base, &output->base);
 
 	return output;
 
@@ -1298,6 +1307,9 @@ input_handle_pointer_leave(void *data, struct wl_pointer *pointer,
 {
 	struct wayland_input *input = data;
 
+	if (!input->output)
+		return;
+
 	if (input->output->frame) {
 		frame_pointer_leave(input->output->frame, input);
 
@@ -1317,6 +1329,9 @@ input_handle_motion(void *data, struct wl_pointer *pointer,
 	struct wayland_input *input = data;
 	int32_t fx, fy;
 	enum theme_location location;
+
+	if (!input->output)
+		return;
 
 	if (input->output->frame) {
 		location = frame_pointer_motion(input->output->frame, input,
@@ -1359,6 +1374,9 @@ input_handle_button(void *data, struct wl_pointer *pointer,
 	enum frame_button_state fstate;
 	enum theme_location location;
 
+	if (!input->output)
+		return;
+
 	if (input->output->frame) {
 		fstate = state == WL_POINTER_BUTTON_STATE_PRESSED ?
 			FRAME_BUTTON_PRESSED : FRAME_BUTTON_RELEASED;
@@ -1375,8 +1393,16 @@ input_handle_button(void *data, struct wl_pointer *pointer,
 			return;
 		}
 
-		if (frame_status(input->output->frame) & FRAME_STATUS_CLOSE)
-			wl_display_terminate(input->compositor->base.wl_display);
+		if (frame_status(input->output->frame) & FRAME_STATUS_CLOSE) {
+			wayland_output_destroy(&input->output->base);
+			input->output = NULL;
+			input->keyboard_focus = NULL;
+
+			if (wl_list_empty(&input->compositor->base.output_list))
+				wl_display_terminate(input->compositor->base.wl_display);
+
+			return;
+		}
 
 		if (frame_status(input->output->frame) & FRAME_STATUS_REPAINT)
 			weston_output_schedule_repaint(&input->output->base);
@@ -1512,7 +1538,7 @@ input_handle_keyboard_leave(void *data,
 
 	focus = input->keyboard_focus;
 	if (!focus)
-		return; /* This shouldn't happen */
+		return;
 
 	focus->keyboard_count--;
 	if (!focus->keyboard_count && focus->frame) {
@@ -1961,9 +1987,12 @@ wayland_compositor_create(struct wl_display *display, int use_pixman,
 	}
 
 	if (!c->use_pixman) {
-		if (gl_renderer->create(&c->base, c->parent.wl_display,
-				gl_renderer->alpha_attribs,
-				NULL) < 0) {
+		if (gl_renderer->create(&c->base,
+					EGL_PLATFORM_WAYLAND_KHR,
+					c->parent.wl_display,
+					gl_renderer->alpha_attribs,
+					NULL,
+					0) < 0) {
 			weston_log("Failed to initialize the GL renderer; "
 				   "falling back to pixman.\n");
 			c->use_pixman = 1;

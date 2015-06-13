@@ -23,7 +23,18 @@ ivi-shell/weston.ini : $(srcdir)/ivi-shell/weston.ini.in
 	$(AM_V_GEN)$(SED) \
 		-e 's|@bindir[@]|$(bindir)|g' \
 		-e 's|@abs_top_builddir[@]|$(abs_top_builddir)|g' \
+		-e 's|@abs_top_srcdir[@]|$(abs_top_srcdir)|g' \
 		-e 's|@libexecdir[@]|$(libexecdir)|g' \
+		-e 's|@plugin_prefix[@]||g' \
+		$< > $@
+
+tests/weston-ivi.ini : $(srcdir)/ivi-shell/weston.ini.in
+	$(AM_V_GEN)$(SED) \
+		-e 's|@bindir[@]|$(bindir)|g' \
+		-e 's|@abs_top_builddir[@]|$(abs_top_builddir)|g' \
+		-e 's|@abs_top_srcdir[@]|$(abs_top_srcdir)|g' \
+		-e 's|@libexecdir[@]|$(libexecdir)|g' \
+		-e 's|@plugin_prefix[@]|$(abs_top_builddir)/.libs/|g' \
 		$< > $@
 
 all-local : weston.ini ivi-shell/weston.ini
@@ -42,7 +53,11 @@ AM_CPPFLAGS = 					\
 	-DLIBEXECDIR='"$(libexecdir)"'		\
 	-DBINDIR='"$(bindir)"'
 
-CLEANFILES = weston.ini ivi-shell/weston.ini $(BUILT_SOURCES)
+CLEANFILES = weston.ini				\
+	ivi-shell/weston.ini			\
+	tests/weston-ivi.ini			\
+	internal-screenshot-00.png		\
+	$(BUILT_SOURCES)
 
 bin_PROGRAMS += weston
 
@@ -74,6 +89,7 @@ weston_SOURCES =					\
 	shared/matrix.c					\
 	shared/matrix.h					\
 	shared/zalloc.h					\
+	shared/platform.h				\
 	src/weston-egl-ext.h
 
 nodist_weston_SOURCES =					\
@@ -146,8 +162,15 @@ weston_launch_LDADD = $(PAM_LIBS) $(SYSTEMD_LOGIN_LIBS) $(LIBDRM_LIBS)
 
 if ENABLE_SETUID_INSTALL
 install-exec-hook:
-	chown root $(DESTDIR)$(bindir)/weston-launch
-	chmod u+s $(DESTDIR)$(bindir)/weston-launch
+	can_suid_files=no; \
+	chown root $(DESTDIR)$(bindir)/weston-launch \
+		&& chmod u+s $(DESTDIR)$(bindir)/weston-launch \
+		&& can_suid_files=yes;\
+	if test $$can_suid_files = no; then \
+		echo 'Error: unable to unable to change ownership/setuid on weston-launch.'; \
+		echo 'To skip this step, re-run ./configure using --disable-setuid-install'; \
+		false; \
+	fi
 endif
 
 endif # BUILD_WESTON_LAUNCH
@@ -166,7 +189,8 @@ westoninclude_HEADERS =				\
 	src/timeline-object.h			\
 	shared/matrix.h				\
 	shared/config-parser.h			\
-	shared/zalloc.h
+	shared/zalloc.h				\
+	shared/platform.h
 
 if ENABLE_EGL
 module_LTLIBRARIES += gl-renderer.la
@@ -688,7 +712,10 @@ dist_westondata_DATA =				\
 	data/icon_window.png			\
 	data/sign_close.png			\
 	data/sign_maximize.png			\
-	data/sign_minimize.png			\
+	data/sign_minimize.png
+
+if ENABLE_IVI_SHELL
+dist_westondata_DATA +=				\
 	data/background.png                     \
 	data/tiling.png                         \
 	data/fullscreen.png                     \
@@ -701,6 +728,7 @@ dist_westondata_DATA =				\
 	data/icon_ivi_simple-egl.png            \
 	data/icon_ivi_simple-shm.png            \
 	data/icon_ivi_smoke.png
+endif
 
 
 if BUILD_WCAP_TOOLS
@@ -880,6 +908,8 @@ libshared_la_SOURCES =				\
 	shared/config-parser.c			\
 	shared/option-parser.c			\
 	shared/config-parser.h			\
+	shared/file-util.c			\
+	shared/file-util.h			\
 	shared/os-compatibility.c		\
 	shared/os-compatibility.h
 
@@ -912,7 +942,10 @@ libshared_cairo_la_SOURCES =			\
 # tests subdirectory
 #
 
-TESTS = $(shared_tests) $(module_tests) $(weston_tests)
+TESTS = $(internal_tests) $(shared_tests) $(module_tests) $(weston_tests) $(ivi_tests)
+
+internal_tests = 				\
+	internal-screenshot.weston
 
 shared_tests =					\
 	config-parser.test			\
@@ -930,11 +963,16 @@ weston_tests =					\
 	text.weston				\
 	presentation.weston			\
 	roles.weston				\
-	subsurface.weston
+	subsurface.weston			\
+	devices.weston
 
+ivi_tests =
+
+$(ivi_tests) : $(builddir)/tests/weston-ivi.ini
 
 AM_TESTS_ENVIRONMENT = \
-	abs_builddir='$(abs_builddir)'; export abs_builddir;
+	abs_builddir='$(abs_builddir)'; export abs_builddir; \
+	abs_top_srcdir='$(abs_top_srcdir)'; export abs_top_srcdir;
 
 TEST_EXTENSIONS = .la .weston
 LA_LOG_COMPILER = $(srcdir)/tests/weston-tests-env
@@ -954,8 +992,10 @@ noinst_LTLIBRARIES +=			\
 
 noinst_PROGRAMS +=			\
 	$(setbacklight)			\
+	$(internal_tests)		\
 	$(shared_tests)			\
 	$(weston_tests)			\
+	$(ivi_tests)			\
 	matrix-test
 
 test_module_ldflags = \
@@ -974,8 +1014,8 @@ weston_test_la_LDFLAGS = $(test_module_ldflags)
 weston_test_la_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS)
 weston_test_la_SOURCES = tests/weston-test.c
 nodist_weston_test_la_SOURCES =			\
-	protocol/wayland-test-protocol.c	\
-	protocol/wayland-test-server-protocol.h
+	protocol/weston-test-protocol.c	\
+	protocol/weston-test-server-protocol.h
 
 if ENABLE_EGL
 weston_test_la_CFLAGS += $(EGL_TESTS_CFLAGS)
@@ -1000,10 +1040,24 @@ libtest_client_la_SOURCES =			\
 	tests/weston-test-client-helper.c	\
 	tests/weston-test-client-helper.h
 nodist_libtest_client_la_SOURCES =		\
-	protocol/wayland-test-protocol.c	\
-	protocol/wayland-test-client-protocol.h
+	protocol/weston-test-protocol.c	\
+	protocol/weston-test-client-protocol.h
 libtest_client_la_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
 libtest_client_la_LIBADD = $(TEST_CLIENT_LIBS) libshared.la libtest-runner.la
+
+
+#
+# Internal tests - tests functionality of the testsuite itself
+#
+
+internal_screenshot_weston_SOURCES = tests/internal-screenshot-test.c
+internal_screenshot_weston_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS) $(CAIRO_CFLAGS)
+internal_screenshot_weston_LDADD = libtest-client.la  $(CAIRO_LIBS)
+
+
+#
+# Weston Tests
+#
 
 bad_buffer_weston_SOURCES = tests/bad-buffer-test.c
 bad_buffer_weston_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
@@ -1020,6 +1074,10 @@ event_weston_LDADD = libtest-client.la
 button_weston_SOURCES = tests/button-test.c
 button_weston_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
 button_weston_LDADD = libtest-client.la
+
+devices_weston_SOURCES = tests/devices-test.c
+devices_weston_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
+devices_weston_LDADD = libtest-client.la
 
 text_weston_SOURCES = tests/text-test.c
 nodist_text_weston_SOURCES =			\
@@ -1064,6 +1122,49 @@ matrix_test_SOURCES =				\
 matrix_test_CPPFLAGS = -DUNIT_TEST
 matrix_test_LDADD = -lm -lrt
 
+if ENABLE_IVI_SHELL
+module_tests += 				\
+	ivi-layout-internal-test.la		\
+	ivi-layout-test.la
+
+ivi_layout_internal_test_la_LIBADD = $(COMPOSITOR_LIBS)
+ivi_layout_internal_test_la_LDFLAGS = $(test_module_ldflags)
+ivi_layout_internal_test_la_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS)
+ivi_layout_internal_test_la_SOURCES =			\
+	tests/ivi_layout-internal-test.c
+
+ivi_layout_test_la_LIBADD = $(COMPOSITOR_LIBS)
+ivi_layout_test_la_LDFLAGS = $(test_module_ldflags)
+ivi_layout_test_la_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS)
+ivi_layout_test_la_SOURCES =			\
+	tests/ivi_layout-test-plugin.c		\
+	tests/ivi-test.h
+nodist_ivi_layout_test_la_SOURCES =		\
+	protocol/weston-test-protocol.c		\
+	protocol/weston-test-server-protocol.h
+
+ivi_tests +=					\
+	ivi-shell-app.weston
+
+ivi_shell_app_weston_SOURCES = tests/ivi-shell-app-test.c
+nodist_ivi_shell_app_weston_SOURCES =		\
+	protocol/ivi-application-protocol.c	\
+	protocol/ivi-application-client-protocol.h
+ivi_shell_app_weston_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
+ivi_shell_app_weston_LDADD = libtest-client.la
+
+noinst_PROGRAMS += ivi-layout.ivi
+
+ivi_layout_ivi_SOURCES =			\
+	tests/ivi_layout-test.c 		\
+	tests/ivi-test.h
+nodist_ivi_layout_ivi_SOURCES = 		\
+	protocol/ivi-application-protocol.c	\
+	protocol/ivi-application-client-protocol.h
+ivi_layout_ivi_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
+ivi_layout_ivi_LDADD = libtest-client.la
+endif
+
 if BUILD_SETBACKLIGHT
 noinst_PROGRAMS += setbacklight
 setbacklight_SOURCES =				\
@@ -1074,12 +1175,16 @@ setbacklight_CFLAGS = $(AM_CFLAGS) $(SETBACKLIGHT_CFLAGS)
 setbacklight_LDADD = $(SETBACKLIGHT_LIBS)
 endif
 
-EXTRA_DIST += tests/weston-tests-env
+EXTRA_DIST +=							\
+	tests/weston-tests-env					\
+	tests/internal-screenshot.ini				\
+	tests/reference/internal-screenshot-bad-00.png		\
+	tests/reference/internal-screenshot-good-00.png
 
 BUILT_SOURCES +=				\
-	protocol/wayland-test-protocol.c	\
-	protocol/wayland-test-server-protocol.h	\
-	protocol/wayland-test-client-protocol.h	\
+	protocol/weston-test-protocol.c	\
+	protocol/weston-test-server-protocol.h	\
+	protocol/weston-test-client-protocol.h	\
 	protocol/text-protocol.c		\
 	protocol/text-client-protocol.h
 
@@ -1090,13 +1195,30 @@ EXTRA_DIST +=					\
 	protocol/input-method.xml		\
 	protocol/workspaces.xml			\
 	protocol/text-cursor-position.xml	\
-	protocol/wayland-test.xml		\
+	protocol/weston-test.xml		\
 	protocol/xdg-shell.xml			\
 	protocol/fullscreen-shell.xml		\
 	protocol/presentation_timing.xml	\
 	protocol/scaler.xml			\
 	protocol/ivi-application.xml		\
 	protocol/ivi-hmi-controller.xml
+
+#
+# manual test modules in tests subdirectory
+#
+
+noinst_LTLIBRARIES +=				\
+	surface-screenshot.la
+
+surface_screenshot_la_LIBADD = $(COMPOSITOR_LIBS) libshared.la
+surface_screenshot_la_LDFLAGS = $(test_module_ldflags)
+surface_screenshot_la_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS)
+surface_screenshot_la_SOURCES = tests/surface-screenshot.c
+
+
+#
+# Documentation
+#
 
 man_MANS = weston.1 weston.ini.5
 

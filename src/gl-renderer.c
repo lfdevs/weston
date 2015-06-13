@@ -1,5 +1,6 @@
 /*
  * Copyright © 2012 Intel Corporation
+ * Copyright © 2015 Collabora, Ltd.
  *
  * Permission to use, copy, modify, distribute, and sell this software and
  * its documentation for any purpose is hereby granted without fee, provided
@@ -36,7 +37,6 @@
 #include "gl-renderer.h"
 #include "vertex-clipping.h"
 
-#include <EGL/eglext.h>
 #include "weston-egl-ext.h"
 
 struct gl_shader {
@@ -75,10 +75,13 @@ struct gl_output_state {
 	enum gl_border_status border_damage[BUFFER_DAMAGE_COUNT];
 	struct gl_border_image borders[4];
 	enum gl_border_status border_status;
+
+	struct weston_matrix output_matrix;
 };
 
 enum buffer_type {
 	BUFFER_TYPE_NULL,
+	BUFFER_TYPE_SOLID, /* internal solid color surfaces without a buffer */
 	BUFFER_TYPE_SHM,
 	BUFFER_TYPE_EGL
 };
@@ -136,6 +139,8 @@ struct gl_renderer {
 	PFNEGLSWAPBUFFERSWITHDAMAGEEXTPROC swap_buffers_with_damage;
 #endif
 
+	PFNEGLCREATEPLATFORMWINDOWSURFACEEXTPROC create_platform_window;
+
 	int has_unpack_subimage;
 
 	PFNEGLBINDWAYLANDDISPLAYWL bind_display;
@@ -161,6 +166,8 @@ struct gl_renderer {
 
 	struct wl_signal destroy_signal;
 };
+
+static PFNEGLGETPLATFORMDISPLAYEXTPROC get_platform_display = NULL;
 
 static inline struct gl_output_state *
 get_output_state(struct weston_output *output)
@@ -572,9 +579,10 @@ shader_uniforms(struct gl_shader *shader,
 {
 	int i;
 	struct gl_surface_state *gs = get_surface_state(view->surface);
+	struct gl_output_state *go = get_output_state(output);
 
 	glUniformMatrix4fv(shader->proj_uniform,
-			   1, GL_FALSE, output->matrix.d);
+			   1, GL_FALSE, go->output_matrix.d);
 	glUniform4fv(shader->color_uniform, 1, gs->color);
 	glUniform1f(shader->alpha_uniform, view->alpha);
 
@@ -591,6 +599,8 @@ draw_view(struct weston_view *ev, struct weston_output *output,
 	struct gl_surface_state *gs = get_surface_state(ev->surface);
 	/* repaint bounding region in global coordinates: */
 	pixman_region32_t repaint;
+	/* opaque region in surface coordinates: */
+	pixman_region32_t surface_opaque;
 	/* non-opaque region in surface coordinates: */
 	pixman_region32_t surface_blend;
 	GLint filter;
@@ -604,7 +614,7 @@ draw_view(struct weston_view *ev, struct weston_output *output,
 
 	pixman_region32_init(&repaint);
 	pixman_region32_intersect(&repaint,
-				  &ev->transform.masked_boundingbox, damage);
+				  &ev->transform.boundingbox, damage);
 	pixman_region32_subtract(&repaint, &repaint, &ev->clip);
 
 	if (!pixman_region32_not_empty(&repaint))
@@ -636,10 +646,22 @@ draw_view(struct weston_view *ev, struct weston_output *output,
 	/* blended region is whole surface minus opaque region: */
 	pixman_region32_init_rect(&surface_blend, 0, 0,
 				  ev->surface->width, ev->surface->height);
-	pixman_region32_subtract(&surface_blend, &surface_blend, &ev->surface->opaque);
+	if (ev->geometry.scissor_enabled)
+		pixman_region32_intersect(&surface_blend, &surface_blend,
+					  &ev->geometry.scissor);
+	pixman_region32_subtract(&surface_blend, &surface_blend,
+				 &ev->surface->opaque);
 
 	/* XXX: Should we be using ev->transform.opaque here? */
-	if (pixman_region32_not_empty(&ev->surface->opaque)) {
+	pixman_region32_init(&surface_opaque);
+	if (ev->geometry.scissor_enabled)
+		pixman_region32_intersect(&surface_opaque,
+					  &ev->surface->opaque,
+					  &ev->geometry.scissor);
+	else
+		pixman_region32_copy(&surface_opaque, &ev->surface->opaque);
+
+	if (pixman_region32_not_empty(&surface_opaque)) {
 		if (gs->shader == &gr->texture_shader_rgba) {
 			/* Special case for RGBA textures with possibly
 			 * bad data in alpha channel: use the shader
@@ -655,7 +677,7 @@ draw_view(struct weston_view *ev, struct weston_output *output,
 		else
 			glDisable(GL_BLEND);
 
-		repaint_region(ev, &repaint, &ev->surface->opaque);
+		repaint_region(ev, &repaint, &surface_opaque);
 	}
 
 	if (pixman_region32_not_empty(&surface_blend)) {
@@ -665,6 +687,7 @@ draw_view(struct weston_view *ev, struct weston_output *output,
 	}
 
 	pixman_region32_fini(&surface_blend);
+	pixman_region32_fini(&surface_opaque);
 
 out:
 	pixman_region32_fini(&repaint);
@@ -911,6 +934,14 @@ output_rotate_damage(struct weston_output *output,
 	go->border_damage[go->buffer_damage_index] = border_status;
 }
 
+/* NOTE: We now allow falling back to ARGB gl visuals when XRGB is
+ * unavailable, so we're assuming the background has no transparency
+ * and that everything with a blend, like drop shadows, will have something
+ * opaque (like the background) drawn underneath it.
+ *
+ * Depending on the underlying hardware, violating that assumption could
+ * result in seeing through to another display plane.
+ */
 static void
 gl_renderer_repaint_output(struct weston_output *output,
 			      pixman_region32_t *output_damage)
@@ -928,14 +959,23 @@ gl_renderer_repaint_output(struct weston_output *output,
 	pixman_region32_t buffer_damage, total_damage;
 	enum gl_border_status border_damage = BORDER_STATUS_CLEAN;
 
+	if (use_output(output) < 0)
+		return;
+
 	/* Calculate the viewport */
 	glViewport(go->borders[GL_RENDERER_BORDER_LEFT].width,
 		   go->borders[GL_RENDERER_BORDER_BOTTOM].height,
 		   output->current_mode->width,
 		   output->current_mode->height);
 
-	if (use_output(output) < 0)
-		return;
+	/* Calculate the global GL matrix */
+	go->output_matrix = output->matrix;
+	weston_matrix_translate(&go->output_matrix,
+				-(output->current_mode->width / 2.0),
+				-(output->current_mode->height / 2.0), 0);
+	weston_matrix_scale(&go->output_matrix,
+			    2.0 / output->current_mode->width,
+			    -2.0 / output->current_mode->height, 1);
 
 	/* if debugging, redraw everything outside the damage to clean up
 	 * debug lines from the previous draw on this buffer:
@@ -1355,8 +1395,156 @@ gl_renderer_surface_set_color(struct weston_surface *surface,
 	gs->color[1] = green;
 	gs->color[2] = blue;
 	gs->color[3] = alpha;
+	gs->buffer_type = BUFFER_TYPE_SOLID;
+	gs->pitch = 1;
+	gs->height = 1;
 
 	gs->shader = &gr->solid_shader;
+}
+
+static void
+gl_renderer_surface_get_content_size(struct weston_surface *surface,
+				     int *width, int *height)
+{
+	struct gl_surface_state *gs = get_surface_state(surface);
+
+	if (gs->buffer_type == BUFFER_TYPE_NULL) {
+		*width = 0;
+		*height = 0;
+	} else {
+		*width = gs->pitch;
+		*height = gs->height;
+	}
+}
+
+static uint32_t
+pack_color(pixman_format_code_t format, float *c)
+{
+	uint8_t r = round(c[0] * 255.0f);
+	uint8_t g = round(c[1] * 255.0f);
+	uint8_t b = round(c[2] * 255.0f);
+	uint8_t a = round(c[3] * 255.0f);
+
+	switch (format) {
+	case PIXMAN_a8b8g8r8:
+		return (a << 24) | (b << 16) | (g << 8) | r;
+	default:
+		assert(0);
+		return 0;
+	}
+}
+
+static int
+gl_renderer_surface_copy_content(struct weston_surface *surface,
+				 void *target, size_t size,
+				 int src_x, int src_y,
+				 int width, int height)
+{
+	static const GLfloat verts[4 * 2] = {
+		0.0f, 0.0f,
+		1.0f, 0.0f,
+		1.0f, 1.0f,
+		0.0f, 1.0f
+	};
+	static const GLfloat projmat_normal[16] = { /* transpose */
+		 2.0f,  0.0f, 0.0f, 0.0f,
+		 0.0f,  2.0f, 0.0f, 0.0f,
+		 0.0f,  0.0f, 1.0f, 0.0f,
+		-1.0f, -1.0f, 0.0f, 1.0f
+	};
+	static const GLfloat projmat_yinvert[16] = { /* transpose */
+		 2.0f,  0.0f, 0.0f, 0.0f,
+		 0.0f, -2.0f, 0.0f, 0.0f,
+		 0.0f,  0.0f, 1.0f, 0.0f,
+		-1.0f,  1.0f, 0.0f, 1.0f
+	};
+	const pixman_format_code_t format = PIXMAN_a8b8g8r8;
+	const size_t bytespp = 4; /* PIXMAN_a8b8g8r8 */
+	const GLenum gl_format = GL_RGBA; /* PIXMAN_a8b8g8r8 little-endian */
+	struct gl_renderer *gr = get_renderer(surface->compositor);
+	struct gl_surface_state *gs = get_surface_state(surface);
+	int cw, ch;
+	GLuint fbo;
+	GLuint tex;
+	GLenum status;
+	const GLfloat *proj;
+	int i;
+
+	gl_renderer_surface_get_content_size(surface, &cw, &ch);
+
+	switch (gs->buffer_type) {
+	case BUFFER_TYPE_NULL:
+		return -1;
+	case BUFFER_TYPE_SOLID:
+		*(uint32_t *)target = pack_color(format, gs->color);
+		return 0;
+	case BUFFER_TYPE_SHM:
+		gl_renderer_flush_damage(surface);
+		/* fall through */
+	case BUFFER_TYPE_EGL:
+		break;
+	}
+
+	glGenTextures(1, &tex);
+	glBindTexture(GL_TEXTURE_2D, tex);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, cw, ch,
+		     0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+	glBindTexture(GL_TEXTURE_2D, 0);
+
+	glGenFramebuffers(1, &fbo);
+	glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+			       GL_TEXTURE_2D, tex, 0);
+
+	status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+	if (status != GL_FRAMEBUFFER_COMPLETE) {
+		weston_log("%s: fbo error: %#x\n", __func__, status);
+		glDeleteFramebuffers(1, &fbo);
+		glDeleteTextures(1, &tex);
+		return -1;
+	}
+
+	glViewport(0, 0, cw, ch);
+	glDisable(GL_BLEND);
+	use_shader(gr, gs->shader);
+	if (gs->y_inverted)
+		proj = projmat_normal;
+	else
+		proj = projmat_yinvert;
+
+	glUniformMatrix4fv(gs->shader->proj_uniform, 1, GL_FALSE, proj);
+	glUniform1f(gs->shader->alpha_uniform, 1.0f);
+
+	for (i = 0; i < gs->num_textures; i++) {
+		glUniform1i(gs->shader->tex_uniforms[i], i);
+
+		glActiveTexture(GL_TEXTURE0 + i);
+		glBindTexture(gs->target, gs->textures[i]);
+		glTexParameteri(gs->target, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(gs->target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	}
+
+	/* position: */
+	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, verts);
+	glEnableVertexAttribArray(0);
+
+	/* texcoord: */
+	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, verts);
+	glEnableVertexAttribArray(1);
+
+	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+
+	glDisableVertexAttribArray(1);
+	glDisableVertexAttribArray(0);
+
+	glPixelStorei(GL_PACK_ALIGNMENT, bytespp);
+	glReadPixels(src_x, src_y, width, height, gl_format,
+		     GL_UNSIGNED_BYTE, target);
+
+	glDeleteFramebuffers(1, &fbo);
+	glDeleteTextures(1, &tex);
+
+	return 0;
 }
 
 static void
@@ -1718,48 +1906,74 @@ log_egl_config_info(EGLDisplay egldpy, EGLConfig eglconfig)
 }
 
 static int
+match_config_to_visual(EGLDisplay egl_display,
+		       EGLint visual_id,
+		       EGLConfig *configs,
+		       int count)
+{
+	int i;
+
+	for (i = 0; i < count; ++i) {
+		EGLint id;
+
+		if (!eglGetConfigAttrib(egl_display,
+				configs[i], EGL_NATIVE_VISUAL_ID,
+				&id))
+			continue;
+
+		if (id == visual_id)
+			return i;
+	}
+
+	return -1;
+}
+
+static int
 egl_choose_config(struct gl_renderer *gr, const EGLint *attribs,
-		  const EGLint *visual_id,
+		  const EGLint *visual_id, const int n_ids,
 		  EGLConfig *config_out)
 {
 	EGLint count = 0;
 	EGLint matched = 0;
 	EGLConfig *configs;
-	int i;
+	int i, config_index = -1;
 
-	if (!eglGetConfigs(gr->egl_display, NULL, 0, &count) || count < 1)
+	if (!eglGetConfigs(gr->egl_display, NULL, 0, &count) || count < 1) {
+		weston_log("No EGL configs to choose from.\n");
 		return -1;
-
+	}
 	configs = calloc(count, sizeof *configs);
 	if (!configs)
 		return -1;
 
 	if (!eglChooseConfig(gr->egl_display, attribs, configs,
-			      count, &matched))
+			      count, &matched) || !matched) {
+		weston_log("No EGL configs with appropriate attributes.\n");
 		goto out;
-
-	for (i = 0; i < matched; ++i) {
-		EGLint id;
-
-		if (visual_id) {
-			if (!eglGetConfigAttrib(gr->egl_display,
-					configs[i], EGL_NATIVE_VISUAL_ID,
-					&id))
-				continue;
-
-			if (id != 0 && id != *visual_id)
-				continue;
-		}
-
-		*config_out = configs[i];
-
-		free(configs);
-		return 0;
 	}
+
+	if (!visual_id)
+		config_index = 0;
+
+	for (i = 0; config_index == -1 && i < n_ids; i++)
+		config_index = match_config_to_visual(gr->egl_display,
+						      visual_id[i],
+						      configs,
+						      matched);
+
+	if (config_index != -1)
+		*config_out = configs[config_index];
 
 out:
 	free(configs);
-	return -1;
+	if (config_index == -1)
+		return -1;
+
+	if (i > 1)
+		weston_log("Unable to use first choice EGL config with id"
+			   " 0x%x, succeeded with alternate id 0x%x.\n",
+			   visual_id[0], visual_id[i - 1]);
+	return 0;
 }
 
 static void
@@ -1793,9 +2007,11 @@ gl_renderer_setup(struct weston_compositor *ec, EGLSurface egl_surface);
 
 static int
 gl_renderer_output_create(struct weston_output *output,
-			  EGLNativeWindowType window,
+			  EGLNativeWindowType window_for_legacy,
+			  void *window_for_platform,
 			  const EGLint *attribs,
-			  const EGLint *visual_id)
+			  const EGLint *visual_id,
+			  int n_ids)
 {
 	struct weston_compositor *ec = output->compositor;
 	struct gl_renderer *gr = get_renderer(ec);
@@ -1803,7 +2019,8 @@ gl_renderer_output_create(struct weston_output *output,
 	EGLConfig egl_config;
 	int i;
 
-	if (egl_choose_config(gr, attribs, visual_id, &egl_config) == -1) {
+	if (egl_choose_config(gr, attribs, visual_id,
+			      n_ids, &egl_config) == -1) {
 		weston_log("failed to choose EGL config for output\n");
 		return -1;
 	}
@@ -1820,10 +2037,18 @@ gl_renderer_output_create(struct weston_output *output,
 	if (go == NULL)
 		return -1;
 
-	go->egl_surface =
-		eglCreateWindowSurface(gr->egl_display,
-				       egl_config,
-				       window, NULL);
+	if (gr->create_platform_window) {
+		go->egl_surface =
+			gr->create_platform_window(gr->egl_display,
+						   egl_config,
+						   window_for_platform,
+						   NULL);
+	} else {
+		go->egl_surface =
+			eglCreateWindowSurface(gr->egl_display,
+					       egl_config,
+					       window_for_legacy, NULL);
+	}
 
 	if (go->egl_surface == EGL_NO_SURFACE) {
 		weston_log("failed to create egl surface\n");
@@ -1897,6 +2122,24 @@ gl_renderer_destroy(struct weston_compositor *ec)
 	free(gr);
 }
 
+static void
+renderer_setup_egl_client_extensions(struct gl_renderer *gr)
+{
+	const char *extensions;
+
+	extensions = eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS);
+	if (!extensions) {
+		weston_log("Retrieving EGL client extension string failed.\n");
+		return;
+	}
+
+	if (strstr(extensions, "EGL_EXT_platform_base"))
+		gr->create_platform_window =
+			(void *) eglGetProcAddress("eglCreatePlatformWindowSurfaceEXT");
+	else
+		weston_log("warning: EGL_EXT_platform_base not supported.\n");
+}
+
 static int
 gl_renderer_setup_egl_extensions(struct weston_compositor *ec)
 {
@@ -1948,6 +2191,8 @@ gl_renderer_setup_egl_extensions(struct weston_compositor *ec)
 		gr->has_configless_context = 1;
 #endif
 
+	renderer_setup_egl_client_extensions(gr);
+
 	return 0;
 }
 
@@ -1971,12 +2216,98 @@ static const EGLint gl_renderer_alpha_attribs[] = {
 	EGL_NONE
 };
 
+/** Checks whether a platform EGL client extension is supported
+ *
+ * \param ec The weston compositor
+ * \param extension_suffix The EGL client extension suffix
+ * \return 1 if supported, 0 if using fallbacks, -1 unsupported
+ *
+ * This function checks whether a specific platform_* extension is supported
+ * by EGL.
+ *
+ * The extension suffix should be the suffix of the platform extension (that
+ * specifies a <platform> argument as defined in EGL_EXT_platform_base). For
+ * example, passing "foo" will check whether either "EGL_KHR_platform_foo",
+ * "EGL_EXT_platform_foo", or "EGL_MESA_platform_foo" is supported.
+ *
+ * The return value is 1:
+ *   - if the supplied EGL client extension is supported.
+ * The return value is 0:
+ *   - if the platform_base client extension isn't supported so will
+ *     fallback to eglGetDisplay and friends.
+ * The return value is -1:
+ *   - if the supplied EGL client extension is not supported.
+ */
 static int
-gl_renderer_create(struct weston_compositor *ec, EGLNativeDisplayType display,
-	const EGLint *attribs, const EGLint *visual_id)
+gl_renderer_supports(struct weston_compositor *ec,
+		     const char *extension_suffix)
+{
+	static const char *extensions = NULL;
+	char s[64];
+
+	if (!extensions) {
+		extensions = (const char *) eglQueryString(
+			EGL_NO_DISPLAY, EGL_EXTENSIONS);
+
+		if (!extensions)
+			return 0;
+
+		log_extensions("EGL client extensions",
+			       extensions);
+	}
+
+	if (!strstr(extensions, "EGL_EXT_platform_base"))
+		return 0;
+
+	snprintf(s, sizeof s, "EGL_KHR_platform_%s", extension_suffix);
+	if (strstr(extensions, s))
+		return 1;
+
+	snprintf(s, sizeof s, "EGL_EXT_platform_%s", extension_suffix);
+	if (strstr(extensions, s))
+		return 1;
+
+	snprintf(s, sizeof s, "EGL_MESA_platform_%s", extension_suffix);
+	if (strstr(extensions, s))
+		return 1;
+
+	/* at this point we definitely have some platform extensions but
+	 * haven't found the supplied platform, so chances are it's
+	 * not supported. */
+
+	return -1;
+}
+
+static const char *
+platform_to_extension(EGLenum platform)
+{
+	switch (platform) {
+	case EGL_PLATFORM_GBM_KHR:
+		return "gbm";
+	case EGL_PLATFORM_WAYLAND_KHR:
+		return "wayland";
+	case EGL_PLATFORM_X11_KHR:
+		return "x11";
+	default:
+		assert(0 && "bad EGL platform enum");
+	}
+}
+
+static int
+gl_renderer_create(struct weston_compositor *ec, EGLenum platform,
+	void *native_window, const EGLint *attribs,
+	const EGLint *visual_id, int n_ids)
 {
 	struct gl_renderer *gr;
 	EGLint major, minor;
+	int supports = 0;
+
+	if (platform) {
+		supports = gl_renderer_supports(
+			ec, platform_to_extension(platform));
+		if (supports < 0)
+			return -1;
+	}
 
 	gr = zalloc(sizeof *gr);
 	if (gr == NULL)
@@ -1988,8 +2319,36 @@ gl_renderer_create(struct weston_compositor *ec, EGLNativeDisplayType display,
 	gr->base.attach = gl_renderer_attach;
 	gr->base.surface_set_color = gl_renderer_surface_set_color;
 	gr->base.destroy = gl_renderer_destroy;
+	gr->base.surface_get_content_size =
+		gl_renderer_surface_get_content_size;
+	gr->base.surface_copy_content = gl_renderer_surface_copy_content;
+	gr->egl_display = NULL;
 
-	gr->egl_display = eglGetDisplay(display);
+	/* extension_suffix is supported */
+	if (supports) {
+		if (!get_platform_display) {
+			get_platform_display = (void *) eglGetProcAddress(
+					"eglGetPlatformDisplayEXT");
+		}
+
+		/* also wrap this in the supports check because
+		 * eglGetProcAddress can return non-NULL and still not
+		 * support the feature at runtime, so ensure the
+		 * appropriate extension checks have been done. */
+		if (get_platform_display && platform) {
+			gr->egl_display = get_platform_display(platform,
+							       native_window,
+							       NULL);
+		}
+	}
+
+	if (!gr->egl_display) {
+		weston_log("warning: either no EGL_EXT_platform_base "
+			   "support or specific platform support; "
+			   "falling back to eglGetDisplay.\n");
+		gr->egl_display = eglGetDisplay(native_window);
+	}
+
 	if (gr->egl_display == EGL_NO_DISPLAY) {
 		weston_log("failed to create display\n");
 		goto err_egl;
@@ -2000,14 +2359,16 @@ gl_renderer_create(struct weston_compositor *ec, EGLNativeDisplayType display,
 		goto err_egl;
 	}
 
-	if (egl_choose_config(gr, attribs, visual_id, &gr->egl_config) < 0) {
+	if (egl_choose_config(gr, attribs, visual_id,
+			      n_ids, &gr->egl_config) < 0) {
 		weston_log("failed to choose EGL config\n");
-		goto err_egl;
+		goto err_config;
 	}
 
 	ec->renderer = &gr->base;
 	ec->capabilities |= WESTON_CAP_ROTATION_ANY;
 	ec->capabilities |= WESTON_CAP_CAPTURE_YFLIP;
+	ec->capabilities |= WESTON_CAP_VIEW_CLIP_MASK;
 
 	if (gl_renderer_setup_egl_extensions(ec) < 0)
 		goto err_egl;
@@ -2020,6 +2381,7 @@ gl_renderer_create(struct weston_compositor *ec, EGLNativeDisplayType display,
 
 err_egl:
 	gl_renderer_print_egl_error_state();
+err_config:
 	free(gr);
 	return -1;
 }

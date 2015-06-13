@@ -27,8 +27,9 @@
 
 #include <assert.h>
 #include <stdbool.h>
+
 #include "weston-test-runner.h"
-#include "wayland-test-client-protocol.h"
+#include "weston-test-client-protocol.h"
 
 struct client {
 	struct wl_display *wl_display;
@@ -36,7 +37,14 @@ struct client {
 	struct wl_compositor *wl_compositor;
 	struct wl_shm *wl_shm;
 	struct test *test;
+	/* the seat that is actually used for input events */
 	struct input *input;
+	/* server can have more wl_seats. We need keep them all until we
+	 * find the one that we need. After that, the others
+	 * will be destroyed, so this list will have the length of 1.
+	 * If some day in the future we will need the other seats,
+	 * we can just keep them here. */
+	struct wl_list inputs;
 	struct output *output;
 	struct surface *surface;
 	int has_argb;
@@ -52,16 +60,21 @@ struct global {
 };
 
 struct test {
-	struct wl_test *wl_test;
+	struct weston_test *weston_test;
 	int pointer_x;
 	int pointer_y;
 	uint32_t n_egl_buffers;
+	int buffer_copy_done;
 };
 
 struct input {
 	struct wl_seat *wl_seat;
 	struct pointer *pointer;
 	struct keyboard *keyboard;
+	struct touch *touch;
+	char *seat_name;
+	enum wl_seat_capability caps;
+	struct wl_list link;
 };
 
 struct pointer {
@@ -82,6 +95,22 @@ struct keyboard {
 	uint32_t mods_latched;
 	uint32_t mods_locked;
 	uint32_t group;
+	struct {
+		int rate;
+		int delay;
+	} repeat_info;
+};
+
+struct touch {
+	struct wl_touch *wl_touch;
+	int down_x;
+	int down_y;
+	int x;
+	int y;
+	int id;
+	int up_id; /* id of last wl_touch.up event */
+	int frame_no;
+	int cancel_no;
 };
 
 struct output {
@@ -90,6 +119,8 @@ struct output {
 	int y;
 	int width;
 	int height;
+	int scale;
+	int initialized;
 };
 
 struct surface {
@@ -103,19 +134,33 @@ struct surface {
 	void *data;
 };
 
+struct rectangle {
+	int x;
+	int y;
+	int width;
+	int height;
+};
+
+void *
+fail_on_null(void *p);
+
 static inline void *
-xzalloc(size_t size)
+xzalloc(size_t s)
 {
-        void *p;
+	return fail_on_null(calloc(1, s));
+}
 
-        p = calloc(1, size);
-        assert(p);
-
-        return p;
+static inline void *
+xmalloc(size_t s)
+{
+	return fail_on_null(malloc(s));
 }
 
 struct client *
-client_create(int x, int y, int width, int height);
+create_client(void);
+
+struct client *
+create_client_and_test_surface(int x, int y, int width, int height);
 
 struct wl_buffer *
 create_shm_buffer(struct client *client, int width, int height, void **pixels);
@@ -147,5 +192,20 @@ skip(const char *fmt, ...);
 void
 expect_protocol_error(struct client *client,
 		      const struct wl_interface *intf, uint32_t code);
+
+char*
+screenshot_output_filename(const char *basename, uint32_t seq);
+
+char*
+screenshot_reference_filename(const char *basename, uint32_t seq);
+
+bool
+check_surfaces_geometry(const struct surface *a, const struct surface *b);
+
+bool
+check_surfaces_equal(const struct surface *a, const struct surface *b);
+
+bool
+check_surfaces_match_in_clip(const struct surface *a, const struct surface *b, const struct rectangle *clip);
 
 #endif

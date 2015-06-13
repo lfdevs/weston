@@ -217,7 +217,7 @@ rpi_output_start_repaint_loop(struct weston_output *output)
 	struct timespec ts;
 
 	/* XXX: do a phony dispmanx update and trigger on its completion? */
-	clock_gettime(output->compositor->presentation_clock, &ts);
+	weston_compositor_read_presentation_clock(output->compositor, &ts);
 	weston_output_finish_frame(output, &ts, PRESENTATION_FEEDBACK_INVALID);
 }
 
@@ -344,6 +344,7 @@ rpi_output_create(struct rpi_compositor *compositor, uint32_t transform)
 	output->base.subpixel = WL_OUTPUT_SUBPIXEL_UNKNOWN;
 	output->base.make = "unknown";
 	output->base.model = "unknown";
+	output->base.name = strdup("rpi");
 
 	/* guess 96 dpi */
 	mm_width  = modeinfo.width * (25.4f / 96.0f);
@@ -356,7 +357,7 @@ rpi_output_create(struct rpi_compositor *compositor, uint32_t transform)
 	if (rpi_renderer_output_create(&output->base, output->display) < 0)
 		goto out_output;
 
-	wl_list_insert(compositor->base.output_list.prev, &output->base.link);
+	weston_compositor_add_output(&compositor->base, &output->base);
 
 	weston_log("Raspberry Pi HDMI output %dx%d px\n",
 		   output->mode.width, output->mode.height);

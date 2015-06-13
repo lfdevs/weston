@@ -38,6 +38,7 @@
 #include <wayland-egl.h>
 #include <GLES2/gl2.h>
 #include <EGL/egl.h>
+#include <EGL/eglext.h>
 
 #include "window.h"
 
@@ -215,7 +216,9 @@ egl_state_create(struct wl_display *display)
 	egl = calloc(1, sizeof *egl);
 	assert(egl);
 
-	egl->dpy = eglGetDisplay(display);
+	egl->dpy =
+		weston_platform_get_egl_display(EGL_PLATFORM_WAYLAND_KHR,
+						display, NULL);
 	assert(egl->dpy);
 
 	ret = eglInitialize(egl->dpy, &major, &minor);
@@ -419,9 +422,9 @@ triangle_create_egl_surface(struct triangle *tri, int width, int height)
 
 	tri->wl_surface = widget_get_wl_surface(tri->widget);
 	tri->egl_window = wl_egl_window_create(tri->wl_surface, width, height);
-	tri->egl_surface = eglCreateWindowSurface(tri->egl->dpy,
-						  tri->egl->conf,
-						  tri->egl_window, NULL);
+	tri->egl_surface = weston_platform_create_egl_surface(tri->egl->dpy,
+							      tri->egl->conf,
+							      tri->egl_window, NULL);
 
 	ret = eglMakeCurrent(tri->egl->dpy, tri->egl_surface,
 			     tri->egl_surface, tri->egl->ctx);

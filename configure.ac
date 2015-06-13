@@ -1,5 +1,5 @@
 m4_define([weston_major_version], [1])
-m4_define([weston_minor_version], [7])
+m4_define([weston_minor_version], [8])
 m4_define([weston_micro_version], [0])
 m4_define([weston_version],
           [weston_major_version.weston_minor_version.weston_micro_version])
@@ -59,7 +59,7 @@ AC_CHECK_HEADERS([execinfo.h])
 
 AC_CHECK_FUNCS([mkostemp strchrnul initgroups posix_fallocate])
 
-COMPOSITOR_MODULES="wayland-server >= 1.7.0 pixman-1 >= 0.25.2"
+COMPOSITOR_MODULES="wayland-server >= 1.8.0 pixman-1 >= 0.25.2"
 
 AC_ARG_ENABLE(egl, [  --disable-egl],,
               enable_egl=yes)
@@ -240,9 +240,11 @@ if test "x$with_cairo" = "ximage"; then
 else
 if test "x$with_cairo" = "xgl"; then
 	cairo_modules="cairo-gl"
+	AC_MSG_WARN([The --with-cairo=gl option can cause increased resource usage and potential instability, and thus is not recommended.  It is needed only for a few special demo programs.])
 else
 if test "x$with_cairo" = "xglesv2"; then
 	cairo_modules="cairo-glesv2"
+	AC_MSG_WARN([The --with-cairo=gles2 option can cause increased resource usage and potential instability, and thus is not recommended.  It is needed only for a few special demo programs.])
 else
 	AC_ERROR([Unknown cairo renderer requested])
 fi
@@ -292,7 +294,7 @@ AC_SUBST(JPEG_LIBS)
 
 PKG_CHECK_MODULES(CAIRO, [cairo])
 
-PKG_CHECK_MODULES(TEST_CLIENT, [wayland-client >= 1.7.0])
+PKG_CHECK_MODULES(TEST_CLIENT, [wayland-client >= 1.8.0])
 
 AC_ARG_ENABLE(simple-clients,
               AS_HELP_STRING([--disable-simple-clients],
@@ -503,10 +505,9 @@ AM_CONDITIONAL(HAVE_LCMS, [test "x$have_lcms" = xyes])
 
 AC_PATH_PROG([wayland_scanner], [wayland-scanner])
 if test x$wayland_scanner = x; then
-	AC_MSG_ERROR([wayland-scanner is needed to compile weston])
+	PKG_CHECK_MODULES(WAYLAND_SCANNER, [wayland-scanner])
+	wayland_scanner=`$PKG_CONFIG --variable=wayland_scanner wayland-scanner`
 fi
-
-PKG_CHECK_MODULES(WAYLAND_SCANNER, wayland-scanner)
 
 AC_CONFIG_FILES([Makefile src/version.h src/weston.pc])
 

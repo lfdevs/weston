@@ -27,17 +27,39 @@
 #ifdef ENABLE_EGL
 
 #include <EGL/egl.h>
+#include <EGL/eglext.h>
 
 #else
 
 typedef int EGLint;
+typedef int EGLenum;
 typedef void *EGLDisplay;
 typedef void *EGLSurface;
+typedef void *EGLConfig;
 typedef intptr_t EGLNativeDisplayType;
 typedef intptr_t EGLNativeWindowType;
 #define EGL_DEFAULT_DISPLAY ((EGLNativeDisplayType)0)
 
+#endif /* ENABLE_EGL */
+
+#ifndef EGL_EXT_platform_base
+typedef EGLDisplay (*PFNEGLGETPLATFORMDISPLAYEXTPROC) (EGLenum platform, void *native_display, const EGLint *attrib_list);
+typedef EGLSurface (*PFNEGLCREATEPLATFORMWINDOWSURFACEEXTPROC) (EGLDisplay dpy, EGLConfig config, void *native_window, const EGLint *attrib_list);
 #endif
+
+#ifndef EGL_PLATFORM_GBM_KHR
+#define EGL_PLATFORM_GBM_KHR 0x31D7
+#endif
+
+#ifndef EGL_PLATFORM_WAYLAND_KHR
+#define EGL_PLATFORM_WAYLAND_KHR 0x31D8
+#endif
+
+#ifndef EGL_PLATFORM_X11_KHR
+#define EGL_PLATFORM_X11_KHR 0x31D5
+#endif
+
+#define NO_EGL_PLATFORM 0
 
 enum gl_renderer_border_side {
 	GL_RENDERER_BORDER_TOP = 0,
@@ -51,16 +73,20 @@ struct gl_renderer_interface {
 	const EGLint *alpha_attribs;
 
 	int (*create)(struct weston_compositor *ec,
-		      EGLNativeDisplayType display,
+		      EGLenum platform,
+		      void *native_window,
 		      const EGLint *attribs,
-		      const EGLint *visual_id);
+		      const EGLint *visual_id,
+		      const int n_ids);
 
 	EGLDisplay (*display)(struct weston_compositor *ec);
 
 	int (*output_create)(struct weston_output *output,
-			     EGLNativeWindowType window,
+			     EGLNativeWindowType window_for_legacy,
+			     void *window_for_platform,
 			     const EGLint *attribs,
-			     const EGLint *visual_id);
+			     const EGLint *visual_id,
+			     const int n_ids);
 
 	void (*output_destroy)(struct weston_output *output);
 

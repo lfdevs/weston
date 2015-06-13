@@ -1,4 +1,0 @@
-0000000000000000000000000000000000000000 dbd8606a2a9425605102db9e722289934ab7b8b4 Emilio Pozuelo Monfort <pochu27@gmail.com> 1432680438 +0200	branch: Created from refs/remotes/origin/upstream-experimental
-dbd8606a2a9425605102db9e722289934ab7b8b4 64e1491f8f63d2b008e759779c12e915700317e9 Emilio Pozuelo Monfort <pochu27@gmail.com> 1432681348 +0200	merge upstream-unstable: Merge made by the 'ours' strategy.
-64e1491f8f63d2b008e759779c12e915700317e9 dbd8606a2a9425605102db9e722289934ab7b8b4 Emilio Pozuelo Monfort <pochu@debian.org> 1432681403 +0200	reset: moving to HEAD^
-dbd8606a2a9425605102db9e722289934ab7b8b4 a69bf001258c54bfe70a2f49af1664b12381b51a Emilio Pozuelo Monfort <pochu@debian.org> 1432681410 +0200	merge upstream-unstable: Merge made by the 'ours' strategy.

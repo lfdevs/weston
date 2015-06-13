@@ -34,7 +34,7 @@
 #include <cairo.h>
 #include <sys/wait.h>
 #include <sys/timerfd.h>
-#include <sys/epoll.h> 
+#include <sys/epoll.h>
 #include <linux/input.h>
 #include <libgen.h>
 #include <ctype.h>
@@ -145,26 +145,6 @@ sigchild_handler(int s)
 		fprintf(stderr, "child %d exited\n", pid);
 }
 
-static void
-menu_func(void *data, struct input *input, int index)
-{
-	printf("Selected index %d from a panel menu.\n", index);
-}
-
-static void
-show_menu(struct panel *panel, struct input *input, uint32_t time)
-{
-	int32_t x, y;
-	static const char *entries[] = {
-		"Roy", "Pris", "Leon", "Zhora"
-	};
-
-	input_get_position(input, &x, &y);
-	window_show_menu(window_get_display(panel->window),
-			 input, time, panel->window,
-			 x - 10, y - 10, menu_func, entries, 4);
-}
-
 static int
 is_desktop_painted(struct desktop *desktop)
 {
@@ -261,7 +241,7 @@ panel_launcher_motion_handler(struct widget *widget, struct input *input,
 static void
 set_hex_color(cairo_t *cr, uint32_t color)
 {
-	cairo_set_source_rgba(cr, 
+	cairo_set_source_rgba(cr,
 			      ((color >> 16) & 0xff) / 255.0,
 			      ((color >>  8) & 0xff) / 255.0,
 			      ((color >>  0) & 0xff) / 255.0,
@@ -339,7 +319,7 @@ panel_launcher_touch_down_handler(struct widget *widget, struct input *input,
 
 static void
 panel_launcher_touch_up_handler(struct widget *widget, struct input *input,
-				uint32_t serial, uint32_t time, int32_t id, 
+				uint32_t serial, uint32_t time, int32_t id,
 				void *data)
 {
 	struct panel_launcher *launcher;
@@ -454,25 +434,13 @@ panel_add_clock(struct panel *panel)
 }
 
 static void
-panel_button_handler(struct widget *widget,
-		     struct input *input, uint32_t time,
-		     uint32_t button,
-		     enum wl_pointer_button_state state, void *data)
-{
-	struct panel *panel = data;
-
-	if (button == BTN_RIGHT && state == WL_POINTER_BUTTON_STATE_PRESSED)
-		show_menu(panel, input, time);
-}
-
-static void
 panel_resize_handler(struct widget *widget,
 		     int32_t width, int32_t height, void *data)
 {
 	struct panel_launcher *launcher;
 	struct panel *panel = data;
 	int x, y, w, h;
-	
+
 	x = 10;
 	y = 16;
 	wl_list_for_each(launcher, &panel->launcher_list, link) {
@@ -553,8 +521,7 @@ panel_create(struct desktop *desktop)
 
 	widget_set_redraw_handler(panel->widget, panel_redraw_handler);
 	widget_set_resize_handler(panel->widget, panel_resize_handler);
-	widget_set_button_handler(panel->widget, panel_button_handler);
-	
+
 	panel_add_clock(panel);
 
 	s = weston_config_get_section(desktop->config, "shell", NULL, NULL);
@@ -1328,11 +1295,13 @@ int main(int argc, char *argv[])
 	struct desktop desktop = { 0 };
 	struct output *output;
 	struct weston_config_section *s;
+	const char *config_file;
 
 	desktop.unlock_task.run = unlock_dialog_finish;
 	wl_list_init(&desktop.outputs);
 
-	desktop.config = weston_config_parse("weston.ini");
+	config_file = weston_config_get_name_from_env();
+	desktop.config = weston_config_parse(config_file);
 	s = weston_config_get_section(desktop.config, "shell", NULL, NULL);
 	weston_config_section_get_bool(s, "locking", &desktop.locking, 1);
 

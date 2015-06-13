@@ -1,4 +1,0 @@
-0000000000000000000000000000000000000000 e8e9f6e5d96a57d24cc901f82f8ab33380568340 Emilio Pozuelo Monfort <pochu27@gmail.com> 1432547284 +0200	clone: from git+ssh://git.debian.org/git/pkg-xorg/wayland/weston.git
-e8e9f6e5d96a57d24cc901f82f8ab33380568340 6127cfdc80ede303cb6e3ca7e15aeede47d0d07a Emilio Pozuelo Monfort <pochu27@gmail.com> 1432680446 +0200	merge debian-experimental: Fast-forward
-6127cfdc80ede303cb6e3ca7e15aeede47d0d07a 1678f1738ccedf27d017a4b1cddc174cf395e233 Emilio Pozuelo Monfort <pochu@debian.org> 1432681649 +0200	commit: Remove Cyril from Uploaders
-1678f1738ccedf27d017a4b1cddc174cf395e233 d528ff1cda92c5606868ad89cd63c43365df5938 Emilio Pozuelo Monfort <pochu@debian.org> 1432681674 +0200	commit: Upload to unstable

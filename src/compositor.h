@@ -122,6 +122,7 @@ struct weston_shell_interface {
 				    int32_t x, int32_t y,
 				    int32_t width, int32_t height);
 	void (*set_maximized)(struct shell_surface *shsurf);
+	void (*set_pid)(struct shell_surface *shsurf, pid_t pid);
 };
 
 struct weston_animation {
@@ -160,10 +161,6 @@ struct weston_output_zoom {
 	float trans_x, trans_y;
 	struct weston_animation animation_z;
 	struct weston_spring spring_z;
-	struct weston_animation animation_xy;
-	struct weston_spring spring_xy;
-	struct weston_fixed_point from;
-	struct weston_fixed_point to;
 	struct weston_fixed_point current;
 	struct wl_listener motion_listener;
 };
@@ -186,14 +183,23 @@ struct weston_output {
 	struct wl_list resource_list;
 	struct wl_global *global;
 	struct weston_compositor *compositor;
+
+	/** From global to output buffer coordinates. */
 	struct weston_matrix matrix;
+	/** From output buffer to global coordinates. */
+	struct weston_matrix inverse_matrix;
+
 	struct wl_list animation_list;
 	int32_t x, y, width, height;
 	int32_t mm_width, mm_height;
+
+	/** Output area in global coordinates, simple rect */
 	pixman_region32_t region;
+
 	pixman_region32_t previous_damage;
 	int repaint_needed;
 	int repaint_scheduled;
+	struct wl_event_source *repaint_timer;
 	struct weston_output_zoom zoom;
 	int dirty;
 	struct wl_signal frame_signal;
@@ -412,7 +418,7 @@ weston_touch_create(void);
 void
 weston_touch_destroy(struct weston_touch *touch);
 void
-weston_touch_set_focus(struct weston_seat *seat,
+weston_touch_set_focus(struct weston_touch *touch,
 		       struct weston_view *view);
 void
 weston_touch_start_grab(struct weston_touch *device,
@@ -430,6 +436,9 @@ wl_data_device_manager_init(struct wl_display *display);
 void
 weston_seat_set_selection(struct weston_seat *seat,
 			  struct weston_data_source *source, uint32_t serial);
+void
+weston_seat_send_selection(struct weston_seat *seat, struct wl_client *client);
+
 int
 weston_pointer_start_drag(struct weston_pointer *pointer,
 		       struct weston_data_source *source,
@@ -552,7 +561,7 @@ struct weston_layer {
 
 struct weston_plane {
 	struct weston_compositor *compositor;
-	pixman_region32_t damage;
+	pixman_region32_t damage; /**< in global coords */
 	pixman_region32_t clip;
 	int32_t x, y;
 	struct wl_list link;
@@ -571,6 +580,17 @@ struct weston_renderer {
 			       float red, float green,
 			       float blue, float alpha);
 	void (*destroy)(struct weston_compositor *ec);
+
+
+	/** See weston_surface_get_content_size() */
+	void (*surface_get_content_size)(struct weston_surface *surface,
+					 int *width, int *height);
+
+	/** See weston_surface_copy_content() */
+	int (*surface_copy_content)(struct weston_surface *surface,
+				    void *target, size_t size,
+				    int src_x, int src_y,
+				    int width, int height);
 };
 
 enum weston_capability {
@@ -580,11 +600,14 @@ enum weston_capability {
 	/* screencaptures need to be y-flipped */
 	WESTON_CAP_CAPTURE_YFLIP		= 0x0002,
 
-	/* backend/renderer has a seperate cursor plane */
+	/* backend/renderer has a separate cursor plane */
 	WESTON_CAP_CURSOR_PLANE			= 0x0004,
 
 	/* backend supports setting arbitrary resolutions */
 	WESTON_CAP_ARBITRARY_MODES		= 0x0008,
+
+	/* renderer supports weston_view_set_mask() clipping */
+	WESTON_CAP_VIEW_CLIP_MASK		= 0x0010,
 };
 
 struct weston_compositor {
@@ -667,6 +690,7 @@ struct weston_compositor {
 	int32_t kb_repeat_delay;
 
 	clockid_t presentation_clock;
+	int32_t repaint_msec;
 
 	int exit_code;
 };
@@ -757,11 +781,13 @@ struct weston_view {
 	struct wl_signal destroy_signal;
 
 	struct wl_list link;
-	struct weston_layer_entry layer_link;
+	struct weston_layer_entry layer_link; /* part of geometry */
 	struct weston_plane *plane;
+
+	/* For weston_layer inheritance from another view */
 	struct weston_view *parent_view;
 
-	pixman_region32_t clip;
+	pixman_region32_t clip;          /* See weston_view_damage_below() */
 	float alpha;                     /* part of geometry, see below */
 
 	void *renderer_state;
@@ -781,6 +807,10 @@ struct weston_view {
 		struct wl_listener parent_destroy_listener;
 		struct wl_list child_list; /* geometry.parent_link */
 		struct wl_list parent_link;
+
+		/* managed by weston_view_set_mask() */
+		bool scissor_enabled;
+		pixman_region32_t scissor; /* always a simple rect */
 	} geometry;
 
 	/* State derived from geometry state, read-only.
@@ -789,10 +819,14 @@ struct weston_view {
 	struct {
 		int dirty;
 
+		/* Approximations in global coordinates:
+		 * - boundingbox is guaranteed to include the whole view in
+		 *   the smallest possible single rectangle.
+		 * - opaque is guaranteed to be fully opaque, though not
+		 *   necessarily include all opaque areas.
+		 */
 		pixman_region32_t boundingbox;
 		pixman_region32_t opaque;
-		pixman_region32_t masked_boundingbox;
-		pixman_region32_t masked_opaque;
 
 		/* matrix and inverse are used only if enabled = 1.
 		 * If enabled = 0, use x, y, width, height directly.
@@ -852,9 +886,12 @@ struct weston_surface_state {
 
 struct weston_surface {
 	struct wl_resource *resource;
-	struct wl_signal destroy_signal;
+	struct wl_signal destroy_signal; /* callback argument: this surface */
 	struct weston_compositor *compositor;
+
+	/** Damage in local coordinates from the client, for tex upload. */
 	pixman_region32_t damage;
+
 	pixman_region32_t opaque;        /* part of geometry, see below */
 	pixman_region32_t input;
 	int32_t width, height;
@@ -896,6 +933,12 @@ struct weston_surface {
 
 	/* All the pending state, that wl_surface.commit will apply. */
 	struct weston_surface_state pending;
+
+	/* Matrices representating of the full transformation between
+	 * buffer and surface coordinates.  These matrices are updated
+	 * using the weston_surface_build_buffer_matrix function. */
+	struct weston_matrix buffer_to_surface_matrix;
+	struct weston_matrix surface_to_buffer_matrix;
 
 	/*
 	 * If non-NULL, this function will be called on
@@ -997,6 +1040,11 @@ weston_surface_to_buffer(struct weston_surface *surface,
 pixman_box32_t
 weston_surface_to_buffer_rect(struct weston_surface *surface,
 			      pixman_box32_t rect);
+
+void
+weston_surface_to_buffer_region(struct weston_surface *surface,
+				pixman_region32_t *surface_region,
+				pixman_region32_t *buffer_region);
 
 void
 weston_spring_init(struct weston_spring *spring,
@@ -1158,6 +1206,10 @@ void
 weston_binding_destroy(struct weston_binding *binding);
 
 void
+weston_install_debug_key_binding(struct weston_compositor *compositor,
+				 uint32_t mod);
+
+void
 weston_binding_list_destroy_all(struct wl_list *list);
 
 void
@@ -1217,6 +1269,13 @@ void
 weston_view_set_transform_parent(struct weston_view *view,
 				 struct weston_view *parent);
 
+void
+weston_view_set_mask(struct weston_view *view,
+		     int x, int y, int width, int height);
+
+void
+weston_view_set_mask_infinite(struct weston_view *view);
+
 bool
 weston_view_is_mapped(struct weston_view *view);
 
@@ -1262,6 +1321,16 @@ weston_surface_set_label_func(struct weston_surface *surface,
 			      int (*desc)(struct weston_surface *,
 					  char *, size_t));
 
+void
+weston_surface_get_content_size(struct weston_surface *surface,
+				int *width, int *height);
+
+int
+weston_surface_copy_content(struct weston_surface *surface,
+			    void *target, size_t size,
+			    int src_x, int src_y,
+			    int width, int height);
+
 struct weston_buffer *
 weston_buffer_from_resource(struct wl_resource *resource);
 
@@ -1282,6 +1351,11 @@ int
 weston_compositor_set_presentation_clock_software(
 					struct weston_compositor *compositor);
 void
+weston_compositor_read_presentation_clock(
+			const struct weston_compositor *compositor,
+			struct timespec *ts);
+
+void
 weston_compositor_shutdown(struct weston_compositor *ec);
 void
 weston_compositor_exit_with_code(struct weston_compositor *compositor,
@@ -1299,6 +1373,9 @@ weston_output_move(struct weston_output *output, int x, int y);
 void
 weston_output_init(struct weston_output *output, struct weston_compositor *c,
 		   int x, int y, int width, int height, uint32_t transform, int32_t scale);
+void
+weston_compositor_add_output(struct weston_compositor *compositor,
+                             struct weston_output *output);
 void
 weston_output_destroy(struct weston_output *output);
 void

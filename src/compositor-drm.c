@@ -481,6 +481,9 @@ drm_output_prepare_scanout_view(struct drm_output *output,
 	    ev->transform.enabled)
 		return NULL;
 
+	if (ev->geometry.scissor_enabled)
+		return NULL;
+
 	bo = gbm_bo_import(c->gbm, GBM_BO_IMPORT_WL_BUFFER,
 			   buffer->resource, GBM_BO_USE_SCANOUT);
 
@@ -720,7 +723,7 @@ drm_output_start_repaint_loop(struct weston_output *output_base)
 
 finish_frame:
 	/* if we cannot page-flip, immediately finish frame */
-	clock_gettime(compositor->base.presentation_clock, &ts);
+	weston_compositor_read_presentation_clock(&compositor->base, &ts);
 	weston_output_finish_frame(output_base, &ts,
 				   PRESENTATION_FEEDBACK_INVALID);
 }
@@ -1000,6 +1003,8 @@ drm_output_prepare_cursor_view(struct drm_output *output,
 		return NULL;
 	if (c->cursors_are_broken)
 		return NULL;
+	if (ev->geometry.scissor_enabled)
+		return NULL;
 	if (ev->surface->buffer_ref.buffer == NULL ||
 	    !wl_shm_buffer_get(ev->surface->buffer_ref.buffer->resource) ||
 	    ev->surface->width > 64 || ev->surface->height > 64)
@@ -1216,10 +1221,10 @@ choose_mode (struct drm_output *output, struct weston_mode *target_mode)
 	wl_list_for_each(mode, &output->base.mode_list, base.link) {
 		if (mode->mode_info.hdisplay == target_mode->width &&
 		    mode->mode_info.vdisplay == target_mode->height) {
-			if (mode->mode_info.vrefresh == target_mode->refresh || 
+			if (mode->mode_info.vrefresh == target_mode->refresh ||
           		    target_mode->refresh == 0) {
 				return mode;
-			} else if (!tmp_mode) 
+			} else if (!tmp_mode)
 				tmp_mode = mode;
 		}
 	}
@@ -1386,14 +1391,46 @@ create_gbm_device(int fd)
 	return gbm;
 }
 
+/* When initializing EGL, if the preferred buffer format isn't available
+ * we may be able to susbstitute an ARGB format for an XRGB one.
+ *
+ * This returns 0 if substitution isn't possible, but 0 might be a
+ * legitimate format for other EGL platforms, so the caller is
+ * responsible for checking for 0 before calling gl_renderer->create().
+ *
+ * This works around https://bugs.freedesktop.org/show_bug.cgi?id=89689
+ * but it's entirely possible we'll see this again on other implementations.
+ */
+static int
+fallback_format_for(uint32_t format)
+{
+	switch (format) {
+	case GBM_FORMAT_XRGB8888:
+		return GBM_FORMAT_ARGB8888;
+	case GBM_FORMAT_XRGB2101010:
+		return GBM_FORMAT_ARGB2101010;
+	default:
+		return 0;
+	}
+}
+
 static int
 drm_compositor_create_gl_renderer(struct drm_compositor *ec)
 {
-	EGLint format;
+	EGLint format[2] = {
+		ec->format,
+		fallback_format_for(ec->format),
+	};
+	int n_formats = 1;
 
-	format = ec->format;
-	if (gl_renderer->create(&ec->base, ec->gbm,
-			       gl_renderer->opaque_attribs, &format) < 0) {
+	if (format[1])
+		n_formats = 2;
+	if (gl_renderer->create(&ec->base,
+				EGL_PLATFORM_GBM_KHR,
+				(void *)ec->gbm,
+				gl_renderer->opaque_attribs,
+				format,
+				n_formats) < 0) {
 		return -1;
 	}
 
@@ -1597,13 +1634,16 @@ find_crtc_for_connector(struct drm_compositor *ec,
 static int
 drm_output_init_egl(struct drm_output *output, struct drm_compositor *ec)
 {
-	EGLint format = output->format;
-	int i, flags;
+	EGLint format[2] = {
+		output->format,
+		fallback_format_for(output->format),
+	};
+	int i, flags, n_formats = 1;
 
 	output->surface = gbm_surface_create(ec->gbm,
 					     output->base.current_mode->width,
 					     output->base.current_mode->height,
-					     format,
+					     format[0],
 					     GBM_BO_USE_SCANOUT |
 					     GBM_BO_USE_RENDERING);
 	if (!output->surface) {
@@ -1611,9 +1651,14 @@ drm_output_init_egl(struct drm_output *output, struct drm_compositor *ec)
 		return -1;
 	}
 
-	if (gl_renderer->output_create(&output->base, output->surface,
+	if (format[1])
+		n_formats = 2;
+	if (gl_renderer->output_create(&output->base,
+				       (EGLNativeDisplayType)output->surface,
+				       output->surface,
 				       gl_renderer->opaque_attribs,
-				       &format) < 0) {
+				       format,
+				       n_formats) < 0) {
 		weston_log("failed to create gl renderer output state\n");
 		gbm_surface_destroy(output->surface);
 		return -1;
@@ -2118,7 +2163,7 @@ create_output_for_connector(struct drm_compositor *ec,
 		weston_log("Failed to initialize backlight\n");
 	}
 
-	wl_list_insert(ec->base.output_list.prev, &output->base.link);
+	weston_compositor_add_output(&ec->base, &output->base);
 
 	find_and_parse_output_edid(ec, output, connector);
 	if (connector->connector_type == DRM_MODE_CONNECTOR_LVDS)
@@ -2370,7 +2415,7 @@ update_outputs(struct drm_compositor *ec, struct udev_device *drm_device)
 		}
 	}
 
-	/* FIXME: handle zero outputs, without terminating */	
+	/* FIXME: handle zero outputs, without terminating */
 	if (ec->connector_allocator == 0)
 		wl_display_terminate(ec->base.wl_display);
 }
@@ -2464,7 +2509,7 @@ drm_compositor_set_modes(struct drm_compositor *compositor)
 		if (ret < 0) {
 			weston_log(
 				"failed to set mode %dx%d for output at %d,%d: %m\n",
-				drm_mode->base.width, drm_mode->base.height, 
+				drm_mode->base.width, drm_mode->base.height,
 				output->base.x, output->base.y);
 		}
 	}
@@ -2772,9 +2817,17 @@ drm_compositor_create(struct wl_display *display,
 	if (ec == NULL)
 		return NULL;
 
-	/* KMS support for sprites is not complete yet, so disable the
-	 * functionality for now. */
+	/*
+	 * KMS support for hardware planes cannot properly synchronize
+	 * without nuclear page flip. Without nuclear/atomic, hw plane
+	 * and cursor plane updates would either tear or cause extra
+	 * waits for vblanks which means dropping the compositor framerate
+	 * to a fraction.
+	 *
+	 * These can be enabled again when nuclear/atomic support lands.
+	 */
 	ec->sprites_are_broken = 1;
+	ec->cursors_are_broken = 1;
 
 	section = weston_config_get_section(config, "core", NULL, NULL);
 	if (get_gbm_format_from_section(section,

@@ -38,6 +38,7 @@
 #include <sys/mman.h>
 #include <sys/epoll.h>
 #include <sys/timerfd.h>
+#include <stdbool.h>
 
 #ifdef HAVE_CAIRO_EGL
 #include <wayland-egl.h>
@@ -253,7 +254,7 @@ struct window {
 	struct xdg_popup *xdg_popup;
 
 	struct window *parent;
-	struct wl_surface *last_parent_surface;
+	struct window *last_parent;
 
 	struct ivi_surface *ivi_surface;
 
@@ -639,10 +640,10 @@ egl_window_surface_create(struct display *display,
 						   rectangle->width,
 						   rectangle->height);
 
-	surface->egl_surface = eglCreateWindowSurface(display->dpy,
-						      display->argb_config,
-						      surface->egl_window,
-						      NULL);
+	surface->egl_surface =
+		weston_platform_create_egl_surface(display->dpy,
+						   display->argb_config,
+						   surface->egl_window, NULL);
 
 	surface->cairo_surface =
 		cairo_gl_surface_create_for_egl(display->argb_device,
@@ -1031,7 +1032,7 @@ shm_surface_prepare(struct toysurface *base, int dx, int dy,
 	surface->dx = dx;
 	surface->dy = dy;
 
-	/* pick a free buffer, preferrably one that already has storage */
+	/* pick a free buffer, preferably one that already has storage */
 	for (i = 0; i < MAX_LEAVES; i++) {
 		if (surface->leaf[i].busy)
 			continue;
@@ -1287,6 +1288,7 @@ static const struct cursor_alternatives cursors[] = {
 static void
 create_cursors(struct display *display)
 {
+	const char *config_file;
 	struct weston_config *config;
 	struct weston_config_section *s;
 	int size;
@@ -1294,7 +1296,8 @@ create_cursors(struct display *display)
 	unsigned int i, j;
 	struct wl_cursor *cursor;
 
-	config = weston_config_parse("weston.ini");
+	config_file = weston_config_get_name_from_env();
+	config = weston_config_parse(config_file);
 	s = weston_config_get_section(config, "shell", NULL, NULL);
 	weston_config_section_get_string(s, "cursor-theme", &theme, NULL);
 	weston_config_section_get_int(s, "cursor-size", &size, 32);
@@ -3178,7 +3181,7 @@ touch_handle_frame(void *data, struct wl_touch *wl_touch)
 
 	wl_list_for_each_safe(tp, tmp, &input->touch_point_list, link) {
 		if (tp->widget->touch_frame_handler)
-			(*tp->widget->touch_frame_handler)(tp->widget, input, 
+			(*tp->widget->touch_frame_handler)(tp->widget, input,
 							   tp->widget->user_data);
 	}
 }
@@ -3524,6 +3527,22 @@ input_set_pointer_image_index(struct input *input, int index)
 
 static const struct wl_callback_listener pointer_surface_listener;
 
+static bool
+input_set_pointer_special(struct input *input)
+{
+	if (input->current_cursor == CURSOR_BLANK) {
+		wl_pointer_set_cursor(input->pointer,
+				      input->pointer_enter_serial,
+				      NULL, 0, 0);
+		return true;
+	}
+
+	if (input->current_cursor == CURSOR_UNSET)
+		return true;
+
+	return false;
+}
+
 static void
 pointer_surface_frame_callback(void *data, struct wl_callback *callback,
 			       uint32_t time)
@@ -3541,15 +3560,9 @@ pointer_surface_frame_callback(void *data, struct wl_callback *callback,
 	if (!input->pointer)
 		return;
 
-	if (input->current_cursor == CURSOR_BLANK) {
-		wl_pointer_set_cursor(input->pointer,
-				      input->pointer_enter_serial,
-				      NULL, 0, 0);
+	if (input_set_pointer_special(input))
 		return;
-	}
 
-	if (input->current_cursor == CURSOR_UNSET)
-		return;
 	cursor = input->display->cursors[input->current_cursor];
 	if (!cursor)
 		return;
@@ -3598,7 +3611,7 @@ input_set_pointer_image(struct input *input, int pointer)
 	input->cursor_serial = input->pointer_enter_serial;
 	if (!input->cursor_frame_cb)
 		pointer_surface_frame_callback(input, NULL, 0);
-	else if (force) {
+	else if (force && !input_set_pointer_special(input)) {
 		/* The current frame callback may be stuck if, for instance,
 		 * the set cursor request was processed by the server after
 		 * this client lost the focus. In this case the cursor surface
@@ -4031,21 +4044,21 @@ static const struct xdg_surface_listener xdg_surface_listener = {
 static void
 window_sync_parent(struct window *window)
 {
-	struct wl_surface *parent_surface;
+	struct xdg_surface *parent_surface;
 
 	if (!window->xdg_surface)
 		return;
 
+	if (window->parent == window->last_parent)
+		return;
+
 	if (window->parent)
-		parent_surface = window->parent->main_surface->surface;
+		parent_surface = window->parent->xdg_surface;
 	else
 		parent_surface = NULL;
 
-	if (parent_surface == window->last_parent_surface)
-		return;
-
 	xdg_surface_set_parent(window->xdg_surface, parent_surface);
-	window->last_parent_surface = parent_surface;
+	window->last_parent = window->parent;
 }
 
 static void
@@ -4727,7 +4740,7 @@ menu_redraw_handler(struct widget *widget, void *data)
 }
 
 static void
-handle_popup_popup_done(void *data, struct xdg_popup *xdg_popup, uint32_t serial)
+handle_popup_popup_done(void *data, struct xdg_popup *xdg_popup)
 {
 	struct window *window = data;
 	struct menu *menu = window->main_surface->widget->user_data;
@@ -4840,8 +4853,7 @@ window_show_menu(struct display *display,
 						    input->seat,
 						    display_get_serial(window->display),
 						    window->x - ix,
-						    window->y - iy,
-						    0);
+						    window->y - iy);
 	fail_on_null(window->xdg_popup);
 
 	xdg_popup_set_user_data(window->xdg_popup, window);
@@ -5246,7 +5258,7 @@ static const struct xdg_shell_listener xdg_shell_listener = {
 	xdg_shell_ping,
 };
 
-#define XDG_VERSION 4 /* The version of xdg-shell that we implement */
+#define XDG_VERSION 5 /* The version of xdg-shell that we implement */
 #ifdef static_assert
 static_assert(XDG_VERSION == XDG_SHELL_VERSION_CURRENT,
 	      "Interface version doesn't match implementation version");
@@ -5382,7 +5394,10 @@ init_egl(struct display *d)
 	EGLint api = EGL_OPENGL_API;
 #endif
 
-	d->dpy = eglGetDisplay(d->display);
+	d->dpy =
+		weston_platform_get_egl_display(EGL_PLATFORM_WAYLAND_KHR,
+						d->display, NULL);
+
 	if (!eglInitialize(d->dpy, &major, &minor)) {
 		fprintf(stderr, "failed to initialize EGL\n");
 		return -1;

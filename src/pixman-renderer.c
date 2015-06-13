@@ -1,6 +1,7 @@
 /*
  * Copyright © 2012 Intel Corporation
  * Copyright © 2013 Vasily Khoruzhick <anarsoul@gmail.com>
+ * Copyright © 2015 Collabora, Ltd.
  *
  * Permission to use, copy, modify, distribute, and sell this software and
  * its documentation for any purpose is hereby granted without fee, provided
@@ -25,6 +26,7 @@
 
 #include <errno.h>
 #include <stdlib.h>
+#include <assert.h>
 
 #include "pixman-renderer.h"
 
@@ -139,37 +141,184 @@ region_global_to_output(struct weston_output *output, pixman_region32_t *region)
 #define D2F(v) pixman_double_to_fixed((double)v)
 
 static void
-transform_apply_viewport(pixman_transform_t *transform,
-			 struct weston_surface *surface)
+weston_matrix_to_pixman_transform(pixman_transform_t *pt,
+				  const struct weston_matrix *wm)
 {
-	struct weston_buffer_viewport *vp = &surface->buffer_viewport;
-	double src_width, src_height;
-	double src_x, src_y;
-
-	if (vp->buffer.src_width == wl_fixed_from_int(-1)) {
-		if (vp->surface.width == -1)
-			return;
-
-		src_x = 0.0;
-		src_y = 0.0;
-		src_width = surface->width_from_buffer;
-		src_height = surface->height_from_buffer;
-	} else {
-		src_x = wl_fixed_to_double(vp->buffer.src_x);
-		src_y = wl_fixed_to_double(vp->buffer.src_y);
-		src_width = wl_fixed_to_double(vp->buffer.src_width);
-		src_height = wl_fixed_to_double(vp->buffer.src_height);
-	}
-
-	pixman_transform_scale(transform, NULL,
-			       D2F(src_width / surface->width),
-			       D2F(src_height / surface->height));
-	pixman_transform_translate(transform, NULL, D2F(src_x), D2F(src_y));
+	/* Pixman supports only 2D transform matrix, but Weston uses 3D, *
+	 * so we're omitting Z coordinate here. */
+	pt->matrix[0][0] = pixman_double_to_fixed(wm->d[0]);
+	pt->matrix[0][1] = pixman_double_to_fixed(wm->d[4]);
+	pt->matrix[0][2] = pixman_double_to_fixed(wm->d[12]);
+	pt->matrix[1][0] = pixman_double_to_fixed(wm->d[1]);
+	pt->matrix[1][1] = pixman_double_to_fixed(wm->d[5]);
+	pt->matrix[1][2] = pixman_double_to_fixed(wm->d[13]);
+	pt->matrix[2][0] = pixman_double_to_fixed(wm->d[3]);
+	pt->matrix[2][1] = pixman_double_to_fixed(wm->d[7]);
+	pt->matrix[2][2] = pixman_double_to_fixed(wm->d[15]);
 }
 
 static void
+pixman_renderer_compute_transform(pixman_transform_t *transform_out,
+				  struct weston_view *ev,
+				  struct weston_output *output)
+{
+	struct weston_matrix matrix;
+
+	/* Set up the source transformation based on the surface
+	   position, the output position/transform/scale and the client
+	   specified buffer transform/scale */
+	matrix = output->inverse_matrix;
+
+	if (ev->transform.enabled) {
+		weston_matrix_multiply(&matrix, &ev->transform.inverse);
+	} else {
+		weston_matrix_translate(&matrix,
+					-ev->geometry.x, -ev->geometry.y, 0);
+	}
+
+	weston_matrix_multiply(&matrix, &ev->surface->surface_to_buffer_matrix);
+
+	weston_matrix_to_pixman_transform(transform_out, &matrix);
+}
+
+static bool
+view_transformation_is_translation(struct weston_view *view)
+{
+	if (!view->transform.enabled)
+		return true;
+
+	if (view->transform.matrix.type <= WESTON_MATRIX_TRANSFORM_TRANSLATE)
+		return true;
+
+	return false;
+}
+
+static void
+region_intersect_only_translation(pixman_region32_t *result_global,
+				  pixman_region32_t *global,
+				  pixman_region32_t *surf,
+				  struct weston_view *view)
+{
+	float view_x, view_y;
+
+	assert(view_transformation_is_translation(view));
+
+	/* Convert from surface to global coordinates */
+	pixman_region32_copy(result_global, surf);
+	weston_view_to_global_float(view, 0, 0, &view_x, &view_y);
+	pixman_region32_translate(result_global, (int)view_x, (int)view_y);
+
+	pixman_region32_intersect(result_global, result_global, global);
+}
+
+static void
+composite_whole(pixman_op_t op,
+		pixman_image_t *src,
+		pixman_image_t *mask,
+		pixman_image_t *dest,
+		const pixman_transform_t *transform,
+		pixman_filter_t filter)
+{
+	int32_t dest_width;
+	int32_t dest_height;
+
+	dest_width = pixman_image_get_width(dest);
+	dest_height = pixman_image_get_height(dest);
+
+	pixman_image_set_transform(src, transform);
+	pixman_image_set_filter(src, filter, NULL, 0);
+
+	pixman_image_composite32(op, src, mask, dest,
+				 0, 0, /* src_x, src_y */
+				 0, 0, /* mask_x, mask_y */
+				 0, 0, /* dest_x, dest_y */
+				 dest_width, dest_height);
+}
+
+static void
+composite_clipped(pixman_image_t *src,
+		  pixman_image_t *mask,
+		  pixman_image_t *dest,
+		  const pixman_transform_t *transform,
+		  pixman_filter_t filter,
+		  pixman_region32_t *src_clip)
+{
+	int n_box;
+	pixman_box32_t *boxes;
+	int32_t dest_width;
+	int32_t dest_height;
+	int src_stride;
+	int bitspp;
+	pixman_format_code_t src_format;
+	void *src_data;
+	int i;
+
+	/* Hardcoded to use PIXMAN_OP_OVER, because sampling outside of
+	 * a Pixman image produces (0,0,0,0) instead of discarding the
+	 * fragment.
+	 */
+
+	dest_width = pixman_image_get_width(dest);
+	dest_height = pixman_image_get_height(dest);
+	src_format = pixman_image_get_format(src);
+	src_stride = pixman_image_get_stride(src);
+	bitspp = PIXMAN_FORMAT_BPP(src_format);
+	src_data = pixman_image_get_data(src);
+
+	assert(src_format);
+
+	/* This would be massive overdraw, except when n_box is 1. */
+	boxes = pixman_region32_rectangles(src_clip, &n_box);
+	for (i = 0; i < n_box; i++) {
+		uint8_t *ptr = src_data;
+		pixman_image_t *boximg;
+		pixman_transform_t adj = *transform;
+
+		ptr += boxes[i].y1 * src_stride;
+		ptr += boxes[i].x1 * bitspp / 8;
+		boximg = pixman_image_create_bits_no_clear(src_format,
+					boxes[i].x2 - boxes[i].x1,
+					boxes[i].y2 - boxes[i].y1,
+					(uint32_t *)ptr, src_stride);
+
+		pixman_transform_translate(&adj, NULL,
+					   pixman_int_to_fixed(-boxes[i].x1),
+					   pixman_int_to_fixed(-boxes[i].y1));
+		pixman_image_set_transform(boximg, &adj);
+
+		pixman_image_set_filter(boximg, filter, NULL, 0);
+		pixman_image_composite32(PIXMAN_OP_OVER, boximg, mask, dest,
+					 0, 0, /* src_x, src_y */
+					 0, 0, /* mask_x, mask_y */
+					 0, 0, /* dest_x, dest_y */
+					 dest_width, dest_height);
+
+		pixman_image_unref(boximg);
+	}
+
+	if (n_box > 1) {
+		static bool warned = false;
+
+		if (!warned)
+			weston_log("Pixman-renderer warning: %dx overdraw\n",
+				   n_box);
+		warned = true;
+	}
+}
+
+/** Paint an intersected region
+ *
+ * \param ev The view to be painted.
+ * \param output The output being painted.
+ * \param repaint_output The region to be painted in output coordinates.
+ * \param source_clip The region of the source image to use, in source image
+ *                    coordinates. If NULL, use the whole source image.
+ * \param pixman_op Compositing operator, either SRC or OVER.
+ */
+static void
 repaint_region(struct weston_view *ev, struct weston_output *output,
-	       pixman_region32_t *region, pixman_region32_t *surf_region,
+	       pixman_region32_t *repaint_output,
+	       pixman_region32_t *source_clip,
 	       pixman_op_t pixman_op)
 {
 	struct pixman_renderer *pr =
@@ -177,167 +326,20 @@ repaint_region(struct weston_view *ev, struct weston_output *output,
 	struct pixman_surface_state *ps = get_surface_state(ev->surface);
 	struct pixman_output_state *po = get_output_state(output);
 	struct weston_buffer_viewport *vp = &ev->surface->buffer_viewport;
-	pixman_region32_t final_region;
-	float view_x, view_y;
 	pixman_transform_t transform;
-	pixman_fixed_t fw, fh;
+	pixman_filter_t filter;
 	pixman_image_t *mask_image;
 	pixman_color_t mask = { 0, };
 
-	/* The final region to be painted is the intersection of
-	 * 'region' and 'surf_region'. However, 'region' is in the global
-	 * coordinates, and 'surf_region' is in the surface-local
-	 * coordinates
-	 */
-	pixman_region32_init(&final_region);
-	if (surf_region) {
-		pixman_region32_copy(&final_region, surf_region);
+	/* Clip rendering to the damaged output region */
+	pixman_image_set_clip_region32(po->shadow_image, repaint_output);
 
-		/* Convert from surface to global coordinates */
-		if (!ev->transform.enabled) {
-			pixman_region32_translate(&final_region, ev->geometry.x, ev->geometry.y);
-		} else {
-			weston_view_to_global_float(ev, 0, 0, &view_x, &view_y);
-			pixman_region32_translate(&final_region, (int)view_x, (int)view_y);
-		}
-
-		/* We need to paint the intersection */
-		pixman_region32_intersect(&final_region, &final_region, region);
-	} else {
-		/* If there is no surface region, just use the global region */
-		pixman_region32_copy(&final_region, region);
-	}
-
-	/* Convert from global to output coord */
-	region_global_to_output(output, &final_region);
-
-	/* And clip to it */
-	pixman_image_set_clip_region32 (po->shadow_image, &final_region);
-
-	/* Set up the source transformation based on the surface
-	   position, the output position/transform/scale and the client
-	   specified buffer transform/scale */
-	pixman_transform_init_identity(&transform);
-	pixman_transform_scale(&transform, NULL,
-			       pixman_double_to_fixed ((double)1.0/output->current_scale),
-			       pixman_double_to_fixed ((double)1.0/output->current_scale));
-
-	fw = pixman_int_to_fixed(output->width);
-	fh = pixman_int_to_fixed(output->height);
-	switch (output->transform) {
-	default:
-	case WL_OUTPUT_TRANSFORM_NORMAL:
-	case WL_OUTPUT_TRANSFORM_FLIPPED:
-		break;
-	case WL_OUTPUT_TRANSFORM_90:
-	case WL_OUTPUT_TRANSFORM_FLIPPED_90:
-		pixman_transform_rotate(&transform, NULL, 0, -pixman_fixed_1);
-		pixman_transform_translate(&transform, NULL, 0, fh);
-		break;
-	case WL_OUTPUT_TRANSFORM_180:
-	case WL_OUTPUT_TRANSFORM_FLIPPED_180:
-		pixman_transform_rotate(&transform, NULL, -pixman_fixed_1, 0);
-		pixman_transform_translate(&transform, NULL, fw, fh);
-		break;
-	case WL_OUTPUT_TRANSFORM_270:
-	case WL_OUTPUT_TRANSFORM_FLIPPED_270:
-		pixman_transform_rotate(&transform, NULL, 0, pixman_fixed_1);
-		pixman_transform_translate(&transform, NULL, fw, 0);
-		break;
-	}
-
-	switch (output->transform) {
-	case WL_OUTPUT_TRANSFORM_FLIPPED:
-	case WL_OUTPUT_TRANSFORM_FLIPPED_90:
-	case WL_OUTPUT_TRANSFORM_FLIPPED_180:
-	case WL_OUTPUT_TRANSFORM_FLIPPED_270:
-		pixman_transform_scale(&transform, NULL,
-				       pixman_int_to_fixed (-1),
-				       pixman_int_to_fixed (1));
-		pixman_transform_translate(&transform, NULL, fw, 0);
-		break;
-	}
-
-        pixman_transform_translate(&transform, NULL,
-				   pixman_double_to_fixed (output->x),
-				   pixman_double_to_fixed (output->y));
-
-	if (ev->transform.enabled) {
-		/* Pixman supports only 2D transform matrix, but Weston uses 3D,
-		 * so we're omitting Z coordinate here
-		 */
-		pixman_transform_t surface_transform = {{
-				{ D2F(ev->transform.matrix.d[0]),
-				  D2F(ev->transform.matrix.d[4]),
-				  D2F(ev->transform.matrix.d[12]),
-				},
-				{ D2F(ev->transform.matrix.d[1]),
-				  D2F(ev->transform.matrix.d[5]),
-				  D2F(ev->transform.matrix.d[13]),
-				},
-				{ D2F(ev->transform.matrix.d[3]),
-				  D2F(ev->transform.matrix.d[7]),
-				  D2F(ev->transform.matrix.d[15]),
-				}
-			}};
-
-		pixman_transform_invert(&surface_transform, &surface_transform);
-		pixman_transform_multiply (&transform, &surface_transform, &transform);
-	} else {
-		pixman_transform_translate(&transform, NULL,
-					   pixman_double_to_fixed ((double)-ev->geometry.x),
-					   pixman_double_to_fixed ((double)-ev->geometry.y));
-	}
-
-	transform_apply_viewport(&transform, ev->surface);
-
-	fw = pixman_int_to_fixed(ev->surface->width_from_buffer);
-	fh = pixman_int_to_fixed(ev->surface->height_from_buffer);
-
-	switch (vp->buffer.transform) {
-	case WL_OUTPUT_TRANSFORM_FLIPPED:
-	case WL_OUTPUT_TRANSFORM_FLIPPED_90:
-	case WL_OUTPUT_TRANSFORM_FLIPPED_180:
-	case WL_OUTPUT_TRANSFORM_FLIPPED_270:
-		pixman_transform_scale(&transform, NULL,
-				       pixman_int_to_fixed (-1),
-				       pixman_int_to_fixed (1));
-		pixman_transform_translate(&transform, NULL, fw, 0);
-		break;
-	}
-
-	switch (vp->buffer.transform) {
-	default:
-	case WL_OUTPUT_TRANSFORM_NORMAL:
-	case WL_OUTPUT_TRANSFORM_FLIPPED:
-		break;
-	case WL_OUTPUT_TRANSFORM_90:
-	case WL_OUTPUT_TRANSFORM_FLIPPED_90:
-		pixman_transform_rotate(&transform, NULL, 0, pixman_fixed_1);
-		pixman_transform_translate(&transform, NULL, fh, 0);
-		break;
-	case WL_OUTPUT_TRANSFORM_180:
-	case WL_OUTPUT_TRANSFORM_FLIPPED_180:
-		pixman_transform_rotate(&transform, NULL, -pixman_fixed_1, 0);
-		pixman_transform_translate(&transform, NULL, fw, fh);
-		break;
-	case WL_OUTPUT_TRANSFORM_270:
-	case WL_OUTPUT_TRANSFORM_FLIPPED_270:
-		pixman_transform_rotate(&transform, NULL, 0, -pixman_fixed_1);
-		pixman_transform_translate(&transform, NULL, 0, fw);
-		break;
-	}
-
-	pixman_transform_scale(&transform, NULL,
-			       pixman_double_to_fixed(vp->buffer.scale),
-			       pixman_double_to_fixed(vp->buffer.scale));
-
-	pixman_image_set_transform(ps->image, &transform);
+	pixman_renderer_compute_transform(&transform, ev, output);
 
 	if (ev->transform.enabled || output->current_scale != vp->buffer.scale)
-		pixman_image_set_filter(ps->image, PIXMAN_FILTER_BILINEAR, NULL, 0);
+		filter = PIXMAN_FILTER_BILINEAR;
 	else
-		pixman_image_set_filter(ps->image, PIXMAN_FILTER_NEAREST, NULL, 0);
+		filter = PIXMAN_FILTER_NEAREST;
 
 	if (ps->buffer_ref.buffer)
 		wl_shm_buffer_begin_access(ps->buffer_ref.buffer->shm_buffer);
@@ -349,15 +351,12 @@ repaint_region(struct weston_view *ev, struct weston_output *output,
 		mask_image = NULL;
 	}
 
-	pixman_image_composite32(pixman_op,
-				 ps->image, /* src */
-				 mask_image, /* mask */
-				 po->shadow_image, /* dest */
-				 0, 0, /* src_x, src_y */
-				 0, 0, /* mask_x, mask_y */
-				 0, 0, /* dest_x, dest_y */
-				 pixman_image_get_width (po->shadow_image), /* width */
-				 pixman_image_get_height (po->shadow_image) /* height */);
+	if (source_clip)
+		composite_clipped(ps->image, mask_image, po->shadow_image,
+				  &transform, filter, source_clip);
+	else
+		composite_whole(pixman_op, ps->image, mask_image,
+				po->shadow_image, &transform, filter);
 
 	if (mask_image)
 		pixman_image_unref(mask_image);
@@ -377,8 +376,90 @@ repaint_region(struct weston_view *ev, struct weston_output *output,
 					 pixman_image_get_height (po->shadow_image) /* height */);
 
 	pixman_image_set_clip_region32 (po->shadow_image, NULL);
+}
 
-	pixman_region32_fini(&final_region);
+static void
+draw_view_translated(struct weston_view *view, struct weston_output *output,
+		     pixman_region32_t *repaint_global)
+{
+	struct weston_surface *surface = view->surface;
+	/* non-opaque region in surface coordinates: */
+	pixman_region32_t surface_blend;
+	/* region to be painted in output coordinates: */
+	pixman_region32_t repaint_output;
+
+	pixman_region32_init(&repaint_output);
+
+	/* Blended region is whole surface minus opaque region,
+	 * unless surface alpha forces us to blend all.
+	 */
+	pixman_region32_init_rect(&surface_blend, 0, 0,
+				  surface->width, surface->height);
+
+	if (!(view->alpha < 1.0)) {
+		pixman_region32_subtract(&surface_blend, &surface_blend,
+					 &surface->opaque);
+
+		if (pixman_region32_not_empty(&surface->opaque)) {
+			region_intersect_only_translation(&repaint_output,
+							  repaint_global,
+							  &surface->opaque,
+							  view);
+			region_global_to_output(output, &repaint_output);
+
+			repaint_region(view, output, &repaint_output, NULL,
+				       PIXMAN_OP_SRC);
+		}
+	}
+
+	if (pixman_region32_not_empty(&surface_blend)) {
+		region_intersect_only_translation(&repaint_output,
+						  repaint_global,
+						  &surface_blend, view);
+		region_global_to_output(output, &repaint_output);
+
+		repaint_region(view, output, &repaint_output, NULL,
+			       PIXMAN_OP_OVER);
+	}
+
+	pixman_region32_fini(&surface_blend);
+	pixman_region32_fini(&repaint_output);
+}
+
+static void
+draw_view_source_clipped(struct weston_view *view,
+			 struct weston_output *output,
+			 pixman_region32_t *repaint_global)
+{
+	struct weston_surface *surface = view->surface;
+	pixman_region32_t surf_region;
+	pixman_region32_t buffer_region;
+	pixman_region32_t repaint_output;
+
+	/* Do not bother separating the opaque region from non-opaque.
+	 * Source clipping requires PIXMAN_OP_OVER in all cases, so painting
+	 * opaque separately has no benefit.
+	 */
+
+	pixman_region32_init_rect(&surf_region, 0, 0,
+				  surface->width, surface->height);
+	if (view->geometry.scissor_enabled)
+		pixman_region32_intersect(&surf_region, &surf_region,
+					  &view->geometry.scissor);
+
+	pixman_region32_init(&buffer_region);
+	weston_surface_to_buffer_region(surface, &surf_region, &buffer_region);
+
+	pixman_region32_init(&repaint_output);
+	pixman_region32_copy(&repaint_output, repaint_global);
+	region_global_to_output(output, &repaint_output);
+
+	repaint_region(view, output, &repaint_output, &buffer_region,
+		       PIXMAN_OP_OVER);
+
+	pixman_region32_fini(&repaint_output);
+	pixman_region32_fini(&buffer_region);
+	pixman_region32_fini(&surf_region);
 }
 
 static void
@@ -389,8 +470,6 @@ draw_view(struct weston_view *ev, struct weston_output *output,
 	struct pixman_surface_state *ps = get_surface_state(ev->surface);
 	/* repaint bounding region in global coordinates: */
 	pixman_region32_t repaint;
-	/* non-opaque region in surface coordinates: */
-	pixman_region32_t surface_blend;
 
 	/* No buffer attached */
 	if (!ps->image)
@@ -398,7 +477,7 @@ draw_view(struct weston_view *ev, struct weston_output *output,
 
 	pixman_region32_init(&repaint);
 	pixman_region32_intersect(&repaint,
-				  &ev->transform.masked_boundingbox, damage);
+				  &ev->transform.boundingbox, damage);
 	pixman_region32_subtract(&repaint, &repaint, &ev->clip);
 
 	if (!pixman_region32_not_empty(&repaint))
@@ -409,27 +488,25 @@ draw_view(struct weston_view *ev, struct weston_output *output,
 		zoom_logged = 1;
 	}
 
-	/* TODO: Implement repaint_region_complex() using pixman_composite_trapezoids() */
-	if (ev->alpha != 1.0 ||
-	    (ev->transform.enabled &&
-	     ev->transform.matrix.type != WESTON_MATRIX_TRANSFORM_TRANSLATE)) {
-		repaint_region(ev, output, &repaint, NULL, PIXMAN_OP_OVER);
+	if (view_transformation_is_translation(ev)) {
+		/* The simple case: The surface regions opaque, non-opaque,
+		 * etc. are convertible to global coordinate space.
+		 * There is no need to use a source clip region.
+		 * It is possible to paint opaque region as PIXMAN_OP_SRC.
+		 * Also the boundingbox is accurate rather than an
+		 * approximation.
+		 */
+		draw_view_translated(ev, output, &repaint);
 	} else {
-		/* blended region is whole surface minus opaque region: */
-		pixman_region32_init_rect(&surface_blend, 0, 0,
-					  ev->surface->width, ev->surface->height);
-		pixman_region32_subtract(&surface_blend, &surface_blend, &ev->surface->opaque);
-
-		if (pixman_region32_not_empty(&ev->surface->opaque)) {
-			repaint_region(ev, output, &repaint, &ev->surface->opaque, PIXMAN_OP_SRC);
-		}
-
-		if (pixman_region32_not_empty(&surface_blend)) {
-			repaint_region(ev, output, &repaint, &surface_blend, PIXMAN_OP_OVER);
-		}
-		pixman_region32_fini(&surface_blend);
+		/* The complex case: the view transformation does not allow
+		 * converting opaque etc. regions into global coordinate space.
+		 * Therefore we need source clipping to avoid sampling from
+		 * unwanted source image areas, unless the source image is
+		 * to be used whole. Source clipping does not work with
+		 * PIXMAN_OP_SRC.
+		 */
+		draw_view_source_clipped(ev, output, &repaint);
 	}
-
 
 out:
 	pixman_region32_fini(&repaint);
@@ -676,6 +753,53 @@ pixman_renderer_destroy(struct weston_compositor *ec)
 }
 
 static void
+pixman_renderer_surface_get_content_size(struct weston_surface *surface,
+					 int *width, int *height)
+{
+	struct pixman_surface_state *ps = get_surface_state(surface);
+
+	if (ps->image) {
+		*width = pixman_image_get_width(ps->image);
+		*height = pixman_image_get_height(ps->image);
+	} else {
+		*width = 0;
+		*height = 0;
+	}
+}
+
+static int
+pixman_renderer_surface_copy_content(struct weston_surface *surface,
+				     void *target, size_t size,
+				     int src_x, int src_y,
+				     int width, int height)
+{
+	const pixman_format_code_t format = PIXMAN_a8b8g8r8;
+	const size_t bytespp = 4; /* PIXMAN_a8b8g8r8 */
+	struct pixman_surface_state *ps = get_surface_state(surface);
+	pixman_image_t *out_buf;
+
+	if (!ps->image)
+		return -1;
+
+	out_buf = pixman_image_create_bits(format, width, height,
+					   target, width * bytespp);
+
+	pixman_image_set_transform(ps->image, NULL);
+	pixman_image_composite32(PIXMAN_OP_SRC,
+				 ps->image,    /* src */
+				 NULL,         /* mask */
+				 out_buf,      /* dest */
+				 src_x, src_y, /* src_x, src_y */
+				 0, 0,         /* mask_x, mask_y */
+				 0, 0,         /* dest_x, dest_y */
+				 width, height);
+
+	pixman_image_unref(out_buf);
+
+	return 0;
+}
+
+static void
 debug_binding(struct weston_seat *seat, uint32_t time, uint32_t key,
 	      void *data)
 {
@@ -713,9 +837,14 @@ pixman_renderer_init(struct weston_compositor *ec)
 	renderer->base.attach = pixman_renderer_attach;
 	renderer->base.surface_set_color = pixman_renderer_surface_set_color;
 	renderer->base.destroy = pixman_renderer_destroy;
+	renderer->base.surface_get_content_size =
+		pixman_renderer_surface_get_content_size;
+	renderer->base.surface_copy_content =
+		pixman_renderer_surface_copy_content;
 	ec->renderer = &renderer->base;
 	ec->capabilities |= WESTON_CAP_ROTATION_ANY;
 	ec->capabilities |= WESTON_CAP_CAPTURE_YFLIP;
+	ec->capabilities |= WESTON_CAP_VIEW_CLIP_MASK;
 
 	renderer->debug_binding =
 		weston_compositor_add_debug_binding(ec, KEY_R,

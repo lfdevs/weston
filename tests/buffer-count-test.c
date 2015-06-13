@@ -29,6 +29,7 @@
 #include <GLES2/gl2.h>
 
 #include "weston-test-client-helper.h"
+#include "../shared/platform.h"
 
 #define fail(msg) { fprintf(stderr, "%s failed\n", msg); return -1; }
 
@@ -66,10 +67,12 @@ init_egl(struct test_data *test_data)
 	EGLint major, minor, n;
 	EGLBoolean ret;
 
-	test_data->egl_dpy = eglGetDisplay((EGLNativeDisplayType)
-					   test_data->client->wl_display);
+	test_data->egl_dpy =
+		weston_platform_get_egl_display(EGL_PLATFORM_WAYLAND_KHR,
+						test_data->client->wl_display,
+						NULL);
 	if (!test_data->egl_dpy)
-		fail("eglGetDisplay");
+		fail("eglGetPlatformDisplay or eglGetDisplay");
 
 	if (eglInitialize(test_data->egl_dpy, &major, &minor) != EGL_TRUE)
 		fail("eglInitialize");
@@ -92,10 +95,9 @@ init_egl(struct test_data *test_data)
 				     surface->width,
 				     surface->height);
 	test_data->egl_surface =
-		eglCreateWindowSurface(test_data->egl_dpy,
-				       test_data->egl_conf,
-				       (EGLNativeWindowType) native_window,
-				       NULL);
+		weston_platform_create_egl_surface(test_data->egl_dpy,
+						   test_data->egl_conf,
+						   native_window, NULL);
 
 	ret = eglMakeCurrent(test_data->egl_dpy, test_data->egl_surface,
 			     test_data->egl_surface, test_data->egl_ctx);
@@ -122,7 +124,7 @@ TEST(test_buffer_count)
 	uint32_t buffer_count;
 	int i;
 
-	test_data.client = client_create(10, 10, 10, 10);
+	test_data.client = create_client_and_test_surface(10, 10, 10, 10);
 	if (!test_data.client->has_wl_drm)
 		skip("compositor has not bound its display to EGL\n");
 
