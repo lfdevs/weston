@@ -37,7 +37,7 @@ Build-Depends:
  libmtdev-dev,
  libpam0g-dev,
  libvpx-dev,
- libsystemd-login-dev,
+ libsystemd-dev,
  libinput-dev (>= 0.8.0),
 Standards-Version: 3.9.6
 Homepage: http://wayland.freedesktop.org/

@@ -1,0 +1,28 @@
+From fe00842e1562d78f2811c8dad46125041cccab87 Mon Sep 17 00:00:00 2001
+From: Michael Biebl <biebl@debian.org>
+Date: Thu, 9 Jul 2015 16:18:39 +0200
+Subject: [PATCH] Add suport for new libsystemd
+
+In systemd v209, the various libraries were merged into a single
+libsystemd library. When checking for systemd > 209, use the new library
+name instead of the deprecated libsystemd-login.
+---
+ configure.ac | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/configure.ac b/configure.ac
+index 2c55e1b..034f4a5 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -349,7 +349,7 @@ AS_IF([test "x$have_systemd_login" = "xyes"],
+       [AC_DEFINE([HAVE_SYSTEMD_LOGIN], [1], [Have systemd-login])])
+ AM_CONDITIONAL(HAVE_SYSTEMD_LOGIN, test "x$have_systemd_login" = "xyes")
+ 
+-PKG_CHECK_MODULES(SYSTEMD_LOGIN_209, [libsystemd-login >= 209],
++PKG_CHECK_MODULES(SYSTEMD_LOGIN_209, [libsystemd >= 209],
+                   [have_systemd_login_209=yes], [have_systemd_login_209=no])
+ AS_IF([test "x$have_systemd_login_209" = "xyes"],
+       [AC_DEFINE([HAVE_SYSTEMD_LOGIN_209], [1], [Have systemd-login >= 209])])
+-- 
+2.1.4
+
