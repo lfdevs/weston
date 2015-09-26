@@ -82,12 +82,12 @@ POST_UNINSTALL = :
 build_triplet = @build@
 host_triplet = @host@
 bin_PROGRAMS = weston$(EXEEXT) $(am__EXEEXT_1) $(am__EXEEXT_2) \
-	$(am__EXEEXT_10) $(am__EXEEXT_11)
+	$(am__EXEEXT_11) $(am__EXEEXT_12)
 noinst_PROGRAMS = spring-tool$(EXEEXT) $(am__EXEEXT_15) \
 	$(am__EXEEXT_16) $(am__EXEEXT_17) $(am__EXEEXT_20) \
 	$(am__EXEEXT_22) matrix-test$(EXEEXT) $(am__EXEEXT_23) \
-	$(am__EXEEXT_24)
-libexec_PROGRAMS = $(am__EXEEXT_12) $(am__EXEEXT_13) $(am__EXEEXT_14)
+	$(am__EXEEXT_24) zuctest$(EXEEXT)
+libexec_PROGRAMS = $(am__EXEEXT_13) $(am__EXEEXT_14)
 @ENABLE_DBUS_TRUE@@HAVE_SYSTEMD_LOGIN_TRUE@am__append_1 = \
 @ENABLE_DBUS_TRUE@@HAVE_SYSTEMD_LOGIN_TRUE@	src/dbus.h				\
 @ENABLE_DBUS_TRUE@@HAVE_SYSTEMD_LOGIN_TRUE@	src/dbus.c				\
@@ -133,14 +133,15 @@ libexec_PROGRAMS = $(am__EXEEXT_12) $(am__EXEEXT_13) $(am__EXEEXT_14)
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@	weston-multi-resource
 
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_EGL_CLIENTS_TRUE@am__append_27 = weston-simple-egl
-@BUILD_CLIENTS_TRUE@am__append_28 = libtoytoolkit.la
-@BUILD_CLIENTS_TRUE@am__append_29 = $(nodist_libtoytoolkit_la_SOURCES)
-@BUILD_CLIENTS_TRUE@@HAVE_CAIRO_GLESV2_TRUE@am__append_30 = weston-nested weston-nested-client
-@BUILD_CLIENTS_TRUE@@BUILD_SUBSURFACES_CLIENT_TRUE@am__append_31 = weston-subsurfaces
-@BUILD_CLIENTS_TRUE@@HAVE_PANGO_TRUE@am__append_32 = weston-editor
-@BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@am__append_33 = weston-gears
-@BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@@HAVE_GLU_TRUE@am__append_34 = weston-screensaver
-@ENABLE_IVI_SHELL_TRUE@am__append_35 = \
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_INTEL_DMABUF_CLIENT_TRUE@am__append_28 = weston-simple-dmabuf
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_INTEL_DMABUF_CLIENT_TRUE@am__append_29 = protocol/linux-dmabuf-client-protocol.h
+@BUILD_CLIENTS_TRUE@am__append_30 = libtoytoolkit.la
+@BUILD_CLIENTS_TRUE@am__append_31 = $(nodist_libtoytoolkit_la_SOURCES)
+@BUILD_CLIENTS_TRUE@@HAVE_CAIRO_GLESV2_TRUE@am__append_32 = weston-nested weston-nested-client
+@BUILD_CLIENTS_TRUE@@BUILD_SUBSURFACES_CLIENT_TRUE@am__append_33 = weston-subsurfaces
+@BUILD_CLIENTS_TRUE@@HAVE_PANGO_TRUE@am__append_34 = weston-editor
+@BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@am__append_35 = weston-gears
+@ENABLE_IVI_SHELL_TRUE@am__append_36 = \
 @ENABLE_IVI_SHELL_TRUE@	data/background.png                     \
 @ENABLE_IVI_SHELL_TRUE@	data/tiling.png                         \
 @ENABLE_IVI_SHELL_TRUE@	data/fullscreen.png                     \
@@ -154,46 +155,54 @@ libexec_PROGRAMS = $(am__EXEEXT_12) $(am__EXEEXT_13) $(am__EXEEXT_14)
 @ENABLE_IVI_SHELL_TRUE@	data/icon_ivi_simple-shm.png            \
 @ENABLE_IVI_SHELL_TRUE@	data/icon_ivi_smoke.png
 
-@BUILD_WCAP_TOOLS_TRUE@am__append_36 = wcap-decode
-@ENABLE_DESKTOP_SHELL_TRUE@am__append_37 = desktop-shell.la
-@ENABLE_DESKTOP_SHELL_TRUE@am__append_38 = $(nodist_desktop_shell_la_SOURCES)
-@ENABLE_FULLSCREEN_SHELL_TRUE@am__append_39 = fullscreen-shell.la
-@ENABLE_FULLSCREEN_SHELL_TRUE@am__append_40 = $(nodist_fullscreen_shell_la_SOURCES)
-@ENABLE_IVI_SHELL_TRUE@am__append_41 = \
+@BUILD_WCAP_TOOLS_TRUE@am__append_37 = wcap-decode
+@ENABLE_DESKTOP_SHELL_TRUE@am__append_38 = desktop-shell.la
+@ENABLE_DESKTOP_SHELL_TRUE@am__append_39 = $(nodist_desktop_shell_la_SOURCES)
+@ENABLE_FULLSCREEN_SHELL_TRUE@am__append_40 = fullscreen-shell.la
+@ENABLE_FULLSCREEN_SHELL_TRUE@am__append_41 = $(nodist_fullscreen_shell_la_SOURCES)
+@ENABLE_IVI_SHELL_TRUE@am__append_42 = \
 @ENABLE_IVI_SHELL_TRUE@	$(ivi_shell)				\
 @ENABLE_IVI_SHELL_TRUE@	$(hmi_controller)
 
-@ENABLE_IVI_SHELL_TRUE@am__append_42 = $(nodist_ivi_shell_la_SOURCES) \
+@ENABLE_IVI_SHELL_TRUE@am__append_43 = $(nodist_ivi_shell_la_SOURCES) \
 @ENABLE_IVI_SHELL_TRUE@	$(nodist_hmi_controller_la_SOURCES)
-@ENABLE_SCREEN_SHARING_TRUE@am__append_43 = screen-share.la
-@ENABLE_XWAYLAND_TRUE@am__append_44 = xwayland.la
+@ENABLE_SCREEN_SHARING_TRUE@am__append_44 = screen-share.la
+@ENABLE_XWAYLAND_TRUE@am__append_45 = xwayland.la
+@ENABLE_JUNIT_XML_TRUE@am__append_46 = \
+@ENABLE_JUNIT_XML_TRUE@	$(LIBXML2_CFLAGS)
+
+@ENABLE_JUNIT_XML_TRUE@am__append_47 = \
+@ENABLE_JUNIT_XML_TRUE@	$(LIBXML2_LIBS)
+
 TESTS = $(am__EXEEXT_16) $(am__EXEEXT_17) $(module_tests) \
 	$(am__EXEEXT_20) $(am__EXEEXT_22)
-@ENABLE_EGL_TRUE@am__append_45 = $(EGL_TESTS_CFLAGS)
-@ENABLE_EGL_TRUE@am__append_46 = $(EGL_TESTS_LIBS)
-@ENABLE_EGL_TRUE@am__append_47 = buffer-count.weston
-@ENABLE_XWAYLAND_TEST_TRUE@am__append_48 = xwayland-test.weston
-@ENABLE_IVI_SHELL_TRUE@am__append_49 = \
+@ENABLE_EGL_TRUE@am__append_48 = $(EGL_TESTS_CFLAGS)
+@ENABLE_EGL_TRUE@am__append_49 = $(EGL_TESTS_LIBS)
+@ENABLE_EGL_TRUE@am__append_50 = buffer-count.weston
+@ENABLE_XWAYLAND_TEST_TRUE@am__append_51 = xwayland-test.weston
+@ENABLE_IVI_SHELL_TRUE@am__append_52 = \
 @ENABLE_IVI_SHELL_TRUE@	ivi-layout-internal-test.la		\
 @ENABLE_IVI_SHELL_TRUE@	ivi-layout-test.la
 
-@ENABLE_IVI_SHELL_TRUE@am__append_50 = \
+@ENABLE_IVI_SHELL_TRUE@am__append_53 = \
 @ENABLE_IVI_SHELL_TRUE@	ivi-shell-app.weston
 
-@ENABLE_IVI_SHELL_TRUE@am__append_51 = ivi-layout.ivi
-@BUILD_SETBACKLIGHT_TRUE@am__append_52 = setbacklight
-@ENABLE_DRM_COMPOSITOR_TRUE@am__append_53 = weston-drm.7
+@ENABLE_IVI_SHELL_TRUE@am__append_54 = ivi-layout.ivi
+@BUILD_SETBACKLIGHT_TRUE@am__append_55 = setbacklight
+@ENABLE_DRM_COMPOSITOR_TRUE@am__append_56 = weston-drm.7
 subdir = .
 DIST_COMMON = $(srcdir)/Makefile.in $(srcdir)/Makefile.am \
 	$(top_srcdir)/configure $(am__configure_deps) \
-	$(srcdir)/config.h.in $(top_srcdir)/src/version.h.in \
-	$(top_srcdir)/src/weston.pc.in $(top_srcdir)/build-aux/depcomp \
-	$(dist_wayland_session_DATA) $(am__dist_westondata_DATA_DIST) \
-	$(westoninclude_HEADERS) $(top_srcdir)/build-aux/test-driver \
-	COPYING README build-aux/compile build-aux/config.guess \
-	build-aux/config.sub build-aux/depcomp build-aux/install-sh \
-	build-aux/missing build-aux/ltmain.sh \
-	$(top_srcdir)/build-aux/compile \
+	$(srcdir)/config.h.in \
+	$(top_srcdir)/doc/doxygen/tools.doxygen.in \
+	$(top_srcdir)/doc/doxygen/tooldev.doxygen.in \
+	$(top_srcdir)/src/version.h.in $(top_srcdir)/src/weston.pc.in \
+	$(top_srcdir)/build-aux/depcomp $(dist_wayland_session_DATA) \
+	$(am__dist_westondata_DATA_DIST) $(westoninclude_HEADERS) \
+	$(top_srcdir)/build-aux/test-driver COPYING README \
+	build-aux/compile build-aux/config.guess build-aux/config.sub \
+	build-aux/depcomp build-aux/install-sh build-aux/missing \
+	build-aux/ltmain.sh $(top_srcdir)/build-aux/compile \
 	$(top_srcdir)/build-aux/config.guess \
 	$(top_srcdir)/build-aux/config.sub \
 	$(top_srcdir)/build-aux/install-sh \
@@ -210,7 +219,8 @@ am__CONFIG_DISTCLEAN_FILES = config.status config.cache config.log \
  configure.lineno config.status.lineno
 mkinstalldirs = $(install_sh) -d
 CONFIG_HEADER = config.h
-CONFIG_CLEAN_FILES = src/version.h src/weston.pc
+CONFIG_CLEAN_FILES = doc/doxygen/tools.doxygen \
+	doc/doxygen/tooldev.doxygen src/version.h src/weston.pc
 CONFIG_CLEAN_VPATH_FILES =
 am__vpath_adj_setup = srcdirstrip=`echo "$(srcdir)" | sed 's|.|.|g'`;
 am__vpath_adj = case $$p in \
@@ -243,15 +253,14 @@ am__installdirs = "$(DESTDIR)$(moduledir)" "$(DESTDIR)$(bindir)" \
 	"$(DESTDIR)$(libexecdir)" "$(DESTDIR)$(man1dir)" \
 	"$(DESTDIR)$(man5dir)" "$(DESTDIR)$(man7dir)" \
 	"$(DESTDIR)$(wayland_sessiondir)" "$(DESTDIR)$(westondatadir)" \
-	"$(DESTDIR)$(pkgconfigdir)" "$(DESTDIR)$(wayland_sessiondir)" \
-	"$(DESTDIR)$(westonincludedir)"
+	"$(DESTDIR)$(pkgconfigdir)" "$(DESTDIR)$(westonincludedir)"
 LTLIBRARIES = $(module_LTLIBRARIES) $(noinst_LTLIBRARIES)
 am__DEPENDENCIES_1 =
 @ENABLE_COLORD_TRUE@@HAVE_LCMS_TRUE@cms_colord_la_DEPENDENCIES =  \
 @ENABLE_COLORD_TRUE@@HAVE_LCMS_TRUE@	$(am__DEPENDENCIES_1) \
 @ENABLE_COLORD_TRUE@@HAVE_LCMS_TRUE@	$(am__DEPENDENCIES_1)
 am__cms_colord_la_SOURCES_DIST = src/cms-colord.c src/cms-helper.c \
-	src/cms-helper.h
+	src/cms-helper.h shared/helpers.h
 am__dirstamp = $(am__leading_dot)dirstamp
 @ENABLE_COLORD_TRUE@@HAVE_LCMS_TRUE@am_cms_colord_la_OBJECTS = src/cms_colord_la-cms-colord.lo \
 @ENABLE_COLORD_TRUE@@HAVE_LCMS_TRUE@	src/cms_colord_la-cms-helper.lo
@@ -268,7 +277,7 @@ cms_colord_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 @HAVE_LCMS_TRUE@cms_static_la_DEPENDENCIES = $(am__DEPENDENCIES_1) \
 @HAVE_LCMS_TRUE@	$(am__DEPENDENCIES_1) libshared.la
 am__cms_static_la_SOURCES_DIST = src/cms-static.c src/cms-helper.c \
-	src/cms-helper.h
+	src/cms-helper.h shared/helpers.h
 @HAVE_LCMS_TRUE@am_cms_static_la_OBJECTS =  \
 @HAVE_LCMS_TRUE@	src/cms_static_la-cms-static.lo \
 @HAVE_LCMS_TRUE@	src/cms_static_la-cms-helper.lo
@@ -281,7 +290,7 @@ cms_static_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 @ENABLE_DESKTOP_SHELL_TRUE@	$(am__DEPENDENCIES_1) libshared.la
 am__desktop_shell_la_SOURCES_DIST = desktop-shell/shell.h \
 	desktop-shell/shell.c desktop-shell/exposay.c \
-	desktop-shell/input-panel.c
+	desktop-shell/input-panel.c shared/helpers.h
 @ENABLE_DESKTOP_SHELL_TRUE@am_desktop_shell_la_OBJECTS = desktop-shell/desktop_shell_la-shell.lo \
 @ENABLE_DESKTOP_SHELL_TRUE@	desktop-shell/desktop_shell_la-exposay.lo \
 @ENABLE_DESKTOP_SHELL_TRUE@	desktop-shell/desktop_shell_la-input-panel.lo
@@ -305,8 +314,9 @@ am__DEPENDENCIES_2 = $(am__DEPENDENCIES_1)
 @ENABLE_DRM_COMPOSITOR_TRUE@	$(am__DEPENDENCIES_3)
 am__drm_backend_la_SOURCES_DIST = src/compositor-drm.c \
 	src/libinput-seat.c src/libinput-seat.h src/libinput-device.c \
-	src/libinput-device.h src/libbacklight.c src/libbacklight.h \
-	src/vaapi-recorder.c src/vaapi-recorder.h
+	src/libinput-device.h shared/helpers.h shared/timespec-util.h \
+	src/libbacklight.c src/libbacklight.h src/vaapi-recorder.c \
+	src/vaapi-recorder.h
 am__objects_1 = src/drm_backend_la-libinput-seat.lo \
 	src/drm_backend_la-libinput-device.lo
 @ENABLE_DRM_COMPOSITOR_TRUE@@ENABLE_VAAPI_RECORDER_TRUE@am__objects_2 = src/drm_backend_la-vaapi-recorder.lo
@@ -328,8 +338,8 @@ drm_backend_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 @ENABLE_FBDEV_COMPOSITOR_TRUE@	libsession-helper.la \
 @ENABLE_FBDEV_COMPOSITOR_TRUE@	libshared.la
 am__fbdev_backend_la_SOURCES_DIST = src/compositor-fbdev.c \
-	src/libinput-seat.c src/libinput-seat.h src/libinput-device.c \
-	src/libinput-device.h
+	shared/helpers.h src/libinput-seat.c src/libinput-seat.h \
+	src/libinput-device.c src/libinput-device.h
 am__objects_3 = src/fbdev_backend_la-libinput-seat.lo \
 	src/fbdev_backend_la-libinput-device.lo
 @ENABLE_FBDEV_COMPOSITOR_TRUE@am_fbdev_backend_la_OBJECTS = src/fbdev_backend_la-compositor-fbdev.lo \
@@ -344,7 +354,7 @@ fbdev_backend_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 @ENABLE_FULLSCREEN_SHELL_TRUE@fullscreen_shell_la_DEPENDENCIES =  \
 @ENABLE_FULLSCREEN_SHELL_TRUE@	$(am__DEPENDENCIES_1)
 am__fullscreen_shell_la_SOURCES_DIST =  \
-	fullscreen-shell/fullscreen-shell.c
+	fullscreen-shell/fullscreen-shell.c shared/helpers.h
 @ENABLE_FULLSCREEN_SHELL_TRUE@am_fullscreen_shell_la_OBJECTS = fullscreen-shell/fullscreen_shell_la-fullscreen-shell.lo
 @ENABLE_FULLSCREEN_SHELL_TRUE@nodist_fullscreen_shell_la_OBJECTS = protocol/fullscreen_shell_la-fullscreen-shell-protocol.lo
 fullscreen_shell_la_OBJECTS = $(am_fullscreen_shell_la_OBJECTS) \
@@ -358,7 +368,7 @@ fullscreen_shell_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 @ENABLE_EGL_TRUE@gl_renderer_la_DEPENDENCIES = $(am__DEPENDENCIES_1) \
 @ENABLE_EGL_TRUE@	$(am__DEPENDENCIES_1)
 am__gl_renderer_la_SOURCES_DIST = src/gl-renderer.h src/gl-renderer.c \
-	src/vertex-clipping.c src/vertex-clipping.h
+	src/vertex-clipping.c src/vertex-clipping.h shared/helpers.h
 @ENABLE_EGL_TRUE@am_gl_renderer_la_OBJECTS =  \
 @ENABLE_EGL_TRUE@	src/gl_renderer_la-gl-renderer.lo \
 @ENABLE_EGL_TRUE@	src/gl_renderer_la-vertex-clipping.lo
@@ -371,7 +381,8 @@ gl_renderer_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 @ENABLE_HEADLESS_COMPOSITOR_TRUE@headless_backend_la_DEPENDENCIES =  \
 @ENABLE_HEADLESS_COMPOSITOR_TRUE@	$(am__DEPENDENCIES_1) \
 @ENABLE_HEADLESS_COMPOSITOR_TRUE@	libshared.la
-am__headless_backend_la_SOURCES_DIST = src/compositor-headless.c
+am__headless_backend_la_SOURCES_DIST = src/compositor-headless.c \
+	shared/helpers.h
 @ENABLE_HEADLESS_COMPOSITOR_TRUE@am_headless_backend_la_OBJECTS = src/headless_backend_la-compositor-headless.lo
 headless_backend_la_OBJECTS = $(am_headless_backend_la_OBJECTS)
 headless_backend_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
@@ -383,7 +394,7 @@ headless_backend_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 @ENABLE_IVI_SHELL_TRUE@hmi_controller_la_DEPENDENCIES =  \
 @ENABLE_IVI_SHELL_TRUE@	$(am__DEPENDENCIES_1) libshared.la
 am__hmi_controller_la_SOURCES_DIST = ivi-shell/ivi-layout-export.h \
-	ivi-shell/hmi-controller.c
+	ivi-shell/hmi-controller.c shared/helpers.h
 @ENABLE_IVI_SHELL_TRUE@am_hmi_controller_la_OBJECTS = ivi-shell/hmi_controller_la-hmi-controller.lo
 @ENABLE_IVI_SHELL_TRUE@nodist_hmi_controller_la_OBJECTS = protocol/hmi_controller_la-ivi-hmi-controller-protocol.lo
 hmi_controller_la_OBJECTS = $(am_hmi_controller_la_OBJECTS) \
@@ -409,7 +420,7 @@ ivi_layout_internal_test_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 @ENABLE_IVI_SHELL_TRUE@ivi_layout_test_la_DEPENDENCIES =  \
 @ENABLE_IVI_SHELL_TRUE@	$(am__DEPENDENCIES_1)
 am__ivi_layout_test_la_SOURCES_DIST = tests/ivi_layout-test-plugin.c \
-	tests/ivi-test.h
+	tests/ivi-test.h shared/helpers.h
 @ENABLE_IVI_SHELL_TRUE@am_ivi_layout_test_la_OBJECTS = tests/ivi_layout_test_la-ivi_layout-test-plugin.lo
 @ENABLE_IVI_SHELL_TRUE@nodist_ivi_layout_test_la_OBJECTS = protocol/ivi_layout_test_la-weston-test-protocol.lo
 ivi_layout_test_la_OBJECTS = $(am_ivi_layout_test_la_OBJECTS) \
@@ -424,7 +435,8 @@ ivi_layout_test_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 am__ivi_shell_la_SOURCES_DIST = ivi-shell/ivi-layout-export.h \
 	ivi-shell/ivi-layout-private.h ivi-shell/ivi-layout.c \
 	ivi-shell/ivi-layout-transition.c ivi-shell/ivi-shell.h \
-	ivi-shell/ivi-shell.c ivi-shell/input-panel-ivi.c
+	ivi-shell/ivi-shell.c ivi-shell/input-panel-ivi.c \
+	shared/helpers.h
 @ENABLE_IVI_SHELL_TRUE@am_ivi_shell_la_OBJECTS =  \
 @ENABLE_IVI_SHELL_TRUE@	ivi-shell/ivi_shell_la-ivi-layout.lo \
 @ENABLE_IVI_SHELL_TRUE@	ivi-shell/ivi_shell_la-ivi-layout-transition.lo \
@@ -501,7 +513,8 @@ libtest_runner_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 @BUILD_CLIENTS_TRUE@libtoytoolkit_la_DEPENDENCIES =  \
 @BUILD_CLIENTS_TRUE@	$(am__DEPENDENCIES_1) \
 @BUILD_CLIENTS_TRUE@	$(am__DEPENDENCIES_1) libshared-cairo.la
-am__libtoytoolkit_la_SOURCES_DIST = clients/window.c clients/window.h
+am__libtoytoolkit_la_SOURCES_DIST = clients/window.c clients/window.h \
+	shared/helpers.h
 @BUILD_CLIENTS_TRUE@am_libtoytoolkit_la_OBJECTS =  \
 @BUILD_CLIENTS_TRUE@	clients/libtoytoolkit_la-window.lo
 @BUILD_CLIENTS_TRUE@nodist_libtoytoolkit_la_OBJECTS = protocol/libtoytoolkit_la-text-cursor-position-protocol.lo \
@@ -517,10 +530,30 @@ libtoytoolkit_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(libtoytoolkit_la_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) \
 	-o $@
 @BUILD_CLIENTS_TRUE@am_libtoytoolkit_la_rpath =
+@ENABLE_JUNIT_XML_TRUE@am__DEPENDENCIES_5 = $(am__DEPENDENCIES_1)
+libzunitc_la_DEPENDENCIES = libshared.la $(am__DEPENDENCIES_5)
+am_libzunitc_la_OBJECTS =  \
+	tools/zunitc/src/libzunitc_la-zuc_base_logger.lo \
+	tools/zunitc/src/libzunitc_la-zuc_collector.lo \
+	tools/zunitc/src/libzunitc_la-zuc_junit_reporter.lo \
+	tools/zunitc/src/libzunitc_la-zunitc_impl.lo
+libzunitc_la_OBJECTS = $(am_libzunitc_la_OBJECTS)
+libzunitc_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
+	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(libzunitc_la_CFLAGS) \
+	$(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o $@
+libzunitcmain_la_DEPENDENCIES = libzunitc.la libshared.la
+am_libzunitcmain_la_OBJECTS =  \
+	tools/zunitc/src/libzunitcmain_la-main.lo
+libzunitcmain_la_OBJECTS = $(am_libzunitcmain_la_OBJECTS)
+libzunitcmain_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
+	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
+	$(libzunitcmain_la_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) \
+	-o $@
 @ENABLE_RDP_COMPOSITOR_TRUE@rdp_backend_la_DEPENDENCIES =  \
 @ENABLE_RDP_COMPOSITOR_TRUE@	$(am__DEPENDENCIES_1) \
 @ENABLE_RDP_COMPOSITOR_TRUE@	$(am__DEPENDENCIES_1) libshared.la
-am__rdp_backend_la_SOURCES_DIST = src/compositor-rdp.c
+am__rdp_backend_la_SOURCES_DIST = src/compositor-rdp.c \
+	shared/helpers.h
 @ENABLE_RDP_COMPOSITOR_TRUE@am_rdp_backend_la_OBJECTS = src/rdp_backend_la-compositor-rdp.lo
 rdp_backend_la_OBJECTS = $(am_rdp_backend_la_OBJECTS)
 rdp_backend_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
@@ -529,18 +562,18 @@ rdp_backend_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(LDFLAGS) -o $@
 @ENABLE_RDP_COMPOSITOR_TRUE@am_rdp_backend_la_rpath = -rpath \
 @ENABLE_RDP_COMPOSITOR_TRUE@	$(moduledir)
-@ENABLE_EGL_TRUE@@ENABLE_RPI_COMPOSITOR_TRUE@am__DEPENDENCIES_5 = $(am__DEPENDENCIES_1)
+@ENABLE_EGL_TRUE@@ENABLE_RPI_COMPOSITOR_TRUE@am__DEPENDENCIES_6 = $(am__DEPENDENCIES_1)
 @ENABLE_RPI_COMPOSITOR_TRUE@rpi_backend_la_DEPENDENCIES =  \
 @ENABLE_RPI_COMPOSITOR_TRUE@	$(am__DEPENDENCIES_1) \
 @ENABLE_RPI_COMPOSITOR_TRUE@	$(am__DEPENDENCIES_1) \
 @ENABLE_RPI_COMPOSITOR_TRUE@	$(am__DEPENDENCIES_1) \
 @ENABLE_RPI_COMPOSITOR_TRUE@	$(am__DEPENDENCIES_2) \
 @ENABLE_RPI_COMPOSITOR_TRUE@	libsession-helper.la libshared.la \
-@ENABLE_RPI_COMPOSITOR_TRUE@	$(am__DEPENDENCIES_5)
+@ENABLE_RPI_COMPOSITOR_TRUE@	$(am__DEPENDENCIES_6)
 am__rpi_backend_la_SOURCES_DIST = src/compositor-rpi.c \
 	src/rpi-renderer.c src/rpi-renderer.h src/rpi-bcm-stubs.h \
-	src/libinput-seat.c src/libinput-seat.h src/libinput-device.c \
-	src/libinput-device.h
+	shared/helpers.h src/libinput-seat.c src/libinput-seat.h \
+	src/libinput-device.c src/libinput-device.h
 am__objects_6 = src/rpi_backend_la-libinput-seat.lo \
 	src/rpi_backend_la-libinput-device.lo
 @ENABLE_RPI_COMPOSITOR_TRUE@am_rpi_backend_la_OBJECTS = src/rpi_backend_la-compositor-rpi.lo \
@@ -558,7 +591,7 @@ rpi_backend_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 @ENABLE_SCREEN_SHARING_TRUE@	$(am__DEPENDENCIES_1) \
 @ENABLE_SCREEN_SHARING_TRUE@	$(am__DEPENDENCIES_1) \
 @ENABLE_SCREEN_SHARING_TRUE@	libshared-cairo.la
-am__screen_share_la_SOURCES_DIST = src/screen-share.c
+am__screen_share_la_SOURCES_DIST = src/screen-share.c shared/helpers.h
 @ENABLE_SCREEN_SHARING_TRUE@am_screen_share_la_OBJECTS = src/screen_share_la-screen-share.lo
 @ENABLE_SCREEN_SHARING_TRUE@nodist_screen_share_la_OBJECTS = protocol/screen_share_la-fullscreen-shell-protocol.lo
 screen_share_la_OBJECTS = $(am_screen_share_la_OBJECTS) \
@@ -597,7 +630,8 @@ surface_test_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 @ENABLE_WAYLAND_COMPOSITOR_TRUE@	$(am__DEPENDENCIES_1) \
 @ENABLE_WAYLAND_COMPOSITOR_TRUE@	$(am__DEPENDENCIES_1) \
 @ENABLE_WAYLAND_COMPOSITOR_TRUE@	libshared-cairo.la
-am__wayland_backend_la_SOURCES_DIST = src/compositor-wayland.c
+am__wayland_backend_la_SOURCES_DIST = src/compositor-wayland.c \
+	shared/helpers.h
 @ENABLE_WAYLAND_COMPOSITOR_TRUE@am_wayland_backend_la_OBJECTS = src/wayland_backend_la-compositor-wayland.lo
 @ENABLE_WAYLAND_COMPOSITOR_TRUE@nodist_wayland_backend_la_OBJECTS = protocol/wayland_backend_la-fullscreen-shell-protocol.lo
 wayland_backend_la_OBJECTS = $(am_wayland_backend_la_OBJECTS) \
@@ -622,7 +656,8 @@ weston_test_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 @ENABLE_X11_COMPOSITOR_TRUE@	$(am__DEPENDENCIES_1) \
 @ENABLE_X11_COMPOSITOR_TRUE@	$(am__DEPENDENCIES_1) \
 @ENABLE_X11_COMPOSITOR_TRUE@	libshared-cairo.la
-am__x11_backend_la_SOURCES_DIST = src/compositor-x11.c
+am__x11_backend_la_SOURCES_DIST = src/compositor-x11.c \
+	shared/helpers.h
 @ENABLE_X11_COMPOSITOR_TRUE@am_x11_backend_la_OBJECTS = src/x11_backend_la-compositor-x11.lo
 x11_backend_la_OBJECTS = $(am_x11_backend_la_OBJECTS)
 x11_backend_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
@@ -636,7 +671,8 @@ x11_backend_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 @ENABLE_XWAYLAND_TRUE@	$(top_builddir)/libshared-cairo.la
 am__xwayland_la_SOURCES_DIST = xwayland/xwayland.h \
 	xwayland/window-manager.c xwayland/selection.c xwayland/dnd.c \
-	xwayland/launcher.c xwayland/hash.c xwayland/hash.h
+	xwayland/launcher.c xwayland/hash.c xwayland/hash.h \
+	shared/helpers.h
 @ENABLE_XWAYLAND_TRUE@am_xwayland_la_OBJECTS =  \
 @ENABLE_XWAYLAND_TRUE@	xwayland/xwayland_la-window-manager.lo \
 @ENABLE_XWAYLAND_TRUE@	xwayland/xwayland_la-selection.lo \
@@ -657,13 +693,14 @@ xwayland_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@	weston-presentation-shm$(EXEEXT) \
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@	weston-multi-resource$(EXEEXT)
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_EGL_CLIENTS_TRUE@am__EXEEXT_4 = weston-simple-egl$(EXEEXT)
-@BUILD_CLIENTS_TRUE@@HAVE_CAIRO_GLESV2_TRUE@am__EXEEXT_5 = weston-nested$(EXEEXT) \
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_INTEL_DMABUF_CLIENT_TRUE@am__EXEEXT_5 = weston-simple-dmabuf$(EXEEXT)
+@BUILD_CLIENTS_TRUE@@HAVE_CAIRO_GLESV2_TRUE@am__EXEEXT_6 = weston-nested$(EXEEXT) \
 @BUILD_CLIENTS_TRUE@@HAVE_CAIRO_GLESV2_TRUE@	weston-nested-client$(EXEEXT)
-@BUILD_CLIENTS_TRUE@@BUILD_SUBSURFACES_CLIENT_TRUE@am__EXEEXT_6 = weston-subsurfaces$(EXEEXT)
-@BUILD_CLIENTS_TRUE@@HAVE_PANGO_TRUE@am__EXEEXT_7 =  \
+@BUILD_CLIENTS_TRUE@@BUILD_SUBSURFACES_CLIENT_TRUE@am__EXEEXT_7 = weston-subsurfaces$(EXEEXT)
+@BUILD_CLIENTS_TRUE@@HAVE_PANGO_TRUE@am__EXEEXT_8 =  \
 @BUILD_CLIENTS_TRUE@@HAVE_PANGO_TRUE@	weston-editor$(EXEEXT)
-@BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@am__EXEEXT_8 = weston-gears$(EXEEXT)
-@BUILD_CLIENTS_TRUE@am__EXEEXT_9 = weston-flower$(EXEEXT) \
+@BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@am__EXEEXT_9 = weston-gears$(EXEEXT)
+@BUILD_CLIENTS_TRUE@am__EXEEXT_10 = weston-flower$(EXEEXT) \
 @BUILD_CLIENTS_TRUE@	weston-image$(EXEEXT) \
 @BUILD_CLIENTS_TRUE@	weston-cliptest$(EXEEXT) \
 @BUILD_CLIENTS_TRUE@	weston-dnd$(EXEEXT) weston-smoke$(EXEEXT) \
@@ -677,18 +714,18 @@ xwayland_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 @BUILD_CLIENTS_TRUE@	weston-scaler$(EXEEXT) $(am__EXEEXT_3) \
 @BUILD_CLIENTS_TRUE@	$(am__EXEEXT_4) $(am__EXEEXT_5) \
 @BUILD_CLIENTS_TRUE@	$(am__EXEEXT_6) $(am__EXEEXT_7) \
-@BUILD_CLIENTS_TRUE@	$(am__EXEEXT_8)
-@BUILD_CLIENTS_TRUE@@INSTALL_DEMO_CLIENTS_TRUE@am__EXEEXT_10 = $(am__EXEEXT_9)
-@BUILD_WCAP_TOOLS_TRUE@am__EXEEXT_11 = wcap-decode$(EXEEXT)
-@BUILD_CLIENTS_TRUE@am__EXEEXT_12 = weston-desktop-shell$(EXEEXT) \
+@BUILD_CLIENTS_TRUE@	$(am__EXEEXT_8) $(am__EXEEXT_9)
+@BUILD_CLIENTS_TRUE@@INSTALL_DEMO_CLIENTS_TRUE@am__EXEEXT_11 = $(am__EXEEXT_10)
+@BUILD_WCAP_TOOLS_TRUE@am__EXEEXT_12 = wcap-decode$(EXEEXT)
+@BUILD_CLIENTS_TRUE@am__EXEEXT_13 = weston-desktop-shell$(EXEEXT) \
 @BUILD_CLIENTS_TRUE@	weston-screenshooter$(EXEEXT) \
 @BUILD_CLIENTS_TRUE@	weston-keyboard$(EXEEXT) \
 @BUILD_CLIENTS_TRUE@	weston-simple-im$(EXEEXT)
-@BUILD_CLIENTS_TRUE@@ENABLE_IVI_SHELL_TRUE@am__EXEEXT_13 = weston-ivi-shell-user-interface$(EXEEXT)
-@BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@@HAVE_GLU_TRUE@am__EXEEXT_14 = weston-screensaver$(EXEEXT)
-@BUILD_CLIENTS_TRUE@@INSTALL_DEMO_CLIENTS_FALSE@am__EXEEXT_15 = $(am__EXEEXT_9)
+@BUILD_CLIENTS_TRUE@@ENABLE_IVI_SHELL_TRUE@am__EXEEXT_14 = weston-ivi-shell-user-interface$(EXEEXT)
+@BUILD_CLIENTS_TRUE@@INSTALL_DEMO_CLIENTS_FALSE@am__EXEEXT_15 = $(am__EXEEXT_10)
 am__EXEEXT_16 = internal-screenshot.weston$(EXEEXT)
-am__EXEEXT_17 = config-parser.test$(EXEEXT) vertex-clip.test$(EXEEXT)
+am__EXEEXT_17 = config-parser.test$(EXEEXT) vertex-clip.test$(EXEEXT) \
+	zuctest$(EXEEXT)
 @ENABLE_EGL_TRUE@am__EXEEXT_18 = buffer-count.weston$(EXEEXT)
 @ENABLE_XWAYLAND_TEST_TRUE@am__EXEEXT_19 =  \
 @ENABLE_XWAYLAND_TEST_TRUE@	xwayland-test.weston$(EXEEXT)
@@ -725,10 +762,15 @@ button_weston_DEPENDENCIES = libtest-client.la
 button_weston_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(button_weston_CFLAGS) \
 	$(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o $@
-am_config_parser_test_OBJECTS = tests/config-parser-test.$(OBJEXT)
+am_config_parser_test_OBJECTS =  \
+	tests/config_parser_test-config-parser-test.$(OBJEXT)
 config_parser_test_OBJECTS = $(am_config_parser_test_OBJECTS)
-config_parser_test_DEPENDENCIES = libshared.la libtest-runner.la \
-	$(am__DEPENDENCIES_1)
+config_parser_test_DEPENDENCIES = libshared.la $(am__DEPENDENCIES_1) \
+	libzunitc.la libzunitcmain.la
+config_parser_test_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
+	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
+	$(config_parser_test_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
+	$(LDFLAGS) -o $@
 am_devices_weston_OBJECTS =  \
 	tests/devices_weston-devices-test.$(OBJEXT)
 devices_weston_OBJECTS = $(am_devices_weston_OBJECTS)
@@ -753,7 +795,7 @@ internal_screenshot_weston_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(internal_screenshot_weston_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
 	$(LDFLAGS) -o $@
 am__ivi_layout_ivi_SOURCES_DIST = tests/ivi_layout-test.c \
-	tests/ivi-test.h
+	tests/ivi-test.h shared/helpers.h
 @ENABLE_IVI_SHELL_TRUE@am_ivi_layout_ivi_OBJECTS = tests/ivi_layout_ivi-ivi_layout-test.$(OBJEXT)
 @ENABLE_IVI_SHELL_TRUE@nodist_ivi_layout_ivi_OBJECTS = protocol/ivi_layout_ivi-ivi-application-protocol.$(OBJEXT)
 ivi_layout_ivi_OBJECTS = $(am_ivi_layout_ivi_OBJECTS) \
@@ -862,7 +904,9 @@ am_weston_OBJECTS = src/weston-log.$(OBJEXT) \
 	src/weston-bindings.$(OBJEXT) src/weston-animation.$(OBJEXT) \
 	src/weston-noop-renderer.$(OBJEXT) \
 	src/weston-pixman-renderer.$(OBJEXT) \
-	src/weston-timeline.$(OBJEXT) shared/weston-matrix.$(OBJEXT)
+	src/weston-timeline.$(OBJEXT) src/weston-main.$(OBJEXT) \
+	src/weston-linux-dmabuf.$(OBJEXT) \
+	shared/weston-matrix.$(OBJEXT)
 nodist_weston_OBJECTS =  \
 	protocol/weston-screenshooter-protocol.$(OBJEXT) \
 	protocol/weston-text-cursor-position-protocol.$(OBJEXT) \
@@ -870,7 +914,8 @@ nodist_weston_OBJECTS =  \
 	protocol/weston-input-method-protocol.$(OBJEXT) \
 	protocol/weston-workspaces-protocol.$(OBJEXT) \
 	protocol/weston-presentation_timing-protocol.$(OBJEXT) \
-	protocol/weston-scaler-protocol.$(OBJEXT)
+	protocol/weston-scaler-protocol.$(OBJEXT) \
+	protocol/weston-linux-dmabuf-protocol.$(OBJEXT)
 weston_OBJECTS = $(am_weston_OBJECTS) $(nodist_weston_OBJECTS)
 weston_DEPENDENCIES = $(am__DEPENDENCIES_1) $(am__DEPENDENCIES_1) \
 	$(am__DEPENDENCIES_1) libshared.la
@@ -878,7 +923,7 @@ weston_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(weston_CFLAGS) $(CFLAGS) \
 	$(weston_LDFLAGS) $(LDFLAGS) -o $@
 am__weston_calibrator_SOURCES_DIST = clients/calibrator.c \
-	shared/matrix.c shared/matrix.h
+	shared/helpers.h shared/matrix.c shared/matrix.h
 @BUILD_CLIENTS_TRUE@am_weston_calibrator_OBJECTS = clients/weston_calibrator-calibrator.$(OBJEXT) \
 @BUILD_CLIENTS_TRUE@	shared/weston_calibrator-matrix.$(OBJEXT)
 weston_calibrator_OBJECTS = $(am_weston_calibrator_OBJECTS)
@@ -887,7 +932,7 @@ weston_calibrator_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
 	$(weston_calibrator_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) \
 	-o $@
-am__weston_clickdot_SOURCES_DIST = clients/clickdot.c
+am__weston_clickdot_SOURCES_DIST = clients/clickdot.c shared/helpers.h
 @BUILD_CLIENTS_TRUE@am_weston_clickdot_OBJECTS = clients/weston_clickdot-clickdot.$(OBJEXT)
 weston_clickdot_OBJECTS = $(am_weston_clickdot_OBJECTS)
 @BUILD_CLIENTS_TRUE@weston_clickdot_DEPENDENCIES = libtoytoolkit.la
@@ -905,7 +950,8 @@ weston_cliptest_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
 	$(weston_cliptest_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) \
 	-o $@
-am__weston_desktop_shell_SOURCES_DIST = clients/desktop-shell.c
+am__weston_desktop_shell_SOURCES_DIST = clients/desktop-shell.c \
+	shared/helpers.h
 @BUILD_CLIENTS_TRUE@am_weston_desktop_shell_OBJECTS = clients/weston_desktop_shell-desktop-shell.$(OBJEXT)
 @BUILD_CLIENTS_TRUE@nodist_weston_desktop_shell_OBJECTS = protocol/weston_desktop_shell-desktop-shell-protocol.$(OBJEXT)
 weston_desktop_shell_OBJECTS = $(am_weston_desktop_shell_OBJECTS) \
@@ -916,7 +962,7 @@ weston_desktop_shell_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
 	$(weston_desktop_shell_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
 	$(LDFLAGS) -o $@
-am__weston_dnd_SOURCES_DIST = clients/dnd.c
+am__weston_dnd_SOURCES_DIST = clients/dnd.c shared/helpers.h
 @BUILD_CLIENTS_TRUE@am_weston_dnd_OBJECTS =  \
 @BUILD_CLIENTS_TRUE@	clients/weston_dnd-dnd.$(OBJEXT)
 weston_dnd_OBJECTS = $(am_weston_dnd_OBJECTS)
@@ -924,7 +970,7 @@ weston_dnd_OBJECTS = $(am_weston_dnd_OBJECTS)
 weston_dnd_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(weston_dnd_CFLAGS) \
 	$(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o $@
-am__weston_editor_SOURCES_DIST = clients/editor.c
+am__weston_editor_SOURCES_DIST = clients/editor.c shared/helpers.h
 @BUILD_CLIENTS_TRUE@@HAVE_PANGO_TRUE@am_weston_editor_OBJECTS = clients/weston_editor-editor.$(OBJEXT)
 @BUILD_CLIENTS_TRUE@@HAVE_PANGO_TRUE@nodist_weston_editor_OBJECTS = protocol/weston_editor-text-protocol.$(OBJEXT)
 weston_editor_OBJECTS = $(am_weston_editor_OBJECTS) \
@@ -935,7 +981,8 @@ weston_editor_OBJECTS = $(am_weston_editor_OBJECTS) \
 weston_editor_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(weston_editor_CFLAGS) \
 	$(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o $@
-am__weston_eventdemo_SOURCES_DIST = clients/eventdemo.c
+am__weston_eventdemo_SOURCES_DIST = clients/eventdemo.c \
+	shared/helpers.h
 @BUILD_CLIENTS_TRUE@am_weston_eventdemo_OBJECTS = clients/weston_eventdemo-eventdemo.$(OBJEXT)
 weston_eventdemo_OBJECTS = $(am_weston_eventdemo_OBJECTS)
 @BUILD_CLIENTS_TRUE@weston_eventdemo_DEPENDENCIES = libtoytoolkit.la
@@ -976,7 +1023,7 @@ weston_image_OBJECTS = $(am_weston_image_OBJECTS)
 weston_image_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(weston_image_CFLAGS) \
 	$(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o $@
-am__weston_info_SOURCES_DIST = clients/weston-info.c
+am__weston_info_SOURCES_DIST = clients/weston-info.c shared/helpers.h
 @BUILD_CLIENTS_TRUE@am_weston_info_OBJECTS =  \
 @BUILD_CLIENTS_TRUE@	clients/weston_info-weston-info.$(OBJEXT)
 @BUILD_CLIENTS_TRUE@nodist_weston_info_OBJECTS = protocol/weston_info-presentation_timing-protocol.$(OBJEXT)
@@ -988,7 +1035,7 @@ weston_info_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(weston_info_CFLAGS) \
 	$(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o $@
 am__weston_ivi_shell_user_interface_SOURCES_DIST =  \
-	clients/ivi-shell-user-interface.c
+	clients/ivi-shell-user-interface.c shared/helpers.h
 @BUILD_CLIENTS_TRUE@@ENABLE_IVI_SHELL_TRUE@am_weston_ivi_shell_user_interface_OBJECTS = clients/weston_ivi_shell_user_interface-ivi-shell-user-interface.$(OBJEXT)
 @BUILD_CLIENTS_TRUE@@ENABLE_IVI_SHELL_TRUE@nodist_weston_ivi_shell_user_interface_OBJECTS = protocol/weston_ivi_shell_user_interface-ivi-hmi-controller-protocol.$(OBJEXT) \
 @BUILD_CLIENTS_TRUE@@ENABLE_IVI_SHELL_TRUE@	protocol/weston_ivi_shell_user_interface-ivi-application-protocol.$(OBJEXT)
@@ -1032,7 +1079,7 @@ weston_multi_resource_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
 	$(weston_multi_resource_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
 	$(LDFLAGS) -o $@
-am__weston_nested_SOURCES_DIST = clients/nested.c
+am__weston_nested_SOURCES_DIST = clients/nested.c shared/helpers.h
 @BUILD_CLIENTS_TRUE@@HAVE_CAIRO_GLESV2_TRUE@am_weston_nested_OBJECTS = clients/weston_nested-nested.$(OBJEXT)
 weston_nested_OBJECTS = $(am_weston_nested_OBJECTS)
 @BUILD_CLIENTS_TRUE@@HAVE_CAIRO_GLESV2_TRUE@weston_nested_DEPENDENCIES =  \
@@ -1049,7 +1096,8 @@ weston_nested_client_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
 	$(weston_nested_client_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
 	$(LDFLAGS) -o $@
-am__weston_presentation_shm_SOURCES_DIST = clients/presentation-shm.c
+am__weston_presentation_shm_SOURCES_DIST = clients/presentation-shm.c \
+	shared/helpers.h
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@am_weston_presentation_shm_OBJECTS = clients/weston_presentation_shm-presentation-shm.$(OBJEXT)
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@nodist_weston_presentation_shm_OBJECTS = protocol/weston_presentation_shm-presentation_timing-protocol.$(OBJEXT)
 weston_presentation_shm_OBJECTS =  \
@@ -1078,22 +1126,6 @@ weston_scaler_OBJECTS = $(am_weston_scaler_OBJECTS)
 weston_scaler_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(weston_scaler_CFLAGS) \
 	$(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o $@
-am__weston_screensaver_SOURCES_DIST = clients/wscreensaver.c \
-	clients/wscreensaver.h clients/wscreensaver-glue.c \
-	clients/wscreensaver-glue.h clients/glmatrix.c \
-	clients/matrix3.xpm
-@BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@@HAVE_GLU_TRUE@am_weston_screensaver_OBJECTS = clients/weston_screensaver-wscreensaver.$(OBJEXT) \
-@BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@@HAVE_GLU_TRUE@	clients/weston_screensaver-wscreensaver-glue.$(OBJEXT) \
-@BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@@HAVE_GLU_TRUE@	clients/weston_screensaver-glmatrix.$(OBJEXT)
-@BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@@HAVE_GLU_TRUE@nodist_weston_screensaver_OBJECTS = protocol/weston_screensaver-desktop-shell-protocol.$(OBJEXT)
-weston_screensaver_OBJECTS = $(am_weston_screensaver_OBJECTS) \
-	$(nodist_weston_screensaver_OBJECTS)
-@BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@@HAVE_GLU_TRUE@weston_screensaver_DEPENDENCIES = libtoytoolkit.la \
-@BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@@HAVE_GLU_TRUE@	$(am__DEPENDENCIES_1)
-weston_screensaver_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
-	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
-	$(weston_screensaver_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
-	$(LDFLAGS) -o $@
 am__weston_screenshooter_SOURCES_DIST = clients/screenshot.c
 @BUILD_CLIENTS_TRUE@am_weston_screenshooter_OBJECTS = clients/weston_screenshooter-screenshot.$(OBJEXT)
 @BUILD_CLIENTS_TRUE@nodist_weston_screenshooter_OBJECTS = protocol/weston_screenshooter-screenshooter-protocol.$(OBJEXT)
@@ -1117,6 +1149,19 @@ weston_simple_damage_OBJECTS = $(am_weston_simple_damage_OBJECTS) \
 weston_simple_damage_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
 	$(weston_simple_damage_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
+	$(LDFLAGS) -o $@
+am__weston_simple_dmabuf_SOURCES_DIST = clients/simple-dmabuf.c
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_INTEL_DMABUF_CLIENT_TRUE@am_weston_simple_dmabuf_OBJECTS = clients/weston_simple_dmabuf-simple-dmabuf.$(OBJEXT)
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_INTEL_DMABUF_CLIENT_TRUE@nodist_weston_simple_dmabuf_OBJECTS = protocol/weston_simple_dmabuf-xdg-shell-protocol.$(OBJEXT) \
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_INTEL_DMABUF_CLIENT_TRUE@	protocol/weston_simple_dmabuf-fullscreen-shell-protocol.$(OBJEXT) \
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_INTEL_DMABUF_CLIENT_TRUE@	protocol/weston_simple_dmabuf-linux-dmabuf-protocol.$(OBJEXT)
+weston_simple_dmabuf_OBJECTS = $(am_weston_simple_dmabuf_OBJECTS) \
+	$(nodist_weston_simple_dmabuf_OBJECTS)
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_INTEL_DMABUF_CLIENT_TRUE@weston_simple_dmabuf_DEPENDENCIES = $(am__DEPENDENCIES_1) \
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_INTEL_DMABUF_CLIENT_TRUE@	libshared.la
+weston_simple_dmabuf_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
+	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
+	$(weston_simple_dmabuf_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
 	$(LDFLAGS) -o $@
 am__weston_simple_egl_SOURCES_DIST = clients/simple-egl.c
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_EGL_CLIENTS_TRUE@am_weston_simple_egl_OBJECTS = clients/weston_simple_egl-simple-egl.$(OBJEXT)
@@ -1153,7 +1198,8 @@ weston_simple_shm_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
 	$(weston_simple_shm_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) \
 	-o $@
-am__weston_simple_touch_SOURCES_DIST = clients/simple-touch.c
+am__weston_simple_touch_SOURCES_DIST = clients/simple-touch.c \
+	shared/helpers.h
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@am_weston_simple_touch_OBJECTS = clients/weston_simple_touch-simple-touch.$(OBJEXT)
 weston_simple_touch_OBJECTS = $(am_weston_simple_touch_OBJECTS)
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@weston_simple_touch_DEPENDENCIES = $(am__DEPENDENCIES_1) \
@@ -1170,7 +1216,7 @@ weston_smoke_OBJECTS = $(am_weston_smoke_OBJECTS)
 weston_smoke_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(weston_smoke_CFLAGS) \
 	$(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o $@
-am__weston_stacking_SOURCES_DIST = clients/stacking.c
+am__weston_stacking_SOURCES_DIST = clients/stacking.c shared/helpers.h
 @BUILD_CLIENTS_TRUE@am_weston_stacking_OBJECTS = clients/weston_stacking-stacking.$(OBJEXT)
 weston_stacking_OBJECTS = $(am_weston_stacking_OBJECTS)
 @BUILD_CLIENTS_TRUE@weston_stacking_DEPENDENCIES = libtoytoolkit.la
@@ -1178,7 +1224,8 @@ weston_stacking_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
 	$(weston_stacking_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) \
 	-o $@
-am__weston_subsurfaces_SOURCES_DIST = clients/subsurfaces.c
+am__weston_subsurfaces_SOURCES_DIST = clients/subsurfaces.c \
+	shared/helpers.h
 @BUILD_CLIENTS_TRUE@@BUILD_SUBSURFACES_CLIENT_TRUE@am_weston_subsurfaces_OBJECTS = clients/weston_subsurfaces-subsurfaces.$(OBJEXT)
 weston_subsurfaces_OBJECTS = $(am_weston_subsurfaces_OBJECTS)
 @BUILD_CLIENTS_TRUE@@BUILD_SUBSURFACES_CLIENT_TRUE@weston_subsurfaces_DEPENDENCIES = libtoytoolkit.la \
@@ -1187,7 +1234,7 @@ weston_subsurfaces_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
 	$(weston_subsurfaces_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
 	$(LDFLAGS) -o $@
-am__weston_terminal_SOURCES_DIST = clients/terminal.c
+am__weston_terminal_SOURCES_DIST = clients/terminal.c shared/helpers.h
 @BUILD_CLIENTS_TRUE@am_weston_terminal_OBJECTS = clients/weston_terminal-terminal.$(OBJEXT)
 weston_terminal_OBJECTS = $(am_weston_terminal_OBJECTS)
 @BUILD_CLIENTS_TRUE@weston_terminal_DEPENDENCIES = libtoytoolkit.la
@@ -1214,6 +1261,14 @@ xwayland_test_weston_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
 	$(xwayland_test_weston_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
 	$(LDFLAGS) -o $@
+am_zuctest_OBJECTS =  \
+	tools/zunitc/test/zuctest-fixtures_test.$(OBJEXT) \
+	tools/zunitc/test/zuctest-zunitc_test.$(OBJEXT)
+zuctest_OBJECTS = $(am_zuctest_OBJECTS)
+zuctest_DEPENDENCIES = libzunitc.la libzunitcmain.la
+zuctest_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
+	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(zuctest_CFLAGS) \
+	$(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o $@
 AM_V_P = $(am__v_P_@AM_V@)
 am__v_P_ = $(am__v_P_@AM_DEFAULT_V@)
 am__v_P_0 = false
@@ -1264,7 +1319,8 @@ SOURCES = $(cms_colord_la_SOURCES) $(cms_static_la_SOURCES) \
 	$(libtest_client_la_SOURCES) \
 	$(nodist_libtest_client_la_SOURCES) \
 	$(libtest_runner_la_SOURCES) $(libtoytoolkit_la_SOURCES) \
-	$(nodist_libtoytoolkit_la_SOURCES) $(rdp_backend_la_SOURCES) \
+	$(nodist_libtoytoolkit_la_SOURCES) $(libzunitc_la_SOURCES) \
+	$(libzunitcmain_la_SOURCES) $(rdp_backend_la_SOURCES) \
 	$(rpi_backend_la_SOURCES) $(screen_share_la_SOURCES) \
 	$(nodist_screen_share_la_SOURCES) \
 	$(surface_global_test_la_SOURCES) \
@@ -1304,12 +1360,12 @@ SOURCES = $(cms_colord_la_SOURCES) $(cms_static_la_SOURCES) \
 	$(weston_presentation_shm_SOURCES) \
 	$(nodist_weston_presentation_shm_SOURCES) \
 	$(weston_resizor_SOURCES) $(weston_scaler_SOURCES) \
-	$(weston_screensaver_SOURCES) \
-	$(nodist_weston_screensaver_SOURCES) \
 	$(weston_screenshooter_SOURCES) \
 	$(nodist_weston_screenshooter_SOURCES) \
 	$(weston_simple_damage_SOURCES) \
 	$(nodist_weston_simple_damage_SOURCES) \
+	$(weston_simple_dmabuf_SOURCES) \
+	$(nodist_weston_simple_dmabuf_SOURCES) \
 	$(weston_simple_egl_SOURCES) \
 	$(nodist_weston_simple_egl_SOURCES) \
 	$(weston_simple_im_SOURCES) $(nodist_weston_simple_im_SOURCES) \
@@ -1318,7 +1374,7 @@ SOURCES = $(cms_colord_la_SOURCES) $(cms_static_la_SOURCES) \
 	$(weston_simple_touch_SOURCES) $(weston_smoke_SOURCES) \
 	$(weston_stacking_SOURCES) $(weston_subsurfaces_SOURCES) \
 	$(weston_terminal_SOURCES) $(weston_transformed_SOURCES) \
-	$(xwayland_test_weston_SOURCES)
+	$(xwayland_test_weston_SOURCES) $(zuctest_SOURCES)
 DIST_SOURCES = $(am__cms_colord_la_SOURCES_DIST) \
 	$(am__cms_static_la_SOURCES_DIST) \
 	$(am__desktop_shell_la_SOURCES_DIST) \
@@ -1334,8 +1390,8 @@ DIST_SOURCES = $(am__cms_colord_la_SOURCES_DIST) \
 	$(am__libsession_helper_la_SOURCES_DIST) \
 	$(libshared_cairo_la_SOURCES) $(libshared_la_SOURCES) \
 	$(libtest_client_la_SOURCES) $(libtest_runner_la_SOURCES) \
-	$(am__libtoytoolkit_la_SOURCES_DIST) \
-	$(am__rdp_backend_la_SOURCES_DIST) \
+	$(am__libtoytoolkit_la_SOURCES_DIST) $(libzunitc_la_SOURCES) \
+	$(libzunitcmain_la_SOURCES) $(am__rdp_backend_la_SOURCES_DIST) \
 	$(am__rpi_backend_la_SOURCES_DIST) \
 	$(am__screen_share_la_SOURCES_DIST) \
 	$(surface_global_test_la_SOURCES) \
@@ -1375,9 +1431,9 @@ DIST_SOURCES = $(am__cms_colord_la_SOURCES_DIST) \
 	$(am__weston_presentation_shm_SOURCES_DIST) \
 	$(am__weston_resizor_SOURCES_DIST) \
 	$(am__weston_scaler_SOURCES_DIST) \
-	$(am__weston_screensaver_SOURCES_DIST) \
 	$(am__weston_screenshooter_SOURCES_DIST) \
 	$(am__weston_simple_damage_SOURCES_DIST) \
+	$(am__weston_simple_dmabuf_SOURCES_DIST) \
 	$(am__weston_simple_egl_SOURCES_DIST) \
 	$(am__weston_simple_im_SOURCES_DIST) \
 	$(am__weston_simple_shm_SOURCES_DIST) \
@@ -1387,7 +1443,7 @@ DIST_SOURCES = $(am__cms_colord_la_SOURCES_DIST) \
 	$(am__weston_subsurfaces_SOURCES_DIST) \
 	$(am__weston_terminal_SOURCES_DIST) \
 	$(am__weston_transformed_SOURCES_DIST) \
-	$(am__xwayland_test_weston_SOURCES_DIST)
+	$(am__xwayland_test_weston_SOURCES_DIST) $(zuctest_SOURCES)
 am__can_run_installinfo = \
   case $$AM_UPDATE_INFO_DIR in \
     n|no|NO) false;; \
@@ -1408,7 +1464,7 @@ am__dist_westondata_DATA_DIST = data/wayland.svg data/wayland.png \
 	data/icon_ivi_flower.png data/icon_ivi_simple-egl.png \
 	data/icon_ivi_simple-shm.png data/icon_ivi_smoke.png
 DATA = $(dist_wayland_session_DATA) $(dist_westondata_DATA) \
-	$(pkgconfig_DATA) $(wayland_session_DATA)
+	$(pkgconfig_DATA)
 HEADERS = $(westoninclude_HEADERS)
 am__tagged_files = $(HEADERS) $(SOURCES) $(TAGS_FILES) \
 	$(LISP)config.h.in
@@ -1657,7 +1713,10 @@ DEFS = @DEFS@
 DEPDIR = @DEPDIR@
 DLLTOOL = @DLLTOOL@
 DLOPEN_LIBS = @DLOPEN_LIBS@
+DOXYGEN = @DOXYGEN@
 DRM_COMPOSITOR_CFLAGS = @DRM_COMPOSITOR_CFLAGS@
+DRM_COMPOSITOR_GBM_CFLAGS = @DRM_COMPOSITOR_GBM_CFLAGS@
+DRM_COMPOSITOR_GBM_LIBS = @DRM_COMPOSITOR_GBM_LIBS@
 DRM_COMPOSITOR_LIBS = @DRM_COMPOSITOR_LIBS@
 DSYMUTIL = @DSYMUTIL@
 DUMPBIN = @DUMPBIN@
@@ -1674,8 +1733,8 @@ FBDEV_COMPOSITOR_CFLAGS = @FBDEV_COMPOSITOR_CFLAGS@
 FBDEV_COMPOSITOR_LIBS = @FBDEV_COMPOSITOR_LIBS@
 FGREP = @FGREP@
 GCC_CFLAGS = @GCC_CFLAGS@
-GLU_CFLAGS = @GLU_CFLAGS@
-GLU_LIBS = @GLU_LIBS@
+GL_RENDERER_CFLAGS = @GL_RENDERER_CFLAGS@
+GL_RENDERER_LIBS = @GL_RENDERER_LIBS@
 GREP = @GREP@
 INSTALL = @INSTALL@
 INSTALL_DATA = @INSTALL_DATA@
@@ -1698,6 +1757,8 @@ LIBUNWIND_CFLAGS = @LIBUNWIND_CFLAGS@
 LIBUNWIND_LIBS = @LIBUNWIND_LIBS@
 LIBVA_CFLAGS = @LIBVA_CFLAGS@
 LIBVA_LIBS = @LIBVA_LIBS@
+LIBXML2_CFLAGS = @LIBXML2_CFLAGS@
+LIBXML2_LIBS = @LIBXML2_LIBS@
 LIPO = @LIPO@
 LN_S = @LN_S@
 LTLIBOBJS = @LTLIBOBJS@
@@ -1746,6 +1807,8 @@ SET_MAKE = @SET_MAKE@
 SHELL = @SHELL@
 SIMPLE_CLIENT_CFLAGS = @SIMPLE_CLIENT_CFLAGS@
 SIMPLE_CLIENT_LIBS = @SIMPLE_CLIENT_LIBS@
+SIMPLE_DMABUF_CLIENT_CFLAGS = @SIMPLE_DMABUF_CLIENT_CFLAGS@
+SIMPLE_DMABUF_CLIENT_LIBS = @SIMPLE_DMABUF_CLIENT_LIBS@
 SIMPLE_EGL_CLIENT_CFLAGS = @SIMPLE_EGL_CLIENT_CFLAGS@
 SIMPLE_EGL_CLIENT_LIBS = @SIMPLE_EGL_CLIENT_LIBS@
 STRIP = @STRIP@
@@ -1841,8 +1904,8 @@ moduledir = $(libdir)/weston
 module_LTLIBRARIES = $(am__append_5) $(am__append_6) $(am__append_7) \
 	$(am__append_11) $(am__append_12) $(am__append_16) \
 	$(am__append_17) $(am__append_18) $(am__append_19) \
-	$(am__append_20) $(am__append_37) $(am__append_39) \
-	$(am__append_41) $(am__append_43) $(am__append_44)
+	$(am__append_20) $(am__append_38) $(am__append_40) \
+	$(am__append_42) $(am__append_44) $(am__append_45)
 
 #
 # Shared utilities
@@ -1852,11 +1915,11 @@ module_LTLIBRARIES = $(am__append_5) $(am__append_6) $(am__append_7) \
 # manual test modules in tests subdirectory
 #
 noinst_LTLIBRARIES = libsession-helper.la $(am__append_13) \
-	$(am__append_28) libshared.la libshared-cairo.la \
-	weston-test.la $(module_tests) libtest-runner.la \
-	libtest-client.la surface-screenshot.la
+	$(am__append_30) libshared.la libshared-cairo.la libzunitc.la \
+	libzunitcmain.la weston-test.la $(module_tests) \
+	libtest-runner.la libtest-client.la surface-screenshot.la
 BUILT_SOURCES = $(nodist_weston_SOURCES) $(am__append_29) \
-	protocol/screenshooter-protocol.c \
+	$(am__append_31) protocol/screenshooter-protocol.c \
 	protocol/screenshooter-client-protocol.h \
 	protocol/text-cursor-position-client-protocol.h \
 	protocol/text-cursor-position-protocol.c \
@@ -1875,8 +1938,8 @@ BUILT_SOURCES = $(nodist_weston_SOURCES) $(am__append_29) \
 	protocol/ivi-hmi-controller-protocol.c \
 	protocol/ivi-hmi-controller-client-protocol.h \
 	protocol/ivi-application-protocol.c \
-	protocol/ivi-application-client-protocol.h $(am__append_38) \
-	$(am__append_40) $(am__append_42) \
+	protocol/ivi-application-client-protocol.h $(am__append_39) \
+	$(am__append_41) $(am__append_43) \
 	protocol/weston-test-protocol.c \
 	protocol/weston-test-server-protocol.h \
 	protocol/weston-test-client-protocol.h \
@@ -1892,8 +1955,8 @@ EXTRA_DIST = weston.ini.in ivi-shell/weston.ini.in \
 	protocol/weston-test.xml protocol/xdg-shell.xml \
 	protocol/fullscreen-shell.xml protocol/presentation_timing.xml \
 	protocol/scaler.xml protocol/ivi-application.xml \
-	protocol/ivi-hmi-controller.xml man/weston.man \
-	man/weston-drm.man man/weston.ini.man
+	protocol/ivi-hmi-controller.xml protocol/linux-dmabuf.xml \
+	man/weston.man man/weston-drm.man man/weston.ini.man
 AM_CFLAGS = $(GCC_CFLAGS)
 AM_CPPFLAGS = \
 	-I$(top_srcdir)/src			\
@@ -1911,7 +1974,7 @@ CLEANFILES = weston.ini ivi-shell/weston.ini tests/weston-ivi.ini \
 	internal-screenshot-00.png $(BUILT_SOURCES) $(man_MANS)
 weston_LDFLAGS = -export-dynamic
 weston_CPPFLAGS = $(AM_CPPFLAGS) -DIN_WESTON
-weston_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS) $(LIBUNWIND_CFLAGS)
+weston_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS) $(LIBUNWIND_CFLAGS)
 weston_LDADD = $(COMPOSITOR_LIBS) $(LIBUNWIND_LIBS) \
 	$(DLOPEN_LIBS) -lm libshared.la
 
@@ -1934,8 +1997,13 @@ weston_SOURCES = \
 	src/timeline.c					\
 	src/timeline.h					\
 	src/timeline-object.h				\
+	src/main.c					\
+	src/linux-dmabuf.c				\
+	src/linux-dmabuf.h				\
+	shared/helpers.h				\
 	shared/matrix.c					\
 	shared/matrix.h					\
+	shared/timespec-util.h				\
 	shared/zalloc.h					\
 	shared/platform.h				\
 	src/weston-egl-ext.h
@@ -1954,17 +2022,19 @@ nodist_weston_SOURCES = \
 	protocol/presentation_timing-protocol.c		\
 	protocol/presentation_timing-server-protocol.h	\
 	protocol/scaler-protocol.c			\
-	protocol/scaler-server-protocol.h
+	protocol/scaler-server-protocol.h		\
+	protocol/linux-dmabuf-protocol.c		\
+	protocol/linux-dmabuf-server-protocol.h
 
 libsession_helper_la_SOURCES = src/weston-launch.h src/launcher-util.c \
 	src/launcher-util.h $(am__append_1)
-libsession_helper_la_CFLAGS = $(GCC_CFLAGS) $(LIBDRM_CFLAGS) \
+libsession_helper_la_CFLAGS = $(AM_CFLAGS) $(LIBDRM_CFLAGS) \
 	$(PIXMAN_CFLAGS) $(COMPOSITOR_CFLAGS) $(am__append_2)
 libsession_helper_la_LIBADD = $(LIBDRM_LIBS) $(am__append_3)
 @BUILD_WESTON_LAUNCH_TRUE@weston_launch_SOURCES = src/weston-launch.c src/weston-launch.h
 @BUILD_WESTON_LAUNCH_TRUE@weston_launch_CPPFLAGS = -DBINDIR='"$(bindir)"'
 @BUILD_WESTON_LAUNCH_TRUE@weston_launch_CFLAGS = \
-@BUILD_WESTON_LAUNCH_TRUE@	$(GCC_CFLAGS)				\
+@BUILD_WESTON_LAUNCH_TRUE@	$(AM_CFLAGS)				\
 @BUILD_WESTON_LAUNCH_TRUE@	$(PAM_CFLAGS)				\
 @BUILD_WESTON_LAUNCH_TRUE@	$(SYSTEMD_LOGIN_CFLAGS)			\
 @BUILD_WESTON_LAUNCH_TRUE@	$(LIBDRM_CFLAGS)
@@ -1973,8 +2043,7 @@ libsession_helper_la_LIBADD = $(LIBDRM_LIBS) $(am__append_3)
 pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = src/weston.pc
 wayland_sessiondir = $(datadir)/wayland-sessions
-wayland_session_DATA = src/weston.desktop
-dist_wayland_session_DATA = $(wayland_session_DATA)
+dist_wayland_session_DATA = src/weston.desktop
 westonincludedir = $(includedir)/weston
 westoninclude_HEADERS = \
 	src/version.h				\
@@ -1990,13 +2059,15 @@ westoninclude_HEADERS = \
 @ENABLE_EGL_TRUE@gl_renderer_la_CFLAGS = \
 @ENABLE_EGL_TRUE@	$(COMPOSITOR_CFLAGS)			\
 @ENABLE_EGL_TRUE@	$(EGL_CFLAGS)				\
-@ENABLE_EGL_TRUE@	$(GCC_CFLAGS)
+@ENABLE_EGL_TRUE@	$(GL_RENDERER_CFLAGS)			\
+@ENABLE_EGL_TRUE@	$(AM_CFLAGS)
 
 @ENABLE_EGL_TRUE@gl_renderer_la_SOURCES = \
 @ENABLE_EGL_TRUE@	src/gl-renderer.h			\
 @ENABLE_EGL_TRUE@	src/gl-renderer.c			\
 @ENABLE_EGL_TRUE@	src/vertex-clipping.c			\
-@ENABLE_EGL_TRUE@	src/vertex-clipping.h
+@ENABLE_EGL_TRUE@	src/vertex-clipping.h			\
+@ENABLE_EGL_TRUE@	shared/helpers.h
 
 @ENABLE_X11_COMPOSITOR_TRUE@x11_backend_la_LDFLAGS = -module -avoid-version
 @ENABLE_X11_COMPOSITOR_TRUE@x11_backend_la_LIBADD = $(COMPOSITOR_LIBS) $(X11_COMPOSITOR_LIBS) \
@@ -2008,15 +2079,19 @@ westoninclude_HEADERS = \
 @ENABLE_X11_COMPOSITOR_TRUE@	$(PIXMAN_CFLAGS)			\
 @ENABLE_X11_COMPOSITOR_TRUE@	$(CAIRO_CFLAGS)				\
 @ENABLE_X11_COMPOSITOR_TRUE@	$(X11_COMPOSITOR_CFLAGS)		\
-@ENABLE_X11_COMPOSITOR_TRUE@	$(GCC_CFLAGS)
+@ENABLE_X11_COMPOSITOR_TRUE@	$(AM_CFLAGS)
 
-@ENABLE_X11_COMPOSITOR_TRUE@x11_backend_la_SOURCES = src/compositor-x11.c
+@ENABLE_X11_COMPOSITOR_TRUE@x11_backend_la_SOURCES = \
+@ENABLE_X11_COMPOSITOR_TRUE@	src/compositor-x11.c			\
+@ENABLE_X11_COMPOSITOR_TRUE@	shared/helpers.h
+
 INPUT_BACKEND_LIBS = $(LIBINPUT_BACKEND_LIBS)
 INPUT_BACKEND_SOURCES = \
 	src/libinput-seat.c			\
 	src/libinput-seat.h			\
 	src/libinput-device.c			\
-	src/libinput-device.h
+	src/libinput-device.h			\
+	shared/helpers.h
 
 @ENABLE_DRM_COMPOSITOR_TRUE@drm_backend_la_LDFLAGS = -module -avoid-version
 @ENABLE_DRM_COMPOSITOR_TRUE@drm_backend_la_LIBADD =  \
@@ -2028,10 +2103,12 @@ INPUT_BACKEND_SOURCES = \
 @ENABLE_DRM_COMPOSITOR_TRUE@drm_backend_la_CFLAGS =  \
 @ENABLE_DRM_COMPOSITOR_TRUE@	$(COMPOSITOR_CFLAGS) $(EGL_CFLAGS) \
 @ENABLE_DRM_COMPOSITOR_TRUE@	$(DRM_COMPOSITOR_CFLAGS) \
-@ENABLE_DRM_COMPOSITOR_TRUE@	$(GCC_CFLAGS) $(am__append_10)
+@ENABLE_DRM_COMPOSITOR_TRUE@	$(AM_CFLAGS) $(am__append_10)
 @ENABLE_DRM_COMPOSITOR_TRUE@drm_backend_la_SOURCES =  \
 @ENABLE_DRM_COMPOSITOR_TRUE@	src/compositor-drm.c \
 @ENABLE_DRM_COMPOSITOR_TRUE@	$(INPUT_BACKEND_SOURCES) \
+@ENABLE_DRM_COMPOSITOR_TRUE@	shared/helpers.h \
+@ENABLE_DRM_COMPOSITOR_TRUE@	shared/timespec-util.h \
 @ENABLE_DRM_COMPOSITOR_TRUE@	src/libbacklight.c \
 @ENABLE_DRM_COMPOSITOR_TRUE@	src/libbacklight.h $(am__append_8)
 @ENABLE_WAYLAND_COMPOSITOR_TRUE@wayland_backend_la_LDFLAGS = -module -avoid-version
@@ -2046,9 +2123,12 @@ INPUT_BACKEND_SOURCES = \
 @ENABLE_WAYLAND_COMPOSITOR_TRUE@	$(PIXMAN_CFLAGS)			\
 @ENABLE_WAYLAND_COMPOSITOR_TRUE@	$(CAIRO_CFLAGS)				\
 @ENABLE_WAYLAND_COMPOSITOR_TRUE@	$(WAYLAND_COMPOSITOR_CFLAGS)		\
-@ENABLE_WAYLAND_COMPOSITOR_TRUE@	$(GCC_CFLAGS)
+@ENABLE_WAYLAND_COMPOSITOR_TRUE@	$(AM_CFLAGS)
 
-@ENABLE_WAYLAND_COMPOSITOR_TRUE@wayland_backend_la_SOURCES = src/compositor-wayland.c
+@ENABLE_WAYLAND_COMPOSITOR_TRUE@wayland_backend_la_SOURCES = \
+@ENABLE_WAYLAND_COMPOSITOR_TRUE@	src/compositor-wayland.c		\
+@ENABLE_WAYLAND_COMPOSITOR_TRUE@	shared/helpers.h
+
 @ENABLE_WAYLAND_COMPOSITOR_TRUE@nodist_wayland_backend_la_SOURCES = \
 @ENABLE_WAYLAND_COMPOSITOR_TRUE@	protocol/fullscreen-shell-protocol.c		\
 @ENABLE_WAYLAND_COMPOSITOR_TRUE@	protocol/fullscreen-shell-client-protocol.h
@@ -2061,7 +2141,7 @@ INPUT_BACKEND_SOURCES = \
 @ENABLE_RPI_COMPOSITOR_TRUE@	$(INPUT_BACKEND_LIBS) \
 @ENABLE_RPI_COMPOSITOR_TRUE@	libsession-helper.la libshared.la \
 @ENABLE_RPI_COMPOSITOR_TRUE@	$(am__append_14)
-@ENABLE_RPI_COMPOSITOR_TRUE@rpi_backend_la_CFLAGS = $(GCC_CFLAGS) \
+@ENABLE_RPI_COMPOSITOR_TRUE@rpi_backend_la_CFLAGS = $(AM_CFLAGS) \
 @ENABLE_RPI_COMPOSITOR_TRUE@	$(COMPOSITOR_CFLAGS) \
 @ENABLE_RPI_COMPOSITOR_TRUE@	$(RPI_COMPOSITOR_CFLAGS) \
 @ENABLE_RPI_COMPOSITOR_TRUE@	$(RPI_BCM_HOST_CFLAGS) \
@@ -2071,12 +2151,16 @@ INPUT_BACKEND_SOURCES = \
 @ENABLE_RPI_COMPOSITOR_TRUE@	src/rpi-renderer.c			\
 @ENABLE_RPI_COMPOSITOR_TRUE@	src/rpi-renderer.h			\
 @ENABLE_RPI_COMPOSITOR_TRUE@	src/rpi-bcm-stubs.h			\
+@ENABLE_RPI_COMPOSITOR_TRUE@	shared/helpers.h			\
 @ENABLE_RPI_COMPOSITOR_TRUE@	$(INPUT_BACKEND_SOURCES)
 
 @ENABLE_HEADLESS_COMPOSITOR_TRUE@headless_backend_la_LDFLAGS = -module -avoid-version
 @ENABLE_HEADLESS_COMPOSITOR_TRUE@headless_backend_la_LIBADD = $(COMPOSITOR_LIBS) libshared.la
-@ENABLE_HEADLESS_COMPOSITOR_TRUE@headless_backend_la_CFLAGS = $(COMPOSITOR_CFLAGS) $(GCC_CFLAGS)
-@ENABLE_HEADLESS_COMPOSITOR_TRUE@headless_backend_la_SOURCES = src/compositor-headless.c
+@ENABLE_HEADLESS_COMPOSITOR_TRUE@headless_backend_la_CFLAGS = $(COMPOSITOR_CFLAGS) $(AM_CFLAGS)
+@ENABLE_HEADLESS_COMPOSITOR_TRUE@headless_backend_la_SOURCES = \
+@ENABLE_HEADLESS_COMPOSITOR_TRUE@	src/compositor-headless.c		\
+@ENABLE_HEADLESS_COMPOSITOR_TRUE@	shared/helpers.h
+
 @ENABLE_FBDEV_COMPOSITOR_TRUE@fbdev_backend_la_LDFLAGS = -module -avoid-version
 @ENABLE_FBDEV_COMPOSITOR_TRUE@fbdev_backend_la_LIBADD = \
 @ENABLE_FBDEV_COMPOSITOR_TRUE@	$(COMPOSITOR_LIBS)			\
@@ -2090,10 +2174,11 @@ INPUT_BACKEND_SOURCES = \
 @ENABLE_FBDEV_COMPOSITOR_TRUE@	$(EGL_CFLAGS)				\
 @ENABLE_FBDEV_COMPOSITOR_TRUE@	$(FBDEV_COMPOSITOR_CFLAGS)		\
 @ENABLE_FBDEV_COMPOSITOR_TRUE@	$(PIXMAN_CFLAGS)			\
-@ENABLE_FBDEV_COMPOSITOR_TRUE@	$(GCC_CFLAGS)
+@ENABLE_FBDEV_COMPOSITOR_TRUE@	$(AM_CFLAGS)
 
 @ENABLE_FBDEV_COMPOSITOR_TRUE@fbdev_backend_la_SOURCES = \
 @ENABLE_FBDEV_COMPOSITOR_TRUE@	src/compositor-fbdev.c			\
+@ENABLE_FBDEV_COMPOSITOR_TRUE@	shared/helpers.h			\
 @ENABLE_FBDEV_COMPOSITOR_TRUE@	$(INPUT_BACKEND_SOURCES)
 
 @ENABLE_RDP_COMPOSITOR_TRUE@rdp_backend_la_LDFLAGS = -module -avoid-version
@@ -2104,26 +2189,31 @@ INPUT_BACKEND_SOURCES = \
 @ENABLE_RDP_COMPOSITOR_TRUE@rdp_backend_la_CFLAGS = \
 @ENABLE_RDP_COMPOSITOR_TRUE@	$(COMPOSITOR_CFLAGS)			\
 @ENABLE_RDP_COMPOSITOR_TRUE@	$(RDP_COMPOSITOR_CFLAGS)		\
-@ENABLE_RDP_COMPOSITOR_TRUE@	$(GCC_CFLAGS)
+@ENABLE_RDP_COMPOSITOR_TRUE@	$(AM_CFLAGS)
 
-@ENABLE_RDP_COMPOSITOR_TRUE@rdp_backend_la_SOURCES = src/compositor-rdp.c
+@ENABLE_RDP_COMPOSITOR_TRUE@rdp_backend_la_SOURCES = \
+@ENABLE_RDP_COMPOSITOR_TRUE@	src/compositor-rdp.c			\
+@ENABLE_RDP_COMPOSITOR_TRUE@	shared/helpers.h
+
 @HAVE_LCMS_TRUE@cms_static_la_LDFLAGS = -module -avoid-version
 @HAVE_LCMS_TRUE@cms_static_la_LIBADD = $(COMPOSITOR_LIBS) $(LCMS_LIBS) libshared.la
-@HAVE_LCMS_TRUE@cms_static_la_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS) $(LCMS_CFLAGS)
+@HAVE_LCMS_TRUE@cms_static_la_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS) $(LCMS_CFLAGS)
 @HAVE_LCMS_TRUE@cms_static_la_SOURCES = \
 @HAVE_LCMS_TRUE@	src/cms-static.c				\
 @HAVE_LCMS_TRUE@	src/cms-helper.c				\
-@HAVE_LCMS_TRUE@	src/cms-helper.h
+@HAVE_LCMS_TRUE@	src/cms-helper.h				\
+@HAVE_LCMS_TRUE@	shared/helpers.h
 
 @ENABLE_COLORD_TRUE@@HAVE_LCMS_TRUE@cms_colord_la_LDFLAGS = -module -avoid-version
 @ENABLE_COLORD_TRUE@@HAVE_LCMS_TRUE@cms_colord_la_LIBADD = $(COMPOSITOR_LIBS) $(COLORD_LIBS)
-@ENABLE_COLORD_TRUE@@HAVE_LCMS_TRUE@cms_colord_la_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS) $(COLORD_CFLAGS)
+@ENABLE_COLORD_TRUE@@HAVE_LCMS_TRUE@cms_colord_la_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS) $(COLORD_CFLAGS)
 @ENABLE_COLORD_TRUE@@HAVE_LCMS_TRUE@cms_colord_la_SOURCES = \
 @ENABLE_COLORD_TRUE@@HAVE_LCMS_TRUE@	src/cms-colord.c			\
 @ENABLE_COLORD_TRUE@@HAVE_LCMS_TRUE@	src/cms-helper.c			\
-@ENABLE_COLORD_TRUE@@HAVE_LCMS_TRUE@	src/cms-helper.h
+@ENABLE_COLORD_TRUE@@HAVE_LCMS_TRUE@	src/cms-helper.h			\
+@ENABLE_COLORD_TRUE@@HAVE_LCMS_TRUE@	shared/helpers.h
 
-spring_tool_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS)
+spring_tool_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS)
 spring_tool_LDADD = $(COMPOSITOR_LIBS) -lm
 spring_tool_SOURCES = \
 	src/spring-tool.c			\
@@ -2139,8 +2229,9 @@ spring_tool_SOURCES = \
 @BUILD_CLIENTS_TRUE@	weston-fullscreen weston-stacking \
 @BUILD_CLIENTS_TRUE@	weston-calibrator weston-scaler \
 @BUILD_CLIENTS_TRUE@	$(am__append_26) $(am__append_27) \
-@BUILD_CLIENTS_TRUE@	$(am__append_30) $(am__append_31) \
-@BUILD_CLIENTS_TRUE@	$(am__append_32) $(am__append_33)
+@BUILD_CLIENTS_TRUE@	$(am__append_28) $(am__append_32) \
+@BUILD_CLIENTS_TRUE@	$(am__append_33) $(am__append_34) \
+@BUILD_CLIENTS_TRUE@	$(am__append_35)
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@weston_simple_shm_SOURCES = clients/simple-shm.c
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@nodist_weston_simple_shm_SOURCES = \
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@	protocol/xdg-shell-protocol.c		\
@@ -2163,10 +2254,16 @@ spring_tool_SOURCES = \
 
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@weston_simple_damage_CFLAGS = $(AM_CFLAGS) $(SIMPLE_CLIENT_CFLAGS)
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@weston_simple_damage_LDADD = $(SIMPLE_CLIENT_LIBS) libshared.la
-@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@weston_simple_touch_SOURCES = clients/simple-touch.c
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@weston_simple_touch_SOURCES = \
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@	clients/simple-touch.c			\
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@	shared/helpers.h
+
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@weston_simple_touch_CFLAGS = $(AM_CFLAGS) $(SIMPLE_CLIENT_CFLAGS)
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@weston_simple_touch_LDADD = $(SIMPLE_CLIENT_LIBS) libshared.la
-@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@weston_presentation_shm_SOURCES = clients/presentation-shm.c
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@weston_presentation_shm_SOURCES = \
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@	clients/presentation-shm.c			\
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@	shared/helpers.h
+
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@nodist_weston_presentation_shm_SOURCES = \
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@	protocol/presentation_timing-protocol.c		\
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@	protocol/presentation_timing-client-protocol.h
@@ -2185,9 +2282,21 @@ spring_tool_SOURCES = \
 
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_EGL_CLIENTS_TRUE@weston_simple_egl_CFLAGS = $(AM_CFLAGS) $(SIMPLE_EGL_CLIENT_CFLAGS)
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_EGL_CLIENTS_TRUE@weston_simple_egl_LDADD = $(SIMPLE_EGL_CLIENT_LIBS) -lm
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_INTEL_DMABUF_CLIENT_TRUE@weston_simple_dmabuf_SOURCES = clients/simple-dmabuf.c
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_INTEL_DMABUF_CLIENT_TRUE@nodist_weston_simple_dmabuf_SOURCES = \
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_INTEL_DMABUF_CLIENT_TRUE@	protocol/xdg-shell-protocol.c		\
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_INTEL_DMABUF_CLIENT_TRUE@	protocol/xdg-shell-client-protocol.h	\
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_INTEL_DMABUF_CLIENT_TRUE@	protocol/fullscreen-shell-protocol.c	\
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_INTEL_DMABUF_CLIENT_TRUE@	protocol/fullscreen-shell-client-protocol.h \
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_INTEL_DMABUF_CLIENT_TRUE@	protocol/linux-dmabuf-protocol.c \
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_INTEL_DMABUF_CLIENT_TRUE@	protocol/linux-dmabuf-client-protocol.h
+
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_INTEL_DMABUF_CLIENT_TRUE@weston_simple_dmabuf_CFLAGS = $(AM_CFLAGS) $(SIMPLE_DMABUF_CLIENT_CFLAGS)
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_INTEL_DMABUF_CLIENT_TRUE@weston_simple_dmabuf_LDADD = $(SIMPLE_DMABUF_CLIENT_LIBS) libshared.la
 @BUILD_CLIENTS_TRUE@libtoytoolkit_la_SOURCES = \
 @BUILD_CLIENTS_TRUE@	clients/window.c				\
-@BUILD_CLIENTS_TRUE@	clients/window.h
+@BUILD_CLIENTS_TRUE@	clients/window.h				\
+@BUILD_CLIENTS_TRUE@	shared/helpers.h
 
 @BUILD_CLIENTS_TRUE@nodist_libtoytoolkit_la_SOURCES = \
 @BUILD_CLIENTS_TRUE@	protocol/text-cursor-position-protocol.c	\
@@ -2221,7 +2330,10 @@ spring_tool_SOURCES = \
 
 @BUILD_CLIENTS_TRUE@weston_screenshooter_LDADD = $(CLIENT_LIBS) libshared.la
 @BUILD_CLIENTS_TRUE@weston_screenshooter_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
-@BUILD_CLIENTS_TRUE@weston_terminal_SOURCES = clients/terminal.c
+@BUILD_CLIENTS_TRUE@weston_terminal_SOURCES = \
+@BUILD_CLIENTS_TRUE@	clients/terminal.c				\
+@BUILD_CLIENTS_TRUE@	shared/helpers.h
+
 @BUILD_CLIENTS_TRUE@weston_terminal_LDADD = libtoytoolkit.la -lutil
 @BUILD_CLIENTS_TRUE@weston_terminal_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 @BUILD_CLIENTS_TRUE@weston_image_SOURCES = clients/image.c
@@ -2234,7 +2346,10 @@ spring_tool_SOURCES = \
 
 @BUILD_CLIENTS_TRUE@weston_cliptest_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 @BUILD_CLIENTS_TRUE@weston_cliptest_LDADD = libtoytoolkit.la
-@BUILD_CLIENTS_TRUE@weston_dnd_SOURCES = clients/dnd.c
+@BUILD_CLIENTS_TRUE@weston_dnd_SOURCES = \
+@BUILD_CLIENTS_TRUE@	clients/dnd.c					\
+@BUILD_CLIENTS_TRUE@	shared/helpers.h
+
 @BUILD_CLIENTS_TRUE@weston_dnd_LDADD = libtoytoolkit.la
 @BUILD_CLIENTS_TRUE@weston_dnd_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 @BUILD_CLIENTS_TRUE@weston_smoke_SOURCES = clients/smoke.c
@@ -2246,16 +2361,25 @@ spring_tool_SOURCES = \
 @BUILD_CLIENTS_TRUE@weston_scaler_SOURCES = clients/scaler.c
 @BUILD_CLIENTS_TRUE@weston_scaler_LDADD = libtoytoolkit.la
 @BUILD_CLIENTS_TRUE@weston_scaler_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
-@BUILD_CLIENTS_TRUE@@HAVE_CAIRO_GLESV2_TRUE@weston_nested_SOURCES = clients/nested.c
+@BUILD_CLIENTS_TRUE@@HAVE_CAIRO_GLESV2_TRUE@weston_nested_SOURCES = \
+@BUILD_CLIENTS_TRUE@@HAVE_CAIRO_GLESV2_TRUE@	clients/nested.c				\
+@BUILD_CLIENTS_TRUE@@HAVE_CAIRO_GLESV2_TRUE@	shared/helpers.h
+
 @BUILD_CLIENTS_TRUE@@HAVE_CAIRO_GLESV2_TRUE@weston_nested_LDADD = libtoytoolkit.la $(SERVER_LIBS)
 @BUILD_CLIENTS_TRUE@@HAVE_CAIRO_GLESV2_TRUE@weston_nested_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 @BUILD_CLIENTS_TRUE@@HAVE_CAIRO_GLESV2_TRUE@weston_nested_client_SOURCES = clients/nested-client.c
 @BUILD_CLIENTS_TRUE@@HAVE_CAIRO_GLESV2_TRUE@weston_nested_client_LDADD = $(SIMPLE_EGL_CLIENT_LIBS) -lm
 @BUILD_CLIENTS_TRUE@@HAVE_CAIRO_GLESV2_TRUE@weston_nested_client_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
-@BUILD_CLIENTS_TRUE@weston_eventdemo_SOURCES = clients/eventdemo.c
+@BUILD_CLIENTS_TRUE@weston_eventdemo_SOURCES = \
+@BUILD_CLIENTS_TRUE@	clients/eventdemo.c				\
+@BUILD_CLIENTS_TRUE@	shared/helpers.h
+
 @BUILD_CLIENTS_TRUE@weston_eventdemo_LDADD = libtoytoolkit.la
 @BUILD_CLIENTS_TRUE@weston_eventdemo_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
-@BUILD_CLIENTS_TRUE@weston_clickdot_SOURCES = clients/clickdot.c
+@BUILD_CLIENTS_TRUE@weston_clickdot_SOURCES = \
+@BUILD_CLIENTS_TRUE@	clients/clickdot.c				\
+@BUILD_CLIENTS_TRUE@	shared/helpers.h
+
 @BUILD_CLIENTS_TRUE@weston_clickdot_LDADD = libtoytoolkit.la
 @BUILD_CLIENTS_TRUE@weston_clickdot_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 @BUILD_CLIENTS_TRUE@weston_transformed_SOURCES = clients/transformed.c
@@ -2268,23 +2392,34 @@ spring_tool_SOURCES = \
 
 @BUILD_CLIENTS_TRUE@weston_fullscreen_LDADD = libtoytoolkit.la
 @BUILD_CLIENTS_TRUE@weston_fullscreen_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
-@BUILD_CLIENTS_TRUE@weston_stacking_SOURCES = clients/stacking.c
+@BUILD_CLIENTS_TRUE@weston_stacking_SOURCES = \
+@BUILD_CLIENTS_TRUE@	clients/stacking.c				\
+@BUILD_CLIENTS_TRUE@	shared/helpers.h
+
 @BUILD_CLIENTS_TRUE@weston_stacking_LDADD = libtoytoolkit.la
 @BUILD_CLIENTS_TRUE@weston_stacking_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
-@BUILD_CLIENTS_TRUE@weston_calibrator_SOURCES = clients/calibrator.c	\
+@BUILD_CLIENTS_TRUE@weston_calibrator_SOURCES = \
+@BUILD_CLIENTS_TRUE@	clients/calibrator.c				\
+@BUILD_CLIENTS_TRUE@	shared/helpers.h				\
 @BUILD_CLIENTS_TRUE@	shared/matrix.c					\
 @BUILD_CLIENTS_TRUE@	shared/matrix.h
 
 @BUILD_CLIENTS_TRUE@weston_calibrator_LDADD = libtoytoolkit.la
 @BUILD_CLIENTS_TRUE@weston_calibrator_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
-@BUILD_CLIENTS_TRUE@@BUILD_SUBSURFACES_CLIENT_TRUE@weston_subsurfaces_SOURCES = clients/subsurfaces.c
+@BUILD_CLIENTS_TRUE@@BUILD_SUBSURFACES_CLIENT_TRUE@weston_subsurfaces_SOURCES = \
+@BUILD_CLIENTS_TRUE@@BUILD_SUBSURFACES_CLIENT_TRUE@	clients/subsurfaces.c			\
+@BUILD_CLIENTS_TRUE@@BUILD_SUBSURFACES_CLIENT_TRUE@	shared/helpers.h
+
 @BUILD_CLIENTS_TRUE@@BUILD_SUBSURFACES_CLIENT_TRUE@weston_subsurfaces_CFLAGS = \
 @BUILD_CLIENTS_TRUE@@BUILD_SUBSURFACES_CLIENT_TRUE@	$(AM_CFLAGS)				\
 @BUILD_CLIENTS_TRUE@@BUILD_SUBSURFACES_CLIENT_TRUE@	$(SIMPLE_EGL_CLIENT_CFLAGS)		\
 @BUILD_CLIENTS_TRUE@@BUILD_SUBSURFACES_CLIENT_TRUE@	$(CLIENT_CFLAGS)
 
 @BUILD_CLIENTS_TRUE@@BUILD_SUBSURFACES_CLIENT_TRUE@weston_subsurfaces_LDADD = libtoytoolkit.la $(SIMPLE_EGL_CLIENT_LIBS) -lm
-@BUILD_CLIENTS_TRUE@@HAVE_PANGO_TRUE@weston_editor_SOURCES = clients/editor.c
+@BUILD_CLIENTS_TRUE@@HAVE_PANGO_TRUE@weston_editor_SOURCES = \
+@BUILD_CLIENTS_TRUE@@HAVE_PANGO_TRUE@	clients/editor.c			\
+@BUILD_CLIENTS_TRUE@@HAVE_PANGO_TRUE@	shared/helpers.h
+
 @BUILD_CLIENTS_TRUE@@HAVE_PANGO_TRUE@nodist_weston_editor_SOURCES = \
 @BUILD_CLIENTS_TRUE@@HAVE_PANGO_TRUE@	protocol/text-protocol.c		\
 @BUILD_CLIENTS_TRUE@@HAVE_PANGO_TRUE@	protocol/text-client-protocol.h
@@ -2307,21 +2442,30 @@ spring_tool_SOURCES = \
 
 @BUILD_CLIENTS_TRUE@weston_simple_im_LDADD = $(CLIENT_LIBS)
 @BUILD_CLIENTS_TRUE@weston_simple_im_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
-@BUILD_CLIENTS_TRUE@weston_info_SOURCES = clients/weston-info.c
+@BUILD_CLIENTS_TRUE@weston_info_SOURCES = \
+@BUILD_CLIENTS_TRUE@	clients/weston-info.c				\
+@BUILD_CLIENTS_TRUE@	shared/helpers.h
+
 @BUILD_CLIENTS_TRUE@nodist_weston_info_SOURCES = \
 @BUILD_CLIENTS_TRUE@	protocol/presentation_timing-protocol.c		\
 @BUILD_CLIENTS_TRUE@	protocol/presentation_timing-client-protocol.h
 
 @BUILD_CLIENTS_TRUE@weston_info_LDADD = $(WESTON_INFO_LIBS) libshared.la
 @BUILD_CLIENTS_TRUE@weston_info_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
-@BUILD_CLIENTS_TRUE@weston_desktop_shell_SOURCES = clients/desktop-shell.c
+@BUILD_CLIENTS_TRUE@weston_desktop_shell_SOURCES = \
+@BUILD_CLIENTS_TRUE@	clients/desktop-shell.c				\
+@BUILD_CLIENTS_TRUE@	shared/helpers.h
+
 @BUILD_CLIENTS_TRUE@nodist_weston_desktop_shell_SOURCES = \
 @BUILD_CLIENTS_TRUE@	protocol/desktop-shell-client-protocol.h	\
 @BUILD_CLIENTS_TRUE@	protocol/desktop-shell-protocol.c
 
 @BUILD_CLIENTS_TRUE@weston_desktop_shell_LDADD = libtoytoolkit.la
 @BUILD_CLIENTS_TRUE@weston_desktop_shell_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
-@BUILD_CLIENTS_TRUE@@ENABLE_IVI_SHELL_TRUE@weston_ivi_shell_user_interface_SOURCES = clients/ivi-shell-user-interface.c
+@BUILD_CLIENTS_TRUE@@ENABLE_IVI_SHELL_TRUE@weston_ivi_shell_user_interface_SOURCES = \
+@BUILD_CLIENTS_TRUE@@ENABLE_IVI_SHELL_TRUE@	clients/ivi-shell-user-interface.c				\
+@BUILD_CLIENTS_TRUE@@ENABLE_IVI_SHELL_TRUE@	shared/helpers.h
+
 @BUILD_CLIENTS_TRUE@@ENABLE_IVI_SHELL_TRUE@nodist_weston_ivi_shell_user_interface_SOURCES = \
 @BUILD_CLIENTS_TRUE@@ENABLE_IVI_SHELL_TRUE@	protocol/ivi-hmi-controller-client-protocol.h			\
 @BUILD_CLIENTS_TRUE@@ENABLE_IVI_SHELL_TRUE@	protocol/ivi-hmi-controller-protocol.c				\
@@ -2333,31 +2477,17 @@ spring_tool_SOURCES = \
 @BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@weston_gears_SOURCES = clients/gears.c
 @BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@weston_gears_LDADD = libtoytoolkit.la
 @BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@weston_gears_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
-@BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@@HAVE_GLU_TRUE@weston_screensaver_SOURCES = \
-@BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@@HAVE_GLU_TRUE@	clients/wscreensaver.c				\
-@BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@@HAVE_GLU_TRUE@	clients/wscreensaver.h				\
-@BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@@HAVE_GLU_TRUE@	clients/wscreensaver-glue.c			\
-@BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@@HAVE_GLU_TRUE@	clients/wscreensaver-glue.h			\
-@BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@@HAVE_GLU_TRUE@	clients/glmatrix.c				\
-@BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@@HAVE_GLU_TRUE@	clients/matrix3.xpm
-
-@BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@@HAVE_GLU_TRUE@nodist_weston_screensaver_SOURCES = \
-@BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@@HAVE_GLU_TRUE@	protocol/desktop-shell-client-protocol.h	\
-@BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@@HAVE_GLU_TRUE@	protocol/desktop-shell-protocol.c
-
-@BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@@HAVE_GLU_TRUE@weston_screensaver_LDADD = libtoytoolkit.la $(GLU_LIBS)
-@BUILD_CLIENTS_TRUE@@BUILD_FULL_GL_CLIENTS_TRUE@@HAVE_GLU_TRUE@weston_screensaver_CFLAGS = $(AM_CFLAGS) $(GLU_CFLAGS) $(CLIENT_CFLAGS)
 westondatadir = $(datadir)/weston
 dist_westondata_DATA = data/wayland.svg data/wayland.png \
 	data/pattern.png data/terminal.png data/border.png \
 	data/icon_window.png data/sign_close.png \
-	data/sign_maximize.png data/sign_minimize.png $(am__append_35)
+	data/sign_maximize.png data/sign_minimize.png $(am__append_36)
 @BUILD_WCAP_TOOLS_TRUE@wcap_decode_SOURCES = \
 @BUILD_WCAP_TOOLS_TRUE@	wcap/main.c				\
 @BUILD_WCAP_TOOLS_TRUE@	wcap/wcap-decode.c			\
 @BUILD_WCAP_TOOLS_TRUE@	wcap/wcap-decode.h
 
-@BUILD_WCAP_TOOLS_TRUE@wcap_decode_CFLAGS = $(GCC_CFLAGS) $(WCAP_CFLAGS)
+@BUILD_WCAP_TOOLS_TRUE@wcap_decode_CFLAGS = $(AM_CFLAGS) $(WCAP_CFLAGS)
 @BUILD_WCAP_TOOLS_TRUE@wcap_decode_LDADD = $(WCAP_LIBS)
 @ENABLE_DESKTOP_SHELL_TRUE@desktop_shell_la_CPPFLAGS = \
 @ENABLE_DESKTOP_SHELL_TRUE@	-I$(top_builddir)/protocol		\
@@ -2372,12 +2502,13 @@ dist_westondata_DATA = data/wayland.svg data/wayland.png \
 
 @ENABLE_DESKTOP_SHELL_TRUE@desktop_shell_la_LDFLAGS = -module -avoid-version
 @ENABLE_DESKTOP_SHELL_TRUE@desktop_shell_la_LIBADD = $(COMPOSITOR_LIBS) libshared.la
-@ENABLE_DESKTOP_SHELL_TRUE@desktop_shell_la_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS)
+@ENABLE_DESKTOP_SHELL_TRUE@desktop_shell_la_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS)
 @ENABLE_DESKTOP_SHELL_TRUE@desktop_shell_la_SOURCES = \
 @ENABLE_DESKTOP_SHELL_TRUE@	desktop-shell/shell.h				\
 @ENABLE_DESKTOP_SHELL_TRUE@	desktop-shell/shell.c				\
 @ENABLE_DESKTOP_SHELL_TRUE@	desktop-shell/exposay.c				\
-@ENABLE_DESKTOP_SHELL_TRUE@	desktop-shell/input-panel.c
+@ENABLE_DESKTOP_SHELL_TRUE@	desktop-shell/input-panel.c			\
+@ENABLE_DESKTOP_SHELL_TRUE@	shared/helpers.h
 
 @ENABLE_DESKTOP_SHELL_TRUE@nodist_desktop_shell_la_SOURCES = \
 @ENABLE_DESKTOP_SHELL_TRUE@	protocol/desktop-shell-protocol.c		\
@@ -2394,9 +2525,10 @@ dist_westondata_DATA = data/wayland.svg data/wayland.png \
 
 @ENABLE_FULLSCREEN_SHELL_TRUE@fullscreen_shell_la_LDFLAGS = -module -avoid-version
 @ENABLE_FULLSCREEN_SHELL_TRUE@fullscreen_shell_la_LIBADD = $(COMPOSITOR_LIBS)
-@ENABLE_FULLSCREEN_SHELL_TRUE@fullscreen_shell_la_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS)
+@ENABLE_FULLSCREEN_SHELL_TRUE@fullscreen_shell_la_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS)
 @ENABLE_FULLSCREEN_SHELL_TRUE@fullscreen_shell_la_SOURCES = \
-@ENABLE_FULLSCREEN_SHELL_TRUE@	fullscreen-shell/fullscreen-shell.c
+@ENABLE_FULLSCREEN_SHELL_TRUE@	fullscreen-shell/fullscreen-shell.c	\
+@ENABLE_FULLSCREEN_SHELL_TRUE@	shared/helpers.h
 
 @ENABLE_FULLSCREEN_SHELL_TRUE@nodist_fullscreen_shell_la_SOURCES = \
 @ENABLE_FULLSCREEN_SHELL_TRUE@	protocol/fullscreen-shell-protocol.c		\
@@ -2405,7 +2537,7 @@ dist_westondata_DATA = data/wayland.svg data/wayland.png \
 @ENABLE_IVI_SHELL_TRUE@ivi_shell = ivi-shell.la
 @ENABLE_IVI_SHELL_TRUE@ivi_shell_la_LDFLAGS = -module -avoid-version
 @ENABLE_IVI_SHELL_TRUE@ivi_shell_la_LIBADD = $(COMPOSITOR_LIBS) libshared.la
-@ENABLE_IVI_SHELL_TRUE@ivi_shell_la_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS)
+@ENABLE_IVI_SHELL_TRUE@ivi_shell_la_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS)
 @ENABLE_IVI_SHELL_TRUE@ivi_shell_la_SOURCES = \
 @ENABLE_IVI_SHELL_TRUE@	ivi-shell/ivi-layout-export.h		\
 @ENABLE_IVI_SHELL_TRUE@	ivi-shell/ivi-layout-private.h		\
@@ -2413,7 +2545,8 @@ dist_westondata_DATA = data/wayland.svg data/wayland.png \
 @ENABLE_IVI_SHELL_TRUE@	ivi-shell/ivi-layout-transition.c	\
 @ENABLE_IVI_SHELL_TRUE@	ivi-shell/ivi-shell.h			\
 @ENABLE_IVI_SHELL_TRUE@	ivi-shell/ivi-shell.c			\
-@ENABLE_IVI_SHELL_TRUE@	ivi-shell/input-panel-ivi.c
+@ENABLE_IVI_SHELL_TRUE@	ivi-shell/input-panel-ivi.c		\
+@ENABLE_IVI_SHELL_TRUE@	shared/helpers.h
 
 @ENABLE_IVI_SHELL_TRUE@nodist_ivi_shell_la_SOURCES = \
 @ENABLE_IVI_SHELL_TRUE@	protocol/ivi-application-protocol.c		\
@@ -2422,10 +2555,11 @@ dist_westondata_DATA = data/wayland.svg data/wayland.png \
 @ENABLE_IVI_SHELL_TRUE@hmi_controller = hmi-controller.la
 @ENABLE_IVI_SHELL_TRUE@hmi_controller_la_LDFLAGS = -module -avoid-version
 @ENABLE_IVI_SHELL_TRUE@hmi_controller_la_LIBADD = $(COMPOSITOR_LIBS) libshared.la
-@ENABLE_IVI_SHELL_TRUE@hmi_controller_la_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS)
+@ENABLE_IVI_SHELL_TRUE@hmi_controller_la_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS)
 @ENABLE_IVI_SHELL_TRUE@hmi_controller_la_SOURCES = \
 @ENABLE_IVI_SHELL_TRUE@	ivi-shell/ivi-layout-export.h			\
-@ENABLE_IVI_SHELL_TRUE@	ivi-shell/hmi-controller.c
+@ENABLE_IVI_SHELL_TRUE@	ivi-shell/hmi-controller.c			\
+@ENABLE_IVI_SHELL_TRUE@	shared/helpers.h
 
 @ENABLE_IVI_SHELL_TRUE@nodist_hmi_controller_la_SOURCES = \
 @ENABLE_IVI_SHELL_TRUE@	protocol/ivi-hmi-controller-protocol.c		\
@@ -2441,10 +2575,11 @@ dist_westondata_DATA = data/wayland.svg data/wayland.png \
 @ENABLE_SCREEN_SHARING_TRUE@screen_share_la_CFLAGS = \
 @ENABLE_SCREEN_SHARING_TRUE@	$(COMPOSITOR_CFLAGS)			\
 @ENABLE_SCREEN_SHARING_TRUE@	$(SCREEN_SHARE_CFLAGS)			\
-@ENABLE_SCREEN_SHARING_TRUE@	$(GCC_CFLAGS)
+@ENABLE_SCREEN_SHARING_TRUE@	$(AM_CFLAGS)
 
 @ENABLE_SCREEN_SHARING_TRUE@screen_share_la_SOURCES = \
-@ENABLE_SCREEN_SHARING_TRUE@	src/screen-share.c
+@ENABLE_SCREEN_SHARING_TRUE@	src/screen-share.c			\
+@ENABLE_SCREEN_SHARING_TRUE@	shared/helpers.h
 
 @ENABLE_SCREEN_SHARING_TRUE@nodist_screen_share_la_SOURCES = \
 @ENABLE_SCREEN_SHARING_TRUE@	protocol/fullscreen-shell-protocol.c		\
@@ -2467,7 +2602,7 @@ dist_westondata_DATA = data/wayland.svg data/wayland.png \
 @ENABLE_XWAYLAND_TRUE@	$(top_builddir)/libshared-cairo.la
 
 @ENABLE_XWAYLAND_TRUE@xwayland_la_CFLAGS = \
-@ENABLE_XWAYLAND_TRUE@	$(GCC_CFLAGS)				\
+@ENABLE_XWAYLAND_TRUE@	$(AM_CFLAGS)				\
 @ENABLE_XWAYLAND_TRUE@	$(COMPOSITOR_CFLAGS)			\
 @ENABLE_XWAYLAND_TRUE@	$(PIXMAN_CFLAGS)			\
 @ENABLE_XWAYLAND_TRUE@	$(CAIRO_CFLAGS)
@@ -2479,21 +2614,23 @@ dist_westondata_DATA = data/wayland.svg data/wayland.png \
 @ENABLE_XWAYLAND_TRUE@	xwayland/dnd.c				\
 @ENABLE_XWAYLAND_TRUE@	xwayland/launcher.c			\
 @ENABLE_XWAYLAND_TRUE@	xwayland/hash.c				\
-@ENABLE_XWAYLAND_TRUE@	xwayland/hash.h
+@ENABLE_XWAYLAND_TRUE@	xwayland/hash.h				\
+@ENABLE_XWAYLAND_TRUE@	shared/helpers.h
 
-libshared_la_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS)
+libshared_la_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS)
 libshared_la_SOURCES = \
 	shared/config-parser.c			\
 	shared/option-parser.c			\
 	shared/config-parser.h			\
 	shared/file-util.c			\
 	shared/file-util.h			\
+	shared/helpers.h			\
 	shared/os-compatibility.c		\
 	shared/os-compatibility.h
 
 libshared_cairo_la_CFLAGS = \
 	-DDATADIR='"$(datadir)"'		\
-	$(GCC_CFLAGS)				\
+	$(AM_CFLAGS)				\
 	$(COMPOSITOR_CFLAGS)			\
 	$(PIXMAN_CFLAGS)			\
 	$(CAIRO_CFLAGS)				\
@@ -2509,25 +2646,57 @@ libshared_cairo_la_LIBADD = \
 
 libshared_cairo_la_SOURCES = \
 	$(libshared_la_SOURCES)			\
+	shared/helpers.h			\
 	shared/image-loader.c			\
 	shared/image-loader.h			\
 	shared/cairo-util.c			\
 	shared/frame.c				\
 	shared/cairo-util.h
 
+libzunitc_la_SOURCES = \
+	tools/zunitc/inc/zunitc/zunitc.h	\
+	tools/zunitc/inc/zunitc/zunitc_impl.h	\
+	tools/zunitc/src/zuc_base_logger.c	\
+	tools/zunitc/src/zuc_base_logger.h	\
+	tools/zunitc/src/zuc_collector.c	\
+	tools/zunitc/src/zuc_collector.h	\
+	tools/zunitc/src/zuc_context.h		\
+	tools/zunitc/src/zuc_event.h		\
+	tools/zunitc/src/zuc_event_listener.h	\
+	tools/zunitc/src/zuc_junit_reporter.c	\
+	tools/zunitc/src/zuc_junit_reporter.h	\
+	tools/zunitc/src/zuc_types.h		\
+	tools/zunitc/src/zunitc_impl.c		\
+	shared/helpers.h
+
+libzunitc_la_CFLAGS = $(AM_CFLAGS) -I$(top_srcdir)/tools/zunitc/inc \
+	$(am__append_46)
+libzunitc_la_LIBADD = libshared.la $(am__append_47)
+libzunitcmain_la_SOURCES = \
+	tools/zunitc/src/main.c
+
+libzunitcmain_la_CFLAGS = \
+	$(AM_CFLAGS)				\
+	-I$(top_srcdir)/tools/zunitc/inc
+
+libzunitcmain_la_LIBADD = \
+	libzunitc.la		\
+	libshared.la
+
 internal_tests = \
 	internal-screenshot.weston
 
 shared_tests = \
 	config-parser.test			\
-	vertex-clip.test
+	vertex-clip.test			\
+	zuctest
 
-module_tests = surface-test.la surface-global-test.la $(am__append_49)
+module_tests = surface-test.la surface-global-test.la $(am__append_52)
 weston_tests = bad_buffer.weston keyboard.weston event.weston \
 	button.weston text.weston presentation.weston roles.weston \
-	subsurface.weston devices.weston $(am__append_47) \
-	$(am__append_48)
-ivi_tests = $(am__append_50)
+	subsurface.weston devices.weston $(am__append_50) \
+	$(am__append_51)
+ivi_tests = $(am__append_53)
 AM_TESTS_ENVIRONMENT = \
 	abs_builddir='$(abs_builddir)'; export abs_builddir; \
 	abs_top_srcdir='$(abs_top_srcdir)'; export abs_top_srcdir;
@@ -2540,15 +2709,18 @@ test_module_ldflags = \
 
 surface_global_test_la_SOURCES = tests/surface-global-test.c
 surface_global_test_la_LDFLAGS = $(test_module_ldflags)
-surface_global_test_la_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS)
+surface_global_test_la_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS)
 surface_test_la_SOURCES = tests/surface-test.c
 surface_test_la_LDFLAGS = $(test_module_ldflags)
-surface_test_la_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS)
+surface_test_la_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS)
 weston_test_la_LIBADD = $(COMPOSITOR_LIBS) libshared.la
-weston_test_la_LDFLAGS = $(test_module_ldflags) $(am__append_46)
-weston_test_la_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS) \
-	$(am__append_45)
-weston_test_la_SOURCES = tests/weston-test.c
+weston_test_la_LDFLAGS = $(test_module_ldflags) $(am__append_49)
+weston_test_la_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS) \
+	$(am__append_48)
+weston_test_la_SOURCES = \
+	tests/weston-test.c			\
+	shared/helpers.h
+
 nodist_weston_test_la_SOURCES = \
 	protocol/weston-test-protocol.c	\
 	protocol/weston-test-server-protocol.h
@@ -2557,11 +2729,21 @@ libtest_runner_la_SOURCES = \
 	tests/weston-test-runner.c		\
 	tests/weston-test-runner.h
 
-libtest_runner_la_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS)
+libtest_runner_la_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS)
 config_parser_test_SOURCES = tests/config-parser-test.c
-config_parser_test_LDADD = libshared.la libtest-runner.la $(COMPOSITOR_LIBS)
+config_parser_test_LDADD = \
+	libshared.la		\
+	$(COMPOSITOR_LIBS)	\
+	libzunitc.la		\
+	libzunitcmain.la
+
+config_parser_test_CFLAGS = \
+	$(AM_CFLAGS)				\
+	-I$(top_srcdir)/tools/zunitc/inc
+
 vertex_clip_test_SOURCES = \
 	tests/vertex-clip-test.c		\
+	shared/helpers.h			\
 	src/vertex-clipping.c			\
 	src/vertex-clipping.h
 
@@ -2612,7 +2794,10 @@ text_weston_LDADD = libtest-client.la
 subsurface_weston_SOURCES = tests/subsurface-test.c
 subsurface_weston_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
 subsurface_weston_LDADD = libtest-client.la
-presentation_weston_SOURCES = tests/presentation-test.c
+presentation_weston_SOURCES = \
+	tests/presentation-test.c		\
+	shared/helpers.h
+
 nodist_presentation_weston_SOURCES = \
 	protocol/presentation_timing-protocol.c	\
 	protocol/presentation_timing-client-protocol.h
@@ -2623,10 +2808,10 @@ roles_weston_SOURCES = tests/roles-test.c
 roles_weston_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
 roles_weston_LDADD = libtest-client.la
 @ENABLE_EGL_TRUE@buffer_count_weston_SOURCES = tests/buffer-count-test.c
-@ENABLE_EGL_TRUE@buffer_count_weston_CFLAGS = $(GCC_CFLAGS) $(EGL_TESTS_CFLAGS)
+@ENABLE_EGL_TRUE@buffer_count_weston_CFLAGS = $(AM_CFLAGS) $(EGL_TESTS_CFLAGS)
 @ENABLE_EGL_TRUE@buffer_count_weston_LDADD = libtest-client.la $(EGL_TESTS_LIBS)
 @ENABLE_XWAYLAND_TEST_TRUE@xwayland_test_weston_SOURCES = tests/xwayland-test.c
-@ENABLE_XWAYLAND_TEST_TRUE@xwayland_test_weston_CFLAGS = $(GCC_CFLAGS) $(XWAYLAND_TEST_CFLAGS)
+@ENABLE_XWAYLAND_TEST_TRUE@xwayland_test_weston_CFLAGS = $(AM_CFLAGS) $(XWAYLAND_TEST_CFLAGS)
 @ENABLE_XWAYLAND_TEST_TRUE@xwayland_test_weston_LDADD = libtest-client.la $(XWAYLAND_TEST_LIBS)
 matrix_test_SOURCES = \
 	tests/matrix-test.c			\
@@ -2637,16 +2822,17 @@ matrix_test_CPPFLAGS = -DUNIT_TEST
 matrix_test_LDADD = -lm -lrt
 @ENABLE_IVI_SHELL_TRUE@ivi_layout_internal_test_la_LIBADD = $(COMPOSITOR_LIBS)
 @ENABLE_IVI_SHELL_TRUE@ivi_layout_internal_test_la_LDFLAGS = $(test_module_ldflags)
-@ENABLE_IVI_SHELL_TRUE@ivi_layout_internal_test_la_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS)
+@ENABLE_IVI_SHELL_TRUE@ivi_layout_internal_test_la_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS)
 @ENABLE_IVI_SHELL_TRUE@ivi_layout_internal_test_la_SOURCES = \
 @ENABLE_IVI_SHELL_TRUE@	tests/ivi_layout-internal-test.c
 
 @ENABLE_IVI_SHELL_TRUE@ivi_layout_test_la_LIBADD = $(COMPOSITOR_LIBS)
 @ENABLE_IVI_SHELL_TRUE@ivi_layout_test_la_LDFLAGS = $(test_module_ldflags)
-@ENABLE_IVI_SHELL_TRUE@ivi_layout_test_la_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS)
+@ENABLE_IVI_SHELL_TRUE@ivi_layout_test_la_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS)
 @ENABLE_IVI_SHELL_TRUE@ivi_layout_test_la_SOURCES = \
 @ENABLE_IVI_SHELL_TRUE@	tests/ivi_layout-test-plugin.c		\
-@ENABLE_IVI_SHELL_TRUE@	tests/ivi-test.h
+@ENABLE_IVI_SHELL_TRUE@	tests/ivi-test.h			\
+@ENABLE_IVI_SHELL_TRUE@	shared/helpers.h
 
 @ENABLE_IVI_SHELL_TRUE@nodist_ivi_layout_test_la_SOURCES = \
 @ENABLE_IVI_SHELL_TRUE@	protocol/weston-test-protocol.c		\
@@ -2661,7 +2847,8 @@ matrix_test_LDADD = -lm -lrt
 @ENABLE_IVI_SHELL_TRUE@ivi_shell_app_weston_LDADD = libtest-client.la
 @ENABLE_IVI_SHELL_TRUE@ivi_layout_ivi_SOURCES = \
 @ENABLE_IVI_SHELL_TRUE@	tests/ivi_layout-test.c 		\
-@ENABLE_IVI_SHELL_TRUE@	tests/ivi-test.h
+@ENABLE_IVI_SHELL_TRUE@	tests/ivi-test.h			\
+@ENABLE_IVI_SHELL_TRUE@	shared/helpers.h
 
 @ENABLE_IVI_SHELL_TRUE@nodist_ivi_layout_ivi_SOURCES = \
 @ENABLE_IVI_SHELL_TRUE@	protocol/ivi-application-protocol.c	\
@@ -2676,15 +2863,27 @@ matrix_test_LDADD = -lm -lrt
 
 @BUILD_SETBACKLIGHT_TRUE@setbacklight_CFLAGS = $(AM_CFLAGS) $(SETBACKLIGHT_CFLAGS)
 @BUILD_SETBACKLIGHT_TRUE@setbacklight_LDADD = $(SETBACKLIGHT_LIBS)
+zuctest_LDADD = \
+	libzunitc.la		\
+	libzunitcmain.la
+
+zuctest_CFLAGS = \
+	$(AM_CFLAGS)				\
+	-I$(top_srcdir)/tools/zunitc/inc
+
+zuctest_SOURCES = \
+	tools/zunitc/test/fixtures_test.c	\
+	tools/zunitc/test/zunitc_test.c
+
 surface_screenshot_la_LIBADD = $(COMPOSITOR_LIBS) libshared.la
 surface_screenshot_la_LDFLAGS = $(test_module_ldflags)
-surface_screenshot_la_CFLAGS = $(GCC_CFLAGS) $(COMPOSITOR_CFLAGS)
+surface_screenshot_la_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS)
 surface_screenshot_la_SOURCES = tests/surface-screenshot.c
 
 #
 # Documentation
 #
-man_MANS = weston.1 weston.ini.5 $(am__append_53)
+man_MANS = weston.1 weston.ini.5 $(am__append_56)
 MAN_SUBSTS = \
 	-e 's|__weston_native_backend__|$(WESTON_NATIVE_BACKEND)|g'	\
 	-e 's|__weston_modules_dir__|$(pkglibdir)|g'			\
@@ -2692,6 +2891,11 @@ MAN_SUBSTS = \
 	-e 's|__version__|$(PACKAGE_VERSION)|g'
 
 SUFFIXES = .1 .5 .7 .man
+@ENABLE_DEVDOCS_TRUE@DOXYGEN_INDICES = docs/developer/html/index.html docs/tools/html/index.html
+DOCDIRS = \
+	docs/developer	\
+	docs/tools
+
 all: $(BUILT_SOURCES) config.h
 	$(MAKE) $(AM_MAKEFLAGS) all-am
 
@@ -2746,6 +2950,10 @@ $(srcdir)/config.h.in:  $(am__configure_deps)
 
 distclean-hdr:
 	-rm -f config.h stamp-h1
+doc/doxygen/tools.doxygen: $(top_builddir)/config.status $(top_srcdir)/doc/doxygen/tools.doxygen.in
+	cd $(top_builddir) && $(SHELL) ./config.status $@
+doc/doxygen/tooldev.doxygen: $(top_builddir)/config.status $(top_srcdir)/doc/doxygen/tooldev.doxygen.in
+	cd $(top_builddir) && $(SHELL) ./config.status $@
 src/version.h: $(top_builddir)/config.status $(top_srcdir)/src/version.h.in
 	cd $(top_builddir) && $(SHELL) ./config.status $@
 src/weston.pc: $(top_builddir)/config.status $(top_srcdir)/src/weston.pc.in
@@ -3014,6 +3222,33 @@ protocol/libtoytoolkit_la-ivi-application-protocol.lo:  \
 
 libtoytoolkit.la: $(libtoytoolkit_la_OBJECTS) $(libtoytoolkit_la_DEPENDENCIES) $(EXTRA_libtoytoolkit_la_DEPENDENCIES) 
 	$(AM_V_CCLD)$(libtoytoolkit_la_LINK) $(am_libtoytoolkit_la_rpath) $(libtoytoolkit_la_OBJECTS) $(libtoytoolkit_la_LIBADD) $(LIBS)
+tools/zunitc/src/$(am__dirstamp):
+	@$(MKDIR_P) tools/zunitc/src
+	@: > tools/zunitc/src/$(am__dirstamp)
+tools/zunitc/src/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) tools/zunitc/src/$(DEPDIR)
+	@: > tools/zunitc/src/$(DEPDIR)/$(am__dirstamp)
+tools/zunitc/src/libzunitc_la-zuc_base_logger.lo:  \
+	tools/zunitc/src/$(am__dirstamp) \
+	tools/zunitc/src/$(DEPDIR)/$(am__dirstamp)
+tools/zunitc/src/libzunitc_la-zuc_collector.lo:  \
+	tools/zunitc/src/$(am__dirstamp) \
+	tools/zunitc/src/$(DEPDIR)/$(am__dirstamp)
+tools/zunitc/src/libzunitc_la-zuc_junit_reporter.lo:  \
+	tools/zunitc/src/$(am__dirstamp) \
+	tools/zunitc/src/$(DEPDIR)/$(am__dirstamp)
+tools/zunitc/src/libzunitc_la-zunitc_impl.lo:  \
+	tools/zunitc/src/$(am__dirstamp) \
+	tools/zunitc/src/$(DEPDIR)/$(am__dirstamp)
+
+libzunitc.la: $(libzunitc_la_OBJECTS) $(libzunitc_la_DEPENDENCIES) $(EXTRA_libzunitc_la_DEPENDENCIES) 
+	$(AM_V_CCLD)$(libzunitc_la_LINK)  $(libzunitc_la_OBJECTS) $(libzunitc_la_LIBADD) $(LIBS)
+tools/zunitc/src/libzunitcmain_la-main.lo:  \
+	tools/zunitc/src/$(am__dirstamp) \
+	tools/zunitc/src/$(DEPDIR)/$(am__dirstamp)
+
+libzunitcmain.la: $(libzunitcmain_la_OBJECTS) $(libzunitcmain_la_DEPENDENCIES) $(EXTRA_libzunitcmain_la_DEPENDENCIES) 
+	$(AM_V_CCLD)$(libzunitcmain_la_LINK)  $(libzunitcmain_la_OBJECTS) $(libzunitcmain_la_LIBADD) $(LIBS)
 src/rdp_backend_la-compositor-rdp.lo: src/$(am__dirstamp) \
 	src/$(DEPDIR)/$(am__dirstamp)
 
@@ -3215,12 +3450,12 @@ tests/button_weston-button-test.$(OBJEXT): tests/$(am__dirstamp) \
 button.weston$(EXEEXT): $(button_weston_OBJECTS) $(button_weston_DEPENDENCIES) $(EXTRA_button_weston_DEPENDENCIES) 
 	@rm -f button.weston$(EXEEXT)
 	$(AM_V_CCLD)$(button_weston_LINK) $(button_weston_OBJECTS) $(button_weston_LDADD) $(LIBS)
-tests/config-parser-test.$(OBJEXT): tests/$(am__dirstamp) \
-	tests/$(DEPDIR)/$(am__dirstamp)
+tests/config_parser_test-config-parser-test.$(OBJEXT):  \
+	tests/$(am__dirstamp) tests/$(DEPDIR)/$(am__dirstamp)
 
 config-parser.test$(EXEEXT): $(config_parser_test_OBJECTS) $(config_parser_test_DEPENDENCIES) $(EXTRA_config_parser_test_DEPENDENCIES) 
 	@rm -f config-parser.test$(EXEEXT)
-	$(AM_V_CCLD)$(LINK) $(config_parser_test_OBJECTS) $(config_parser_test_LDADD) $(LIBS)
+	$(AM_V_CCLD)$(config_parser_test_LINK) $(config_parser_test_OBJECTS) $(config_parser_test_LDADD) $(LIBS)
 tests/devices_weston-devices-test.$(OBJEXT): tests/$(am__dirstamp) \
 	tests/$(DEPDIR)/$(am__dirstamp)
 
@@ -3363,6 +3598,10 @@ src/weston-pixman-renderer.$(OBJEXT): src/$(am__dirstamp) \
 	src/$(DEPDIR)/$(am__dirstamp)
 src/weston-timeline.$(OBJEXT): src/$(am__dirstamp) \
 	src/$(DEPDIR)/$(am__dirstamp)
+src/weston-main.$(OBJEXT): src/$(am__dirstamp) \
+	src/$(DEPDIR)/$(am__dirstamp)
+src/weston-linux-dmabuf.$(OBJEXT): src/$(am__dirstamp) \
+	src/$(DEPDIR)/$(am__dirstamp)
 shared/weston-matrix.$(OBJEXT): shared/$(am__dirstamp) \
 	shared/$(DEPDIR)/$(am__dirstamp)
 protocol/weston-screenshooter-protocol.$(OBJEXT):  \
@@ -3379,6 +3618,8 @@ protocol/weston-presentation_timing-protocol.$(OBJEXT):  \
 	protocol/$(am__dirstamp) protocol/$(DEPDIR)/$(am__dirstamp)
 protocol/weston-scaler-protocol.$(OBJEXT): protocol/$(am__dirstamp) \
 	protocol/$(DEPDIR)/$(am__dirstamp)
+protocol/weston-linux-dmabuf-protocol.$(OBJEXT):  \
+	protocol/$(am__dirstamp) protocol/$(DEPDIR)/$(am__dirstamp)
 
 weston$(EXEEXT): $(weston_OBJECTS) $(weston_DEPENDENCIES) $(EXTRA_weston_DEPENDENCIES) 
 	@rm -f weston$(EXEEXT)
@@ -3531,18 +3772,6 @@ clients/weston_scaler-scaler.$(OBJEXT): clients/$(am__dirstamp) \
 weston-scaler$(EXEEXT): $(weston_scaler_OBJECTS) $(weston_scaler_DEPENDENCIES) $(EXTRA_weston_scaler_DEPENDENCIES) 
 	@rm -f weston-scaler$(EXEEXT)
 	$(AM_V_CCLD)$(weston_scaler_LINK) $(weston_scaler_OBJECTS) $(weston_scaler_LDADD) $(LIBS)
-clients/weston_screensaver-wscreensaver.$(OBJEXT):  \
-	clients/$(am__dirstamp) clients/$(DEPDIR)/$(am__dirstamp)
-clients/weston_screensaver-wscreensaver-glue.$(OBJEXT):  \
-	clients/$(am__dirstamp) clients/$(DEPDIR)/$(am__dirstamp)
-clients/weston_screensaver-glmatrix.$(OBJEXT):  \
-	clients/$(am__dirstamp) clients/$(DEPDIR)/$(am__dirstamp)
-protocol/weston_screensaver-desktop-shell-protocol.$(OBJEXT):  \
-	protocol/$(am__dirstamp) protocol/$(DEPDIR)/$(am__dirstamp)
-
-weston-screensaver$(EXEEXT): $(weston_screensaver_OBJECTS) $(weston_screensaver_DEPENDENCIES) $(EXTRA_weston_screensaver_DEPENDENCIES) 
-	@rm -f weston-screensaver$(EXEEXT)
-	$(AM_V_CCLD)$(weston_screensaver_LINK) $(weston_screensaver_OBJECTS) $(weston_screensaver_LDADD) $(LIBS)
 clients/weston_screenshooter-screenshot.$(OBJEXT):  \
 	clients/$(am__dirstamp) clients/$(DEPDIR)/$(am__dirstamp)
 protocol/weston_screenshooter-screenshooter-protocol.$(OBJEXT):  \
@@ -3563,6 +3792,18 @@ protocol/weston_simple_damage-fullscreen-shell-protocol.$(OBJEXT):  \
 weston-simple-damage$(EXEEXT): $(weston_simple_damage_OBJECTS) $(weston_simple_damage_DEPENDENCIES) $(EXTRA_weston_simple_damage_DEPENDENCIES) 
 	@rm -f weston-simple-damage$(EXEEXT)
 	$(AM_V_CCLD)$(weston_simple_damage_LINK) $(weston_simple_damage_OBJECTS) $(weston_simple_damage_LDADD) $(LIBS)
+clients/weston_simple_dmabuf-simple-dmabuf.$(OBJEXT):  \
+	clients/$(am__dirstamp) clients/$(DEPDIR)/$(am__dirstamp)
+protocol/weston_simple_dmabuf-xdg-shell-protocol.$(OBJEXT):  \
+	protocol/$(am__dirstamp) protocol/$(DEPDIR)/$(am__dirstamp)
+protocol/weston_simple_dmabuf-fullscreen-shell-protocol.$(OBJEXT):  \
+	protocol/$(am__dirstamp) protocol/$(DEPDIR)/$(am__dirstamp)
+protocol/weston_simple_dmabuf-linux-dmabuf-protocol.$(OBJEXT):  \
+	protocol/$(am__dirstamp) protocol/$(DEPDIR)/$(am__dirstamp)
+
+weston-simple-dmabuf$(EXEEXT): $(weston_simple_dmabuf_OBJECTS) $(weston_simple_dmabuf_DEPENDENCIES) $(EXTRA_weston_simple_dmabuf_DEPENDENCIES) 
+	@rm -f weston-simple-dmabuf$(EXEEXT)
+	$(AM_V_CCLD)$(weston_simple_dmabuf_LINK) $(weston_simple_dmabuf_OBJECTS) $(weston_simple_dmabuf_LDADD) $(LIBS)
 clients/weston_simple_egl-simple-egl.$(OBJEXT):  \
 	clients/$(am__dirstamp) clients/$(DEPDIR)/$(am__dirstamp)
 protocol/weston_simple_egl-xdg-shell-protocol.$(OBJEXT):  \
@@ -3635,6 +3876,22 @@ tests/xwayland_test_weston-xwayland-test.$(OBJEXT):  \
 xwayland-test.weston$(EXEEXT): $(xwayland_test_weston_OBJECTS) $(xwayland_test_weston_DEPENDENCIES) $(EXTRA_xwayland_test_weston_DEPENDENCIES) 
 	@rm -f xwayland-test.weston$(EXEEXT)
 	$(AM_V_CCLD)$(xwayland_test_weston_LINK) $(xwayland_test_weston_OBJECTS) $(xwayland_test_weston_LDADD) $(LIBS)
+tools/zunitc/test/$(am__dirstamp):
+	@$(MKDIR_P) tools/zunitc/test
+	@: > tools/zunitc/test/$(am__dirstamp)
+tools/zunitc/test/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) tools/zunitc/test/$(DEPDIR)
+	@: > tools/zunitc/test/$(DEPDIR)/$(am__dirstamp)
+tools/zunitc/test/zuctest-fixtures_test.$(OBJEXT):  \
+	tools/zunitc/test/$(am__dirstamp) \
+	tools/zunitc/test/$(DEPDIR)/$(am__dirstamp)
+tools/zunitc/test/zuctest-zunitc_test.$(OBJEXT):  \
+	tools/zunitc/test/$(am__dirstamp) \
+	tools/zunitc/test/$(DEPDIR)/$(am__dirstamp)
+
+zuctest$(EXEEXT): $(zuctest_OBJECTS) $(zuctest_DEPENDENCIES) $(EXTRA_zuctest_DEPENDENCIES) 
+	@rm -f zuctest$(EXEEXT)
+	$(AM_V_CCLD)$(zuctest_LINK) $(zuctest_OBJECTS) $(zuctest_LDADD) $(LIBS)
 
 mostlyclean-compile:
 	-rm -f *.$(OBJEXT)
@@ -3654,6 +3911,9 @@ mostlyclean-compile:
 	-rm -f src/*.lo
 	-rm -f tests/*.$(OBJEXT)
 	-rm -f tests/*.lo
+	-rm -f tools/zunitc/src/*.$(OBJEXT)
+	-rm -f tools/zunitc/src/*.lo
+	-rm -f tools/zunitc/test/*.$(OBJEXT)
 	-rm -f wcap/*.$(OBJEXT)
 	-rm -f xwayland/*.$(OBJEXT)
 	-rm -f xwayland/*.lo
@@ -3682,11 +3942,9 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@clients/$(DEPDIR)/weston_presentation_shm-presentation-shm.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@clients/$(DEPDIR)/weston_resizor-resizor.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@clients/$(DEPDIR)/weston_scaler-scaler.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@clients/$(DEPDIR)/weston_screensaver-glmatrix.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@clients/$(DEPDIR)/weston_screensaver-wscreensaver-glue.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@clients/$(DEPDIR)/weston_screensaver-wscreensaver.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@clients/$(DEPDIR)/weston_screenshooter-screenshot.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@clients/$(DEPDIR)/weston_simple_damage-simple-damage.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@clients/$(DEPDIR)/weston_simple_dmabuf-simple-dmabuf.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@clients/$(DEPDIR)/weston_simple_egl-simple-egl.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@clients/$(DEPDIR)/weston_simple_im-weston-simple-im.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@clients/$(DEPDIR)/weston_simple_shm-simple-shm.Po@am__quote@
@@ -3725,6 +3983,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/text_weston-text-protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/wayland_backend_la-fullscreen-shell-protocol.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston-input-method-protocol.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston-linux-dmabuf-protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston-presentation_timing-protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston-scaler-protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston-screenshooter-protocol.Po@am__quote@
@@ -3740,11 +3999,13 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_keyboard-desktop-shell-protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_keyboard-input-method-protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_presentation_shm-presentation_timing-protocol.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_screensaver-desktop-shell-protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_screenshooter-screenshooter-protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_simple_damage-fullscreen-shell-protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_simple_damage-scaler-protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_simple_damage-xdg-shell-protocol.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_simple_dmabuf-fullscreen-shell-protocol.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_simple_dmabuf-linux-dmabuf-protocol.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_simple_dmabuf-xdg-shell-protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_simple_egl-ivi-application-protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_simple_egl-xdg-shell-protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_simple_im-input-method-protocol.Po@am__quote@
@@ -3802,7 +4063,9 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/weston-compositor.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/weston-data-device.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/weston-input.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/weston-linux-dmabuf.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/weston-log.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/weston-main.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/weston-noop-renderer.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/weston-pixman-renderer.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/weston-screenshooter.Po@am__quote@
@@ -3815,7 +4078,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/bad_buffer_weston-bad-buffer-test.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/buffer_count_weston-buffer-count-test.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/button_weston-button-test.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/config-parser-test.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/config_parser_test-config-parser-test.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/devices_weston-devices-test.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/event_weston-event-test.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/internal_screenshot_weston-internal-screenshot-test.Po@am__quote@
@@ -3838,6 +4101,13 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/vertex-clip-test.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/weston_test_la-weston-test.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/xwayland_test_weston-xwayland-test.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@tools/zunitc/src/$(DEPDIR)/libzunitc_la-zuc_base_logger.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@tools/zunitc/src/$(DEPDIR)/libzunitc_la-zuc_collector.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@tools/zunitc/src/$(DEPDIR)/libzunitc_la-zuc_junit_reporter.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@tools/zunitc/src/$(DEPDIR)/libzunitc_la-zunitc_impl.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@tools/zunitc/src/$(DEPDIR)/libzunitcmain_la-main.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@tools/zunitc/test/$(DEPDIR)/zuctest-fixtures_test.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@tools/zunitc/test/$(DEPDIR)/zuctest-zunitc_test.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@wcap/$(DEPDIR)/wcap_decode-main.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@wcap/$(DEPDIR)/wcap_decode-wcap-decode.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@xwayland/$(DEPDIR)/xwayland_la-dnd.Plo@am__quote@
@@ -4262,6 +4532,41 @@ protocol/libtoytoolkit_la-ivi-application-protocol.lo: protocol/ivi-application-
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libtoytoolkit_la_CFLAGS) $(CFLAGS) -c -o protocol/libtoytoolkit_la-ivi-application-protocol.lo `test -f 'protocol/ivi-application-protocol.c' || echo '$(srcdir)/'`protocol/ivi-application-protocol.c
 
+tools/zunitc/src/libzunitc_la-zuc_base_logger.lo: tools/zunitc/src/zuc_base_logger.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libzunitc_la_CFLAGS) $(CFLAGS) -MT tools/zunitc/src/libzunitc_la-zuc_base_logger.lo -MD -MP -MF tools/zunitc/src/$(DEPDIR)/libzunitc_la-zuc_base_logger.Tpo -c -o tools/zunitc/src/libzunitc_la-zuc_base_logger.lo `test -f 'tools/zunitc/src/zuc_base_logger.c' || echo '$(srcdir)/'`tools/zunitc/src/zuc_base_logger.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) tools/zunitc/src/$(DEPDIR)/libzunitc_la-zuc_base_logger.Tpo tools/zunitc/src/$(DEPDIR)/libzunitc_la-zuc_base_logger.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='tools/zunitc/src/zuc_base_logger.c' object='tools/zunitc/src/libzunitc_la-zuc_base_logger.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libzunitc_la_CFLAGS) $(CFLAGS) -c -o tools/zunitc/src/libzunitc_la-zuc_base_logger.lo `test -f 'tools/zunitc/src/zuc_base_logger.c' || echo '$(srcdir)/'`tools/zunitc/src/zuc_base_logger.c
+
+tools/zunitc/src/libzunitc_la-zuc_collector.lo: tools/zunitc/src/zuc_collector.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libzunitc_la_CFLAGS) $(CFLAGS) -MT tools/zunitc/src/libzunitc_la-zuc_collector.lo -MD -MP -MF tools/zunitc/src/$(DEPDIR)/libzunitc_la-zuc_collector.Tpo -c -o tools/zunitc/src/libzunitc_la-zuc_collector.lo `test -f 'tools/zunitc/src/zuc_collector.c' || echo '$(srcdir)/'`tools/zunitc/src/zuc_collector.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) tools/zunitc/src/$(DEPDIR)/libzunitc_la-zuc_collector.Tpo tools/zunitc/src/$(DEPDIR)/libzunitc_la-zuc_collector.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='tools/zunitc/src/zuc_collector.c' object='tools/zunitc/src/libzunitc_la-zuc_collector.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libzunitc_la_CFLAGS) $(CFLAGS) -c -o tools/zunitc/src/libzunitc_la-zuc_collector.lo `test -f 'tools/zunitc/src/zuc_collector.c' || echo '$(srcdir)/'`tools/zunitc/src/zuc_collector.c
+
+tools/zunitc/src/libzunitc_la-zuc_junit_reporter.lo: tools/zunitc/src/zuc_junit_reporter.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libzunitc_la_CFLAGS) $(CFLAGS) -MT tools/zunitc/src/libzunitc_la-zuc_junit_reporter.lo -MD -MP -MF tools/zunitc/src/$(DEPDIR)/libzunitc_la-zuc_junit_reporter.Tpo -c -o tools/zunitc/src/libzunitc_la-zuc_junit_reporter.lo `test -f 'tools/zunitc/src/zuc_junit_reporter.c' || echo '$(srcdir)/'`tools/zunitc/src/zuc_junit_reporter.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) tools/zunitc/src/$(DEPDIR)/libzunitc_la-zuc_junit_reporter.Tpo tools/zunitc/src/$(DEPDIR)/libzunitc_la-zuc_junit_reporter.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='tools/zunitc/src/zuc_junit_reporter.c' object='tools/zunitc/src/libzunitc_la-zuc_junit_reporter.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libzunitc_la_CFLAGS) $(CFLAGS) -c -o tools/zunitc/src/libzunitc_la-zuc_junit_reporter.lo `test -f 'tools/zunitc/src/zuc_junit_reporter.c' || echo '$(srcdir)/'`tools/zunitc/src/zuc_junit_reporter.c
+
+tools/zunitc/src/libzunitc_la-zunitc_impl.lo: tools/zunitc/src/zunitc_impl.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libzunitc_la_CFLAGS) $(CFLAGS) -MT tools/zunitc/src/libzunitc_la-zunitc_impl.lo -MD -MP -MF tools/zunitc/src/$(DEPDIR)/libzunitc_la-zunitc_impl.Tpo -c -o tools/zunitc/src/libzunitc_la-zunitc_impl.lo `test -f 'tools/zunitc/src/zunitc_impl.c' || echo '$(srcdir)/'`tools/zunitc/src/zunitc_impl.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) tools/zunitc/src/$(DEPDIR)/libzunitc_la-zunitc_impl.Tpo tools/zunitc/src/$(DEPDIR)/libzunitc_la-zunitc_impl.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='tools/zunitc/src/zunitc_impl.c' object='tools/zunitc/src/libzunitc_la-zunitc_impl.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libzunitc_la_CFLAGS) $(CFLAGS) -c -o tools/zunitc/src/libzunitc_la-zunitc_impl.lo `test -f 'tools/zunitc/src/zunitc_impl.c' || echo '$(srcdir)/'`tools/zunitc/src/zunitc_impl.c
+
+tools/zunitc/src/libzunitcmain_la-main.lo: tools/zunitc/src/main.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libzunitcmain_la_CFLAGS) $(CFLAGS) -MT tools/zunitc/src/libzunitcmain_la-main.lo -MD -MP -MF tools/zunitc/src/$(DEPDIR)/libzunitcmain_la-main.Tpo -c -o tools/zunitc/src/libzunitcmain_la-main.lo `test -f 'tools/zunitc/src/main.c' || echo '$(srcdir)/'`tools/zunitc/src/main.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) tools/zunitc/src/$(DEPDIR)/libzunitcmain_la-main.Tpo tools/zunitc/src/$(DEPDIR)/libzunitcmain_la-main.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='tools/zunitc/src/main.c' object='tools/zunitc/src/libzunitcmain_la-main.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libzunitcmain_la_CFLAGS) $(CFLAGS) -c -o tools/zunitc/src/libzunitcmain_la-main.lo `test -f 'tools/zunitc/src/main.c' || echo '$(srcdir)/'`tools/zunitc/src/main.c
+
 src/rdp_backend_la-compositor-rdp.lo: src/compositor-rdp.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(rdp_backend_la_CFLAGS) $(CFLAGS) -MT src/rdp_backend_la-compositor-rdp.lo -MD -MP -MF src/$(DEPDIR)/rdp_backend_la-compositor-rdp.Tpo -c -o src/rdp_backend_la-compositor-rdp.lo `test -f 'src/compositor-rdp.c' || echo '$(srcdir)/'`src/compositor-rdp.c
 @am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) src/$(DEPDIR)/rdp_backend_la-compositor-rdp.Tpo src/$(DEPDIR)/rdp_backend_la-compositor-rdp.Plo
@@ -4443,6 +4748,20 @@ tests/button_weston-button-test.obj: tests/button-test.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='tests/button-test.c' object='tests/button_weston-button-test.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(button_weston_CFLAGS) $(CFLAGS) -c -o tests/button_weston-button-test.obj `if test -f 'tests/button-test.c'; then $(CYGPATH_W) 'tests/button-test.c'; else $(CYGPATH_W) '$(srcdir)/tests/button-test.c'; fi`
+
+tests/config_parser_test-config-parser-test.o: tests/config-parser-test.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(config_parser_test_CFLAGS) $(CFLAGS) -MT tests/config_parser_test-config-parser-test.o -MD -MP -MF tests/$(DEPDIR)/config_parser_test-config-parser-test.Tpo -c -o tests/config_parser_test-config-parser-test.o `test -f 'tests/config-parser-test.c' || echo '$(srcdir)/'`tests/config-parser-test.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) tests/$(DEPDIR)/config_parser_test-config-parser-test.Tpo tests/$(DEPDIR)/config_parser_test-config-parser-test.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='tests/config-parser-test.c' object='tests/config_parser_test-config-parser-test.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(config_parser_test_CFLAGS) $(CFLAGS) -c -o tests/config_parser_test-config-parser-test.o `test -f 'tests/config-parser-test.c' || echo '$(srcdir)/'`tests/config-parser-test.c
+
+tests/config_parser_test-config-parser-test.obj: tests/config-parser-test.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(config_parser_test_CFLAGS) $(CFLAGS) -MT tests/config_parser_test-config-parser-test.obj -MD -MP -MF tests/$(DEPDIR)/config_parser_test-config-parser-test.Tpo -c -o tests/config_parser_test-config-parser-test.obj `if test -f 'tests/config-parser-test.c'; then $(CYGPATH_W) 'tests/config-parser-test.c'; else $(CYGPATH_W) '$(srcdir)/tests/config-parser-test.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) tests/$(DEPDIR)/config_parser_test-config-parser-test.Tpo tests/$(DEPDIR)/config_parser_test-config-parser-test.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='tests/config-parser-test.c' object='tests/config_parser_test-config-parser-test.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(config_parser_test_CFLAGS) $(CFLAGS) -c -o tests/config_parser_test-config-parser-test.obj `if test -f 'tests/config-parser-test.c'; then $(CYGPATH_W) 'tests/config-parser-test.c'; else $(CYGPATH_W) '$(srcdir)/tests/config-parser-test.c'; fi`
 
 tests/devices_weston-devices-test.o: tests/devices-test.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(devices_weston_CFLAGS) $(CFLAGS) -MT tests/devices_weston-devices-test.o -MD -MP -MF tests/$(DEPDIR)/devices_weston-devices-test.Tpo -c -o tests/devices_weston-devices-test.o `test -f 'tests/devices-test.c' || echo '$(srcdir)/'`tests/devices-test.c
@@ -4948,6 +5267,34 @@ src/weston-timeline.obj: src/timeline.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(weston_CPPFLAGS) $(CPPFLAGS) $(weston_CFLAGS) $(CFLAGS) -c -o src/weston-timeline.obj `if test -f 'src/timeline.c'; then $(CYGPATH_W) 'src/timeline.c'; else $(CYGPATH_W) '$(srcdir)/src/timeline.c'; fi`
 
+src/weston-main.o: src/main.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(weston_CPPFLAGS) $(CPPFLAGS) $(weston_CFLAGS) $(CFLAGS) -MT src/weston-main.o -MD -MP -MF src/$(DEPDIR)/weston-main.Tpo -c -o src/weston-main.o `test -f 'src/main.c' || echo '$(srcdir)/'`src/main.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) src/$(DEPDIR)/weston-main.Tpo src/$(DEPDIR)/weston-main.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='src/main.c' object='src/weston-main.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(weston_CPPFLAGS) $(CPPFLAGS) $(weston_CFLAGS) $(CFLAGS) -c -o src/weston-main.o `test -f 'src/main.c' || echo '$(srcdir)/'`src/main.c
+
+src/weston-main.obj: src/main.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(weston_CPPFLAGS) $(CPPFLAGS) $(weston_CFLAGS) $(CFLAGS) -MT src/weston-main.obj -MD -MP -MF src/$(DEPDIR)/weston-main.Tpo -c -o src/weston-main.obj `if test -f 'src/main.c'; then $(CYGPATH_W) 'src/main.c'; else $(CYGPATH_W) '$(srcdir)/src/main.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) src/$(DEPDIR)/weston-main.Tpo src/$(DEPDIR)/weston-main.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='src/main.c' object='src/weston-main.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(weston_CPPFLAGS) $(CPPFLAGS) $(weston_CFLAGS) $(CFLAGS) -c -o src/weston-main.obj `if test -f 'src/main.c'; then $(CYGPATH_W) 'src/main.c'; else $(CYGPATH_W) '$(srcdir)/src/main.c'; fi`
+
+src/weston-linux-dmabuf.o: src/linux-dmabuf.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(weston_CPPFLAGS) $(CPPFLAGS) $(weston_CFLAGS) $(CFLAGS) -MT src/weston-linux-dmabuf.o -MD -MP -MF src/$(DEPDIR)/weston-linux-dmabuf.Tpo -c -o src/weston-linux-dmabuf.o `test -f 'src/linux-dmabuf.c' || echo '$(srcdir)/'`src/linux-dmabuf.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) src/$(DEPDIR)/weston-linux-dmabuf.Tpo src/$(DEPDIR)/weston-linux-dmabuf.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='src/linux-dmabuf.c' object='src/weston-linux-dmabuf.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(weston_CPPFLAGS) $(CPPFLAGS) $(weston_CFLAGS) $(CFLAGS) -c -o src/weston-linux-dmabuf.o `test -f 'src/linux-dmabuf.c' || echo '$(srcdir)/'`src/linux-dmabuf.c
+
+src/weston-linux-dmabuf.obj: src/linux-dmabuf.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(weston_CPPFLAGS) $(CPPFLAGS) $(weston_CFLAGS) $(CFLAGS) -MT src/weston-linux-dmabuf.obj -MD -MP -MF src/$(DEPDIR)/weston-linux-dmabuf.Tpo -c -o src/weston-linux-dmabuf.obj `if test -f 'src/linux-dmabuf.c'; then $(CYGPATH_W) 'src/linux-dmabuf.c'; else $(CYGPATH_W) '$(srcdir)/src/linux-dmabuf.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) src/$(DEPDIR)/weston-linux-dmabuf.Tpo src/$(DEPDIR)/weston-linux-dmabuf.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='src/linux-dmabuf.c' object='src/weston-linux-dmabuf.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(weston_CPPFLAGS) $(CPPFLAGS) $(weston_CFLAGS) $(CFLAGS) -c -o src/weston-linux-dmabuf.obj `if test -f 'src/linux-dmabuf.c'; then $(CYGPATH_W) 'src/linux-dmabuf.c'; else $(CYGPATH_W) '$(srcdir)/src/linux-dmabuf.c'; fi`
+
 shared/weston-matrix.o: shared/matrix.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(weston_CPPFLAGS) $(CPPFLAGS) $(weston_CFLAGS) $(CFLAGS) -MT shared/weston-matrix.o -MD -MP -MF shared/$(DEPDIR)/weston-matrix.Tpo -c -o shared/weston-matrix.o `test -f 'shared/matrix.c' || echo '$(srcdir)/'`shared/matrix.c
 @am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) shared/$(DEPDIR)/weston-matrix.Tpo shared/$(DEPDIR)/weston-matrix.Po
@@ -5059,6 +5406,20 @@ protocol/weston-scaler-protocol.obj: protocol/scaler-protocol.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='protocol/scaler-protocol.c' object='protocol/weston-scaler-protocol.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(weston_CPPFLAGS) $(CPPFLAGS) $(weston_CFLAGS) $(CFLAGS) -c -o protocol/weston-scaler-protocol.obj `if test -f 'protocol/scaler-protocol.c'; then $(CYGPATH_W) 'protocol/scaler-protocol.c'; else $(CYGPATH_W) '$(srcdir)/protocol/scaler-protocol.c'; fi`
+
+protocol/weston-linux-dmabuf-protocol.o: protocol/linux-dmabuf-protocol.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(weston_CPPFLAGS) $(CPPFLAGS) $(weston_CFLAGS) $(CFLAGS) -MT protocol/weston-linux-dmabuf-protocol.o -MD -MP -MF protocol/$(DEPDIR)/weston-linux-dmabuf-protocol.Tpo -c -o protocol/weston-linux-dmabuf-protocol.o `test -f 'protocol/linux-dmabuf-protocol.c' || echo '$(srcdir)/'`protocol/linux-dmabuf-protocol.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) protocol/$(DEPDIR)/weston-linux-dmabuf-protocol.Tpo protocol/$(DEPDIR)/weston-linux-dmabuf-protocol.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='protocol/linux-dmabuf-protocol.c' object='protocol/weston-linux-dmabuf-protocol.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(weston_CPPFLAGS) $(CPPFLAGS) $(weston_CFLAGS) $(CFLAGS) -c -o protocol/weston-linux-dmabuf-protocol.o `test -f 'protocol/linux-dmabuf-protocol.c' || echo '$(srcdir)/'`protocol/linux-dmabuf-protocol.c
+
+protocol/weston-linux-dmabuf-protocol.obj: protocol/linux-dmabuf-protocol.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(weston_CPPFLAGS) $(CPPFLAGS) $(weston_CFLAGS) $(CFLAGS) -MT protocol/weston-linux-dmabuf-protocol.obj -MD -MP -MF protocol/$(DEPDIR)/weston-linux-dmabuf-protocol.Tpo -c -o protocol/weston-linux-dmabuf-protocol.obj `if test -f 'protocol/linux-dmabuf-protocol.c'; then $(CYGPATH_W) 'protocol/linux-dmabuf-protocol.c'; else $(CYGPATH_W) '$(srcdir)/protocol/linux-dmabuf-protocol.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) protocol/$(DEPDIR)/weston-linux-dmabuf-protocol.Tpo protocol/$(DEPDIR)/weston-linux-dmabuf-protocol.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='protocol/linux-dmabuf-protocol.c' object='protocol/weston-linux-dmabuf-protocol.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(weston_CPPFLAGS) $(CPPFLAGS) $(weston_CFLAGS) $(CFLAGS) -c -o protocol/weston-linux-dmabuf-protocol.obj `if test -f 'protocol/linux-dmabuf-protocol.c'; then $(CYGPATH_W) 'protocol/linux-dmabuf-protocol.c'; else $(CYGPATH_W) '$(srcdir)/protocol/linux-dmabuf-protocol.c'; fi`
 
 clients/weston_calibrator-calibrator.o: clients/calibrator.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_calibrator_CFLAGS) $(CFLAGS) -MT clients/weston_calibrator-calibrator.o -MD -MP -MF clients/$(DEPDIR)/weston_calibrator-calibrator.Tpo -c -o clients/weston_calibrator-calibrator.o `test -f 'clients/calibrator.c' || echo '$(srcdir)/'`clients/calibrator.c
@@ -5508,62 +5869,6 @@ clients/weston_scaler-scaler.obj: clients/scaler.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_scaler_CFLAGS) $(CFLAGS) -c -o clients/weston_scaler-scaler.obj `if test -f 'clients/scaler.c'; then $(CYGPATH_W) 'clients/scaler.c'; else $(CYGPATH_W) '$(srcdir)/clients/scaler.c'; fi`
 
-clients/weston_screensaver-wscreensaver.o: clients/wscreensaver.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_screensaver_CFLAGS) $(CFLAGS) -MT clients/weston_screensaver-wscreensaver.o -MD -MP -MF clients/$(DEPDIR)/weston_screensaver-wscreensaver.Tpo -c -o clients/weston_screensaver-wscreensaver.o `test -f 'clients/wscreensaver.c' || echo '$(srcdir)/'`clients/wscreensaver.c
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) clients/$(DEPDIR)/weston_screensaver-wscreensaver.Tpo clients/$(DEPDIR)/weston_screensaver-wscreensaver.Po
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='clients/wscreensaver.c' object='clients/weston_screensaver-wscreensaver.o' libtool=no @AMDEPBACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_screensaver_CFLAGS) $(CFLAGS) -c -o clients/weston_screensaver-wscreensaver.o `test -f 'clients/wscreensaver.c' || echo '$(srcdir)/'`clients/wscreensaver.c
-
-clients/weston_screensaver-wscreensaver.obj: clients/wscreensaver.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_screensaver_CFLAGS) $(CFLAGS) -MT clients/weston_screensaver-wscreensaver.obj -MD -MP -MF clients/$(DEPDIR)/weston_screensaver-wscreensaver.Tpo -c -o clients/weston_screensaver-wscreensaver.obj `if test -f 'clients/wscreensaver.c'; then $(CYGPATH_W) 'clients/wscreensaver.c'; else $(CYGPATH_W) '$(srcdir)/clients/wscreensaver.c'; fi`
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) clients/$(DEPDIR)/weston_screensaver-wscreensaver.Tpo clients/$(DEPDIR)/weston_screensaver-wscreensaver.Po
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='clients/wscreensaver.c' object='clients/weston_screensaver-wscreensaver.obj' libtool=no @AMDEPBACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_screensaver_CFLAGS) $(CFLAGS) -c -o clients/weston_screensaver-wscreensaver.obj `if test -f 'clients/wscreensaver.c'; then $(CYGPATH_W) 'clients/wscreensaver.c'; else $(CYGPATH_W) '$(srcdir)/clients/wscreensaver.c'; fi`
-
-clients/weston_screensaver-wscreensaver-glue.o: clients/wscreensaver-glue.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_screensaver_CFLAGS) $(CFLAGS) -MT clients/weston_screensaver-wscreensaver-glue.o -MD -MP -MF clients/$(DEPDIR)/weston_screensaver-wscreensaver-glue.Tpo -c -o clients/weston_screensaver-wscreensaver-glue.o `test -f 'clients/wscreensaver-glue.c' || echo '$(srcdir)/'`clients/wscreensaver-glue.c
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) clients/$(DEPDIR)/weston_screensaver-wscreensaver-glue.Tpo clients/$(DEPDIR)/weston_screensaver-wscreensaver-glue.Po
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='clients/wscreensaver-glue.c' object='clients/weston_screensaver-wscreensaver-glue.o' libtool=no @AMDEPBACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_screensaver_CFLAGS) $(CFLAGS) -c -o clients/weston_screensaver-wscreensaver-glue.o `test -f 'clients/wscreensaver-glue.c' || echo '$(srcdir)/'`clients/wscreensaver-glue.c
-
-clients/weston_screensaver-wscreensaver-glue.obj: clients/wscreensaver-glue.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_screensaver_CFLAGS) $(CFLAGS) -MT clients/weston_screensaver-wscreensaver-glue.obj -MD -MP -MF clients/$(DEPDIR)/weston_screensaver-wscreensaver-glue.Tpo -c -o clients/weston_screensaver-wscreensaver-glue.obj `if test -f 'clients/wscreensaver-glue.c'; then $(CYGPATH_W) 'clients/wscreensaver-glue.c'; else $(CYGPATH_W) '$(srcdir)/clients/wscreensaver-glue.c'; fi`
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) clients/$(DEPDIR)/weston_screensaver-wscreensaver-glue.Tpo clients/$(DEPDIR)/weston_screensaver-wscreensaver-glue.Po
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='clients/wscreensaver-glue.c' object='clients/weston_screensaver-wscreensaver-glue.obj' libtool=no @AMDEPBACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_screensaver_CFLAGS) $(CFLAGS) -c -o clients/weston_screensaver-wscreensaver-glue.obj `if test -f 'clients/wscreensaver-glue.c'; then $(CYGPATH_W) 'clients/wscreensaver-glue.c'; else $(CYGPATH_W) '$(srcdir)/clients/wscreensaver-glue.c'; fi`
-
-clients/weston_screensaver-glmatrix.o: clients/glmatrix.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_screensaver_CFLAGS) $(CFLAGS) -MT clients/weston_screensaver-glmatrix.o -MD -MP -MF clients/$(DEPDIR)/weston_screensaver-glmatrix.Tpo -c -o clients/weston_screensaver-glmatrix.o `test -f 'clients/glmatrix.c' || echo '$(srcdir)/'`clients/glmatrix.c
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) clients/$(DEPDIR)/weston_screensaver-glmatrix.Tpo clients/$(DEPDIR)/weston_screensaver-glmatrix.Po
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='clients/glmatrix.c' object='clients/weston_screensaver-glmatrix.o' libtool=no @AMDEPBACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_screensaver_CFLAGS) $(CFLAGS) -c -o clients/weston_screensaver-glmatrix.o `test -f 'clients/glmatrix.c' || echo '$(srcdir)/'`clients/glmatrix.c
-
-clients/weston_screensaver-glmatrix.obj: clients/glmatrix.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_screensaver_CFLAGS) $(CFLAGS) -MT clients/weston_screensaver-glmatrix.obj -MD -MP -MF clients/$(DEPDIR)/weston_screensaver-glmatrix.Tpo -c -o clients/weston_screensaver-glmatrix.obj `if test -f 'clients/glmatrix.c'; then $(CYGPATH_W) 'clients/glmatrix.c'; else $(CYGPATH_W) '$(srcdir)/clients/glmatrix.c'; fi`
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) clients/$(DEPDIR)/weston_screensaver-glmatrix.Tpo clients/$(DEPDIR)/weston_screensaver-glmatrix.Po
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='clients/glmatrix.c' object='clients/weston_screensaver-glmatrix.obj' libtool=no @AMDEPBACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_screensaver_CFLAGS) $(CFLAGS) -c -o clients/weston_screensaver-glmatrix.obj `if test -f 'clients/glmatrix.c'; then $(CYGPATH_W) 'clients/glmatrix.c'; else $(CYGPATH_W) '$(srcdir)/clients/glmatrix.c'; fi`
-
-protocol/weston_screensaver-desktop-shell-protocol.o: protocol/desktop-shell-protocol.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_screensaver_CFLAGS) $(CFLAGS) -MT protocol/weston_screensaver-desktop-shell-protocol.o -MD -MP -MF protocol/$(DEPDIR)/weston_screensaver-desktop-shell-protocol.Tpo -c -o protocol/weston_screensaver-desktop-shell-protocol.o `test -f 'protocol/desktop-shell-protocol.c' || echo '$(srcdir)/'`protocol/desktop-shell-protocol.c
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) protocol/$(DEPDIR)/weston_screensaver-desktop-shell-protocol.Tpo protocol/$(DEPDIR)/weston_screensaver-desktop-shell-protocol.Po
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='protocol/desktop-shell-protocol.c' object='protocol/weston_screensaver-desktop-shell-protocol.o' libtool=no @AMDEPBACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_screensaver_CFLAGS) $(CFLAGS) -c -o protocol/weston_screensaver-desktop-shell-protocol.o `test -f 'protocol/desktop-shell-protocol.c' || echo '$(srcdir)/'`protocol/desktop-shell-protocol.c
-
-protocol/weston_screensaver-desktop-shell-protocol.obj: protocol/desktop-shell-protocol.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_screensaver_CFLAGS) $(CFLAGS) -MT protocol/weston_screensaver-desktop-shell-protocol.obj -MD -MP -MF protocol/$(DEPDIR)/weston_screensaver-desktop-shell-protocol.Tpo -c -o protocol/weston_screensaver-desktop-shell-protocol.obj `if test -f 'protocol/desktop-shell-protocol.c'; then $(CYGPATH_W) 'protocol/desktop-shell-protocol.c'; else $(CYGPATH_W) '$(srcdir)/protocol/desktop-shell-protocol.c'; fi`
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) protocol/$(DEPDIR)/weston_screensaver-desktop-shell-protocol.Tpo protocol/$(DEPDIR)/weston_screensaver-desktop-shell-protocol.Po
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='protocol/desktop-shell-protocol.c' object='protocol/weston_screensaver-desktop-shell-protocol.obj' libtool=no @AMDEPBACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_screensaver_CFLAGS) $(CFLAGS) -c -o protocol/weston_screensaver-desktop-shell-protocol.obj `if test -f 'protocol/desktop-shell-protocol.c'; then $(CYGPATH_W) 'protocol/desktop-shell-protocol.c'; else $(CYGPATH_W) '$(srcdir)/protocol/desktop-shell-protocol.c'; fi`
-
 clients/weston_screenshooter-screenshot.o: clients/screenshot.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_screenshooter_CFLAGS) $(CFLAGS) -MT clients/weston_screenshooter-screenshot.o -MD -MP -MF clients/$(DEPDIR)/weston_screenshooter-screenshot.Tpo -c -o clients/weston_screenshooter-screenshot.o `test -f 'clients/screenshot.c' || echo '$(srcdir)/'`clients/screenshot.c
 @am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) clients/$(DEPDIR)/weston_screenshooter-screenshot.Tpo clients/$(DEPDIR)/weston_screenshooter-screenshot.Po
@@ -5647,6 +5952,62 @@ protocol/weston_simple_damage-fullscreen-shell-protocol.obj: protocol/fullscreen
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='protocol/fullscreen-shell-protocol.c' object='protocol/weston_simple_damage-fullscreen-shell-protocol.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_simple_damage_CFLAGS) $(CFLAGS) -c -o protocol/weston_simple_damage-fullscreen-shell-protocol.obj `if test -f 'protocol/fullscreen-shell-protocol.c'; then $(CYGPATH_W) 'protocol/fullscreen-shell-protocol.c'; else $(CYGPATH_W) '$(srcdir)/protocol/fullscreen-shell-protocol.c'; fi`
+
+clients/weston_simple_dmabuf-simple-dmabuf.o: clients/simple-dmabuf.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_simple_dmabuf_CFLAGS) $(CFLAGS) -MT clients/weston_simple_dmabuf-simple-dmabuf.o -MD -MP -MF clients/$(DEPDIR)/weston_simple_dmabuf-simple-dmabuf.Tpo -c -o clients/weston_simple_dmabuf-simple-dmabuf.o `test -f 'clients/simple-dmabuf.c' || echo '$(srcdir)/'`clients/simple-dmabuf.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) clients/$(DEPDIR)/weston_simple_dmabuf-simple-dmabuf.Tpo clients/$(DEPDIR)/weston_simple_dmabuf-simple-dmabuf.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='clients/simple-dmabuf.c' object='clients/weston_simple_dmabuf-simple-dmabuf.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_simple_dmabuf_CFLAGS) $(CFLAGS) -c -o clients/weston_simple_dmabuf-simple-dmabuf.o `test -f 'clients/simple-dmabuf.c' || echo '$(srcdir)/'`clients/simple-dmabuf.c
+
+clients/weston_simple_dmabuf-simple-dmabuf.obj: clients/simple-dmabuf.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_simple_dmabuf_CFLAGS) $(CFLAGS) -MT clients/weston_simple_dmabuf-simple-dmabuf.obj -MD -MP -MF clients/$(DEPDIR)/weston_simple_dmabuf-simple-dmabuf.Tpo -c -o clients/weston_simple_dmabuf-simple-dmabuf.obj `if test -f 'clients/simple-dmabuf.c'; then $(CYGPATH_W) 'clients/simple-dmabuf.c'; else $(CYGPATH_W) '$(srcdir)/clients/simple-dmabuf.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) clients/$(DEPDIR)/weston_simple_dmabuf-simple-dmabuf.Tpo clients/$(DEPDIR)/weston_simple_dmabuf-simple-dmabuf.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='clients/simple-dmabuf.c' object='clients/weston_simple_dmabuf-simple-dmabuf.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_simple_dmabuf_CFLAGS) $(CFLAGS) -c -o clients/weston_simple_dmabuf-simple-dmabuf.obj `if test -f 'clients/simple-dmabuf.c'; then $(CYGPATH_W) 'clients/simple-dmabuf.c'; else $(CYGPATH_W) '$(srcdir)/clients/simple-dmabuf.c'; fi`
+
+protocol/weston_simple_dmabuf-xdg-shell-protocol.o: protocol/xdg-shell-protocol.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_simple_dmabuf_CFLAGS) $(CFLAGS) -MT protocol/weston_simple_dmabuf-xdg-shell-protocol.o -MD -MP -MF protocol/$(DEPDIR)/weston_simple_dmabuf-xdg-shell-protocol.Tpo -c -o protocol/weston_simple_dmabuf-xdg-shell-protocol.o `test -f 'protocol/xdg-shell-protocol.c' || echo '$(srcdir)/'`protocol/xdg-shell-protocol.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) protocol/$(DEPDIR)/weston_simple_dmabuf-xdg-shell-protocol.Tpo protocol/$(DEPDIR)/weston_simple_dmabuf-xdg-shell-protocol.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='protocol/xdg-shell-protocol.c' object='protocol/weston_simple_dmabuf-xdg-shell-protocol.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_simple_dmabuf_CFLAGS) $(CFLAGS) -c -o protocol/weston_simple_dmabuf-xdg-shell-protocol.o `test -f 'protocol/xdg-shell-protocol.c' || echo '$(srcdir)/'`protocol/xdg-shell-protocol.c
+
+protocol/weston_simple_dmabuf-xdg-shell-protocol.obj: protocol/xdg-shell-protocol.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_simple_dmabuf_CFLAGS) $(CFLAGS) -MT protocol/weston_simple_dmabuf-xdg-shell-protocol.obj -MD -MP -MF protocol/$(DEPDIR)/weston_simple_dmabuf-xdg-shell-protocol.Tpo -c -o protocol/weston_simple_dmabuf-xdg-shell-protocol.obj `if test -f 'protocol/xdg-shell-protocol.c'; then $(CYGPATH_W) 'protocol/xdg-shell-protocol.c'; else $(CYGPATH_W) '$(srcdir)/protocol/xdg-shell-protocol.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) protocol/$(DEPDIR)/weston_simple_dmabuf-xdg-shell-protocol.Tpo protocol/$(DEPDIR)/weston_simple_dmabuf-xdg-shell-protocol.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='protocol/xdg-shell-protocol.c' object='protocol/weston_simple_dmabuf-xdg-shell-protocol.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_simple_dmabuf_CFLAGS) $(CFLAGS) -c -o protocol/weston_simple_dmabuf-xdg-shell-protocol.obj `if test -f 'protocol/xdg-shell-protocol.c'; then $(CYGPATH_W) 'protocol/xdg-shell-protocol.c'; else $(CYGPATH_W) '$(srcdir)/protocol/xdg-shell-protocol.c'; fi`
+
+protocol/weston_simple_dmabuf-fullscreen-shell-protocol.o: protocol/fullscreen-shell-protocol.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_simple_dmabuf_CFLAGS) $(CFLAGS) -MT protocol/weston_simple_dmabuf-fullscreen-shell-protocol.o -MD -MP -MF protocol/$(DEPDIR)/weston_simple_dmabuf-fullscreen-shell-protocol.Tpo -c -o protocol/weston_simple_dmabuf-fullscreen-shell-protocol.o `test -f 'protocol/fullscreen-shell-protocol.c' || echo '$(srcdir)/'`protocol/fullscreen-shell-protocol.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) protocol/$(DEPDIR)/weston_simple_dmabuf-fullscreen-shell-protocol.Tpo protocol/$(DEPDIR)/weston_simple_dmabuf-fullscreen-shell-protocol.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='protocol/fullscreen-shell-protocol.c' object='protocol/weston_simple_dmabuf-fullscreen-shell-protocol.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_simple_dmabuf_CFLAGS) $(CFLAGS) -c -o protocol/weston_simple_dmabuf-fullscreen-shell-protocol.o `test -f 'protocol/fullscreen-shell-protocol.c' || echo '$(srcdir)/'`protocol/fullscreen-shell-protocol.c
+
+protocol/weston_simple_dmabuf-fullscreen-shell-protocol.obj: protocol/fullscreen-shell-protocol.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_simple_dmabuf_CFLAGS) $(CFLAGS) -MT protocol/weston_simple_dmabuf-fullscreen-shell-protocol.obj -MD -MP -MF protocol/$(DEPDIR)/weston_simple_dmabuf-fullscreen-shell-protocol.Tpo -c -o protocol/weston_simple_dmabuf-fullscreen-shell-protocol.obj `if test -f 'protocol/fullscreen-shell-protocol.c'; then $(CYGPATH_W) 'protocol/fullscreen-shell-protocol.c'; else $(CYGPATH_W) '$(srcdir)/protocol/fullscreen-shell-protocol.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) protocol/$(DEPDIR)/weston_simple_dmabuf-fullscreen-shell-protocol.Tpo protocol/$(DEPDIR)/weston_simple_dmabuf-fullscreen-shell-protocol.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='protocol/fullscreen-shell-protocol.c' object='protocol/weston_simple_dmabuf-fullscreen-shell-protocol.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_simple_dmabuf_CFLAGS) $(CFLAGS) -c -o protocol/weston_simple_dmabuf-fullscreen-shell-protocol.obj `if test -f 'protocol/fullscreen-shell-protocol.c'; then $(CYGPATH_W) 'protocol/fullscreen-shell-protocol.c'; else $(CYGPATH_W) '$(srcdir)/protocol/fullscreen-shell-protocol.c'; fi`
+
+protocol/weston_simple_dmabuf-linux-dmabuf-protocol.o: protocol/linux-dmabuf-protocol.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_simple_dmabuf_CFLAGS) $(CFLAGS) -MT protocol/weston_simple_dmabuf-linux-dmabuf-protocol.o -MD -MP -MF protocol/$(DEPDIR)/weston_simple_dmabuf-linux-dmabuf-protocol.Tpo -c -o protocol/weston_simple_dmabuf-linux-dmabuf-protocol.o `test -f 'protocol/linux-dmabuf-protocol.c' || echo '$(srcdir)/'`protocol/linux-dmabuf-protocol.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) protocol/$(DEPDIR)/weston_simple_dmabuf-linux-dmabuf-protocol.Tpo protocol/$(DEPDIR)/weston_simple_dmabuf-linux-dmabuf-protocol.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='protocol/linux-dmabuf-protocol.c' object='protocol/weston_simple_dmabuf-linux-dmabuf-protocol.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_simple_dmabuf_CFLAGS) $(CFLAGS) -c -o protocol/weston_simple_dmabuf-linux-dmabuf-protocol.o `test -f 'protocol/linux-dmabuf-protocol.c' || echo '$(srcdir)/'`protocol/linux-dmabuf-protocol.c
+
+protocol/weston_simple_dmabuf-linux-dmabuf-protocol.obj: protocol/linux-dmabuf-protocol.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_simple_dmabuf_CFLAGS) $(CFLAGS) -MT protocol/weston_simple_dmabuf-linux-dmabuf-protocol.obj -MD -MP -MF protocol/$(DEPDIR)/weston_simple_dmabuf-linux-dmabuf-protocol.Tpo -c -o protocol/weston_simple_dmabuf-linux-dmabuf-protocol.obj `if test -f 'protocol/linux-dmabuf-protocol.c'; then $(CYGPATH_W) 'protocol/linux-dmabuf-protocol.c'; else $(CYGPATH_W) '$(srcdir)/protocol/linux-dmabuf-protocol.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) protocol/$(DEPDIR)/weston_simple_dmabuf-linux-dmabuf-protocol.Tpo protocol/$(DEPDIR)/weston_simple_dmabuf-linux-dmabuf-protocol.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='protocol/linux-dmabuf-protocol.c' object='protocol/weston_simple_dmabuf-linux-dmabuf-protocol.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_simple_dmabuf_CFLAGS) $(CFLAGS) -c -o protocol/weston_simple_dmabuf-linux-dmabuf-protocol.obj `if test -f 'protocol/linux-dmabuf-protocol.c'; then $(CYGPATH_W) 'protocol/linux-dmabuf-protocol.c'; else $(CYGPATH_W) '$(srcdir)/protocol/linux-dmabuf-protocol.c'; fi`
 
 clients/weston_simple_egl-simple-egl.o: clients/simple-egl.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_simple_egl_CFLAGS) $(CFLAGS) -MT clients/weston_simple_egl-simple-egl.o -MD -MP -MF clients/$(DEPDIR)/weston_simple_egl-simple-egl.Tpo -c -o clients/weston_simple_egl-simple-egl.o `test -f 'clients/simple-egl.c' || echo '$(srcdir)/'`clients/simple-egl.c
@@ -5872,6 +6233,34 @@ tests/xwayland_test_weston-xwayland-test.obj: tests/xwayland-test.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(xwayland_test_weston_CFLAGS) $(CFLAGS) -c -o tests/xwayland_test_weston-xwayland-test.obj `if test -f 'tests/xwayland-test.c'; then $(CYGPATH_W) 'tests/xwayland-test.c'; else $(CYGPATH_W) '$(srcdir)/tests/xwayland-test.c'; fi`
 
+tools/zunitc/test/zuctest-fixtures_test.o: tools/zunitc/test/fixtures_test.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(zuctest_CFLAGS) $(CFLAGS) -MT tools/zunitc/test/zuctest-fixtures_test.o -MD -MP -MF tools/zunitc/test/$(DEPDIR)/zuctest-fixtures_test.Tpo -c -o tools/zunitc/test/zuctest-fixtures_test.o `test -f 'tools/zunitc/test/fixtures_test.c' || echo '$(srcdir)/'`tools/zunitc/test/fixtures_test.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) tools/zunitc/test/$(DEPDIR)/zuctest-fixtures_test.Tpo tools/zunitc/test/$(DEPDIR)/zuctest-fixtures_test.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='tools/zunitc/test/fixtures_test.c' object='tools/zunitc/test/zuctest-fixtures_test.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(zuctest_CFLAGS) $(CFLAGS) -c -o tools/zunitc/test/zuctest-fixtures_test.o `test -f 'tools/zunitc/test/fixtures_test.c' || echo '$(srcdir)/'`tools/zunitc/test/fixtures_test.c
+
+tools/zunitc/test/zuctest-fixtures_test.obj: tools/zunitc/test/fixtures_test.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(zuctest_CFLAGS) $(CFLAGS) -MT tools/zunitc/test/zuctest-fixtures_test.obj -MD -MP -MF tools/zunitc/test/$(DEPDIR)/zuctest-fixtures_test.Tpo -c -o tools/zunitc/test/zuctest-fixtures_test.obj `if test -f 'tools/zunitc/test/fixtures_test.c'; then $(CYGPATH_W) 'tools/zunitc/test/fixtures_test.c'; else $(CYGPATH_W) '$(srcdir)/tools/zunitc/test/fixtures_test.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) tools/zunitc/test/$(DEPDIR)/zuctest-fixtures_test.Tpo tools/zunitc/test/$(DEPDIR)/zuctest-fixtures_test.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='tools/zunitc/test/fixtures_test.c' object='tools/zunitc/test/zuctest-fixtures_test.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(zuctest_CFLAGS) $(CFLAGS) -c -o tools/zunitc/test/zuctest-fixtures_test.obj `if test -f 'tools/zunitc/test/fixtures_test.c'; then $(CYGPATH_W) 'tools/zunitc/test/fixtures_test.c'; else $(CYGPATH_W) '$(srcdir)/tools/zunitc/test/fixtures_test.c'; fi`
+
+tools/zunitc/test/zuctest-zunitc_test.o: tools/zunitc/test/zunitc_test.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(zuctest_CFLAGS) $(CFLAGS) -MT tools/zunitc/test/zuctest-zunitc_test.o -MD -MP -MF tools/zunitc/test/$(DEPDIR)/zuctest-zunitc_test.Tpo -c -o tools/zunitc/test/zuctest-zunitc_test.o `test -f 'tools/zunitc/test/zunitc_test.c' || echo '$(srcdir)/'`tools/zunitc/test/zunitc_test.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) tools/zunitc/test/$(DEPDIR)/zuctest-zunitc_test.Tpo tools/zunitc/test/$(DEPDIR)/zuctest-zunitc_test.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='tools/zunitc/test/zunitc_test.c' object='tools/zunitc/test/zuctest-zunitc_test.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(zuctest_CFLAGS) $(CFLAGS) -c -o tools/zunitc/test/zuctest-zunitc_test.o `test -f 'tools/zunitc/test/zunitc_test.c' || echo '$(srcdir)/'`tools/zunitc/test/zunitc_test.c
+
+tools/zunitc/test/zuctest-zunitc_test.obj: tools/zunitc/test/zunitc_test.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(zuctest_CFLAGS) $(CFLAGS) -MT tools/zunitc/test/zuctest-zunitc_test.obj -MD -MP -MF tools/zunitc/test/$(DEPDIR)/zuctest-zunitc_test.Tpo -c -o tools/zunitc/test/zuctest-zunitc_test.obj `if test -f 'tools/zunitc/test/zunitc_test.c'; then $(CYGPATH_W) 'tools/zunitc/test/zunitc_test.c'; else $(CYGPATH_W) '$(srcdir)/tools/zunitc/test/zunitc_test.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) tools/zunitc/test/$(DEPDIR)/zuctest-zunitc_test.Tpo tools/zunitc/test/$(DEPDIR)/zuctest-zunitc_test.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='tools/zunitc/test/zunitc_test.c' object='tools/zunitc/test/zuctest-zunitc_test.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(zuctest_CFLAGS) $(CFLAGS) -c -o tools/zunitc/test/zuctest-zunitc_test.obj `if test -f 'tools/zunitc/test/zunitc_test.c'; then $(CYGPATH_W) 'tools/zunitc/test/zunitc_test.c'; else $(CYGPATH_W) '$(srcdir)/tools/zunitc/test/zunitc_test.c'; fi`
+
 mostlyclean-libtool:
 	-rm -f *.lo
 
@@ -5885,6 +6274,7 @@ clean-libtool:
 	-rm -rf shared/.libs shared/_libs
 	-rm -rf src/.libs src/_libs
 	-rm -rf tests/.libs tests/_libs
+	-rm -rf tools/zunitc/src/.libs tools/zunitc/src/_libs
 	-rm -rf xwayland/.libs xwayland/_libs
 
 distclean-libtool:
@@ -6081,27 +6471,6 @@ uninstall-pkgconfigDATA:
 	@list='$(pkgconfig_DATA)'; test -n "$(pkgconfigdir)" || list=; \
 	files=`for p in $$list; do echo $$p; done | sed -e 's|^.*/||'`; \
 	dir='$(DESTDIR)$(pkgconfigdir)'; $(am__uninstall_files_from_dir)
-install-wayland_sessionDATA: $(wayland_session_DATA)
-	@$(NORMAL_INSTALL)
-	@list='$(wayland_session_DATA)'; test -n "$(wayland_sessiondir)" || list=; \
-	if test -n "$$list"; then \
-	  echo " $(MKDIR_P) '$(DESTDIR)$(wayland_sessiondir)'"; \
-	  $(MKDIR_P) "$(DESTDIR)$(wayland_sessiondir)" || exit 1; \
-	fi; \
-	for p in $$list; do \
-	  if test -f "$$p"; then d=; else d="$(srcdir)/"; fi; \
-	  echo "$$d$$p"; \
-	done | $(am__base_list) | \
-	while read files; do \
-	  echo " $(INSTALL_DATA) $$files '$(DESTDIR)$(wayland_sessiondir)'"; \
-	  $(INSTALL_DATA) $$files "$(DESTDIR)$(wayland_sessiondir)" || exit $$?; \
-	done
-
-uninstall-wayland_sessionDATA:
-	@$(NORMAL_UNINSTALL)
-	@list='$(wayland_session_DATA)'; test -n "$(wayland_sessiondir)" || list=; \
-	files=`for p in $$list; do echo $$p; done | sed -e 's|^.*/||'`; \
-	dir='$(DESTDIR)$(wayland_sessiondir)'; $(am__uninstall_files_from_dir)
 install-westonincludeHEADERS: $(westoninclude_HEADERS)
 	@$(NORMAL_INSTALL)
 	@list='$(westoninclude_HEADERS)'; test -n "$(westonincludedir)" || list=; \
@@ -6338,6 +6707,13 @@ vertex-clip.test.log: vertex-clip.test$(EXEEXT)
 	--log-file $$b.log --trs-file $$b.trs \
 	$(am__common_driver_flags) $(AM_LOG_DRIVER_FLAGS) $(LOG_DRIVER_FLAGS) -- $(LOG_COMPILE) \
 	"$$tst" $(AM_TESTS_FD_REDIRECT)
+zuctest.log: zuctest$(EXEEXT)
+	@p='zuctest$(EXEEXT)'; \
+	b='zuctest'; \
+	$(am__check_pre) $(LOG_DRIVER) --test-name "$$f" \
+	--log-file $$b.log --trs-file $$b.trs \
+	$(am__common_driver_flags) $(AM_LOG_DRIVER_FLAGS) $(LOG_DRIVER_FLAGS) -- $(LOG_COMPILE) \
+	"$$tst" $(AM_TESTS_FD_REDIRECT)
 .la.log:
 	@p='$<'; \
 	$(am__set_b); \
@@ -6536,7 +6912,7 @@ check: $(BUILT_SOURCES)
 all-am: Makefile $(LTLIBRARIES) $(PROGRAMS) $(MANS) $(DATA) $(HEADERS) \
 		config.h all-local
 installdirs:
-	for dir in "$(DESTDIR)$(moduledir)" "$(DESTDIR)$(bindir)" "$(DESTDIR)$(libexecdir)" "$(DESTDIR)$(man1dir)" "$(DESTDIR)$(man5dir)" "$(DESTDIR)$(man7dir)" "$(DESTDIR)$(wayland_sessiondir)" "$(DESTDIR)$(westondatadir)" "$(DESTDIR)$(pkgconfigdir)" "$(DESTDIR)$(wayland_sessiondir)" "$(DESTDIR)$(westonincludedir)"; do \
+	for dir in "$(DESTDIR)$(moduledir)" "$(DESTDIR)$(bindir)" "$(DESTDIR)$(libexecdir)" "$(DESTDIR)$(man1dir)" "$(DESTDIR)$(man5dir)" "$(DESTDIR)$(man7dir)" "$(DESTDIR)$(wayland_sessiondir)" "$(DESTDIR)$(westondatadir)" "$(DESTDIR)$(pkgconfigdir)" "$(DESTDIR)$(westonincludedir)"; do \
 	  test -z "$$dir" || $(MKDIR_P) "$$dir"; \
 	done
 install: $(BUILT_SOURCES)
@@ -6586,6 +6962,10 @@ distclean-generic:
 	-rm -f src/$(am__dirstamp)
 	-rm -f tests/$(DEPDIR)/$(am__dirstamp)
 	-rm -f tests/$(am__dirstamp)
+	-rm -f tools/zunitc/src/$(DEPDIR)/$(am__dirstamp)
+	-rm -f tools/zunitc/src/$(am__dirstamp)
+	-rm -f tools/zunitc/test/$(DEPDIR)/$(am__dirstamp)
+	-rm -f tools/zunitc/test/$(am__dirstamp)
 	-rm -f wcap/$(DEPDIR)/$(am__dirstamp)
 	-rm -f wcap/$(am__dirstamp)
 	-rm -f xwayland/$(DEPDIR)/$(am__dirstamp)
@@ -6605,7 +6985,7 @@ clean-am: clean-binPROGRAMS clean-generic clean-libexecPROGRAMS \
 
 distclean: distclean-am
 	-rm -f $(am__CONFIG_DISTCLEAN_FILES)
-	-rm -rf clients/$(DEPDIR) desktop-shell/$(DEPDIR) fullscreen-shell/$(DEPDIR) ivi-shell/$(DEPDIR) protocol/$(DEPDIR) shared/$(DEPDIR) src/$(DEPDIR) tests/$(DEPDIR) wcap/$(DEPDIR) xwayland/$(DEPDIR)
+	-rm -rf clients/$(DEPDIR) desktop-shell/$(DEPDIR) fullscreen-shell/$(DEPDIR) ivi-shell/$(DEPDIR) protocol/$(DEPDIR) shared/$(DEPDIR) src/$(DEPDIR) tests/$(DEPDIR) tools/zunitc/src/$(DEPDIR) tools/zunitc/test/$(DEPDIR) wcap/$(DEPDIR) xwayland/$(DEPDIR)
 	-rm -f Makefile
 distclean-am: clean-am distclean-compile distclean-generic \
 	distclean-hdr distclean-libtool distclean-tags
@@ -6625,7 +7005,7 @@ info-am:
 install-data-am: install-dist_wayland_sessionDATA \
 	install-dist_westondataDATA install-man \
 	install-moduleLTLIBRARIES install-pkgconfigDATA \
-	install-wayland_sessionDATA install-westonincludeHEADERS
+	install-westonincludeHEADERS
 
 install-dvi: install-dvi-am
 
@@ -6657,7 +7037,7 @@ installcheck-am:
 maintainer-clean: maintainer-clean-am
 	-rm -f $(am__CONFIG_DISTCLEAN_FILES)
 	-rm -rf $(top_srcdir)/autom4te.cache
-	-rm -rf clients/$(DEPDIR) desktop-shell/$(DEPDIR) fullscreen-shell/$(DEPDIR) ivi-shell/$(DEPDIR) protocol/$(DEPDIR) shared/$(DEPDIR) src/$(DEPDIR) tests/$(DEPDIR) wcap/$(DEPDIR) xwayland/$(DEPDIR)
+	-rm -rf clients/$(DEPDIR) desktop-shell/$(DEPDIR) fullscreen-shell/$(DEPDIR) ivi-shell/$(DEPDIR) protocol/$(DEPDIR) shared/$(DEPDIR) src/$(DEPDIR) tests/$(DEPDIR) tools/zunitc/src/$(DEPDIR) tools/zunitc/test/$(DEPDIR) wcap/$(DEPDIR) xwayland/$(DEPDIR)
 	-rm -f Makefile
 maintainer-clean-am: distclean-am maintainer-clean-generic
 
@@ -6677,8 +7057,7 @@ ps-am:
 uninstall-am: uninstall-binPROGRAMS uninstall-dist_wayland_sessionDATA \
 	uninstall-dist_westondataDATA uninstall-libexecPROGRAMS \
 	uninstall-man uninstall-moduleLTLIBRARIES \
-	uninstall-pkgconfigDATA uninstall-wayland_sessionDATA \
-	uninstall-westonincludeHEADERS
+	uninstall-pkgconfigDATA uninstall-westonincludeHEADERS
 
 uninstall-man: uninstall-man1 uninstall-man5 uninstall-man7
 
@@ -6703,16 +7082,16 @@ uninstall-man: uninstall-man1 uninstall-man5 uninstall-man7
 	install-man1 install-man5 install-man7 \
 	install-moduleLTLIBRARIES install-pdf install-pdf-am \
 	install-pkgconfigDATA install-ps install-ps-am install-strip \
-	install-wayland_sessionDATA install-westonincludeHEADERS \
-	installcheck installcheck-am installdirs maintainer-clean \
-	maintainer-clean-generic mostlyclean mostlyclean-compile \
-	mostlyclean-generic mostlyclean-libtool pdf pdf-am ps ps-am \
-	recheck tags tags-am uninstall uninstall-am \
-	uninstall-binPROGRAMS uninstall-dist_wayland_sessionDATA \
+	install-westonincludeHEADERS installcheck installcheck-am \
+	installdirs maintainer-clean maintainer-clean-generic \
+	mostlyclean mostlyclean-compile mostlyclean-generic \
+	mostlyclean-libtool pdf pdf-am ps ps-am recheck tags tags-am \
+	uninstall uninstall-am uninstall-binPROGRAMS \
+	uninstall-dist_wayland_sessionDATA \
 	uninstall-dist_westondataDATA uninstall-libexecPROGRAMS \
 	uninstall-man uninstall-man1 uninstall-man5 uninstall-man7 \
 	uninstall-moduleLTLIBRARIES uninstall-pkgconfigDATA \
-	uninstall-wayland_sessionDATA uninstall-westonincludeHEADERS
+	uninstall-westonincludeHEADERS
 
 
 weston.ini : $(srcdir)/weston.ini.in
@@ -6723,7 +7102,7 @@ weston.ini : $(srcdir)/weston.ini.in
 		$< > $@
 
 ivi-shell/weston.ini : $(srcdir)/ivi-shell/weston.ini.in
-	$(AM_V_GEN)$(SED) \
+	$(AM_V_GEN)$(MKDIR_P) $(dir $@) && $(SED) \
 		-e 's|@bindir[@]|$(bindir)|g' \
 		-e 's|@abs_top_builddir[@]|$(abs_top_builddir)|g' \
 		-e 's|@abs_top_srcdir[@]|$(abs_top_srcdir)|g' \
@@ -6732,11 +7111,11 @@ ivi-shell/weston.ini : $(srcdir)/ivi-shell/weston.ini.in
 		$< > $@
 
 tests/weston-ivi.ini : $(srcdir)/ivi-shell/weston.ini.in
-	$(AM_V_GEN)$(SED) \
+	$(AM_V_GEN)$(MKDIR_P) $(dir $@) && $(SED) \
 		-e 's|@bindir[@]|$(bindir)|g' \
 		-e 's|@abs_top_builddir[@]|$(abs_top_builddir)|g' \
 		-e 's|@abs_top_srcdir[@]|$(abs_top_srcdir)|g' \
-		-e 's|@libexecdir[@]|$(libexecdir)|g' \
+		-e 's|@libexecdir[@]|$(abs_builddir)|g' \
 		-e 's|@plugin_prefix[@]|$(abs_top_builddir)/.libs/|g' \
 		$< > $@
 
@@ -6770,12 +7149,28 @@ $(ivi_tests) : $(builddir)/tests/weston-ivi.ini
 
 clean-local:
 	-rm -rf logs
+	-rm -rf $(DOCDIRS)
 
 # To remove when automake 1.11 support is dropped
 export abs_builddir
 
+all-local: zuctest$(EXEEXT)
+
 %.1 %.5 %.7 : man/%.man
 	$(AM_V_GEN)$(SED) $(MAN_SUBSTS) < $< > $@
+
+@ENABLE_DEVDOCS_TRUE@docs/developer/html/index.html: doc/doxygen/tooldev.doxygen | docs/developer
+@ENABLE_DEVDOCS_TRUE@	cd doc/doxygen && $(DOXYGEN) tooldev.doxygen
+
+@ENABLE_DEVDOCS_TRUE@docs/tools/html/index.html: doc/doxygen/tools.doxygen | docs/tools
+@ENABLE_DEVDOCS_TRUE@	cd doc/doxygen && $(DOXYGEN) tools.doxygen
+
+$(DOCDIRS):
+	$(MKDIR_P) $@
+
+.PHONY: doc $(DOXYGEN_INDICES)
+
+doc: $(DOXYGEN_INDICES)
 
 protocol/%-protocol.c : $(top_srcdir)/protocol/%.xml
 	$(AM_V_GEN)$(MKDIR_P) $(dir $@) && $(wayland_scanner) code < $< > $@

@@ -36,6 +36,9 @@
 /* Build Weston with EGL support */
 #undef ENABLE_EGL
 
+/* Build Weston with JUnit output support */
+#undef ENABLE_JUNIT_XML
+
 /* Build Weston with libxkbcommon support */
 #undef ENABLE_XKBCOMMON
 
@@ -56,6 +59,9 @@
 
 /* Define to 1 if you have the <freerdp/version.h> header file. */
 #undef HAVE_FREERDP_VERSION_H
+
+/* gbm supports dmabuf import */
+#undef HAVE_GBM_FD_IMPORT
 
 /* Define to 1 if you have the `initgroups' function. */
 #undef HAVE_INITGROUPS
