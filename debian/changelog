@@ -1,3 +1,9 @@
+weston (1.9.0-2) unstable; urgency=medium
+
+  * d/control: tighten versioned build depends
+
+ -- Héctor Orón Martínez <zumbi@debian.org>  Sun, 27 Sep 2015 12:26:29 +0200
+
 weston (1.9.0-1) unstable; urgency=medium
 
   * New upstream release
