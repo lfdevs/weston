@@ -1,3 +1,11 @@
+weston (1.9.0-3) unstable; urgency=medium
+
+  * debian/patches/0001-Add-suport-for-new-libsystemd.patch:
+    + Consistently check for libsystem.pc rather than libsystemd-login.pc
+      to get session support for weston-launch.
+
+ -- Emilio Pozuelo Monfort <pochu@debian.org>  Sun, 01 Nov 2015 17:32:38 +0100
+
 weston (1.9.0-2) unstable; urgency=medium
 
   * d/control: tighten versioned build depends

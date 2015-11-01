@@ -10,11 +10,16 @@ name instead of the deprecated libsystemd-login.
  configure.ac | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)
 
-diff --git a/configure.ac b/configure.ac
-index 2c55e1b..034f4a5 100644
 --- a/configure.ac
 +++ b/configure.ac
-@@ -349,7 +349,7 @@ AS_IF([test "x$have_systemd_login" = "xyes"],
+@@ -380,13 +380,13 @@
+ AS_IF([test "x$enable_resize_optimization" = "xyes"],
+       [AC_DEFINE([USE_RESIZE_POOL], [1], [Use resize memory pool as a performance optimization])])
+ 
+-PKG_CHECK_MODULES(SYSTEMD_LOGIN, [libsystemd-login >= 198],
++PKG_CHECK_MODULES(SYSTEMD_LOGIN, [libsystemd >= 198],
+                   [have_systemd_login=yes], [have_systemd_login=no])
+ AS_IF([test "x$have_systemd_login" = "xyes"],
        [AC_DEFINE([HAVE_SYSTEMD_LOGIN], [1], [Have systemd-login])])
  AM_CONDITIONAL(HAVE_SYSTEMD_LOGIN, test "x$have_systemd_login" = "xyes")
  
@@ -23,6 +28,3 @@ index 2c55e1b..034f4a5 100644
                    [have_systemd_login_209=yes], [have_systemd_login_209=no])
  AS_IF([test "x$have_systemd_login_209" = "xyes"],
        [AC_DEFINE([HAVE_SYSTEMD_LOGIN_209], [1], [Have systemd-login >= 209])])
--- 
-2.1.4
-
