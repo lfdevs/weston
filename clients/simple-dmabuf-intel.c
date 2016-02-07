@@ -35,22 +35,22 @@
 #include <fcntl.h>
 
 #include <xf86drm.h>
-#include <libdrm/i915_drm.h>
-#include <libdrm/intel_bufmgr.h>
-#include <libdrm/drm_fourcc.h>
+#include <i915_drm.h>
+#include <intel_bufmgr.h>
+#include <drm_fourcc.h>
 
 #include <wayland-client.h>
-#include "xdg-shell-client-protocol.h"
-#include "fullscreen-shell-client-protocol.h"
-#include "linux-dmabuf-client-protocol.h"
+#include "xdg-shell-unstable-v5-client-protocol.h"
+#include "fullscreen-shell-unstable-v1-client-protocol.h"
+#include "linux-dmabuf-unstable-v1-client-protocol.h"
 
 struct display {
 	struct wl_display *display;
 	struct wl_registry *registry;
 	struct wl_compositor *compositor;
 	struct xdg_shell *shell;
-	struct _wl_fullscreen_shell *fshell;
-	struct zlinux_dmabuf *dmabuf;
+	struct zwp_fullscreen_shell_v1 *fshell;
+	struct zwp_linux_dmabuf_v1 *dmabuf;
 	int xrgb8888_format_found;
 };
 
@@ -187,7 +187,7 @@ unmap_bo(struct buffer *my_buf)
 
 static void
 create_succeeded(void *data,
-		 struct zlinux_buffer_params *params,
+		 struct zwp_linux_buffer_params_v1 *params,
 		 struct wl_buffer *new_buffer)
 {
 	struct buffer *buffer = data;
@@ -195,22 +195,23 @@ create_succeeded(void *data,
 	buffer->buffer = new_buffer;
 	wl_buffer_add_listener(buffer->buffer, &buffer_listener, buffer);
 
-	zlinux_buffer_params_destroy(params);
+	zwp_linux_buffer_params_v1_destroy(params);
 }
 
 static void
-create_failed(void *data, struct zlinux_buffer_params *params)
+create_failed(void *data, struct zwp_linux_buffer_params_v1 *params)
 {
 	struct buffer *buffer = data;
 
 	buffer->buffer = NULL;
+	running = 0;
 
-	zlinux_buffer_params_destroy(params);
+	zwp_linux_buffer_params_v1_destroy(params);
 
-	fprintf(stderr, "Error: zlinux_buffer_params.create failed.\n");
+	fprintf(stderr, "Error: zwp_linux_buffer_params.create failed.\n");
 }
 
-static const struct zlinux_buffer_params_listener params_listener = {
+static const struct zwp_linux_buffer_params_v1_listener params_listener = {
 	create_succeeded,
 	create_failed
 };
@@ -219,7 +220,7 @@ static int
 create_dmabuf_buffer(struct display *display, struct buffer *buffer,
 		     int width, int height)
 {
-	struct zlinux_buffer_params *params;
+	struct zwp_linux_buffer_params_v1 *params;
 	uint64_t modifier;
 	uint32_t flags;
 
@@ -259,27 +260,20 @@ create_dmabuf_buffer(struct display *display, struct buffer *buffer,
 	modifier = 0;
 	flags = 0;
 
-	params = zlinux_dmabuf_create_params(display->dmabuf);
-	zlinux_buffer_params_add(params,
-				 buffer->dmabuf_fd,
-				 0, /* plane_idx */
-				 0, /* offset */
-				 buffer->stride,
-				 modifier >> 32,
-				 modifier & 0xffffffff);
-	zlinux_buffer_params_add_listener(params, &params_listener, buffer);
-	zlinux_buffer_params_create(params,
-				    buffer->width,
-				    buffer->height,
-				    DRM_FORMAT_XRGB8888,
-				    flags);
-
-	/* params is destroyed by the event handlers */
-
-	wl_display_roundtrip(display->display);
-	if (buffer->buffer == NULL) {
-		goto error2;
-	}
+	params = zwp_linux_dmabuf_v1_create_params(display->dmabuf);
+	zwp_linux_buffer_params_v1_add(params,
+				       buffer->dmabuf_fd,
+				       0, /* plane_idx */
+				       0, /* offset */
+				       buffer->stride,
+				       modifier >> 32,
+				       modifier & 0xffffffff);
+	zwp_linux_buffer_params_v1_add_listener(params, &params_listener, buffer);
+	zwp_linux_buffer_params_v1_create(params,
+					  buffer->width,
+					  buffer->height,
+					  DRM_FORMAT_XRGB8888,
+					  flags);
 
 	return 0;
 
@@ -313,6 +307,8 @@ static struct window *
 create_window(struct display *display, int width, int height)
 {
 	struct window *window;
+	int i;
+	int ret;
 
 	window = calloc(1, sizeof *window);
 	if (!window)
@@ -336,12 +332,20 @@ create_window(struct display *display, int width, int height)
 
 		xdg_surface_set_title(window->xdg_surface, "simple-dmabuf");
 	} else if (display->fshell) {
-		_wl_fullscreen_shell_present_surface(display->fshell,
-						     window->surface,
-						     _WL_FULLSCREEN_SHELL_PRESENT_METHOD_DEFAULT,
-						     NULL);
+		zwp_fullscreen_shell_v1_present_surface(display->fshell,
+							window->surface,
+							ZWP_FULLSCREEN_SHELL_V1_PRESENT_METHOD_DEFAULT,
+							NULL);
 	} else {
 		assert(0);
+	}
+
+	for (i = 0; i < 2; ++i) {
+		ret = create_dmabuf_buffer(display, &window->buffers[i],
+		                               width, height);
+
+		if (ret < 0)
+			return NULL;
 	}
 
 	return window;
@@ -375,7 +379,6 @@ static struct buffer *
 window_next_buffer(struct window *window)
 {
 	struct buffer *buffer;
-	int ret = 0;
 
 	if (!window->buffers[0].busy)
 		buffer = &window->buffers[0];
@@ -383,14 +386,6 @@ window_next_buffer(struct window *window)
 		buffer = &window->buffers[1];
 	else
 		return NULL;
-
-	if (!buffer->buffer) {
-		ret = create_dmabuf_buffer(window->display, buffer,
-					   window->width, window->height);
-
-		if (ret < 0)
-			return NULL;
-	}
 
 	return buffer;
 }
@@ -430,7 +425,7 @@ static const struct wl_callback_listener frame_listener = {
 };
 
 static void
-dmabuf_format(void *data, struct zlinux_dmabuf *zlinux_dmabuf, uint32_t format)
+dmabuf_format(void *data, struct zwp_linux_dmabuf_v1 *zwp_linux_dmabuf, uint32_t format)
 {
 	struct display *d = data;
 
@@ -438,7 +433,7 @@ dmabuf_format(void *data, struct zlinux_dmabuf *zlinux_dmabuf, uint32_t format)
 		d->xrgb8888_format_found = 1;
 }
 
-static const struct zlinux_dmabuf_listener dmabuf_listener = {
+static const struct zwp_linux_dmabuf_v1_listener dmabuf_listener = {
 	dmabuf_format
 };
 
@@ -473,13 +468,13 @@ registry_handle_global(void *data, struct wl_registry *registry,
 					    id, &xdg_shell_interface, 1);
 		xdg_shell_use_unstable_version(d->shell, XDG_VERSION);
 		xdg_shell_add_listener(d->shell, &xdg_shell_listener, d);
-	} else if (strcmp(interface, "_wl_fullscreen_shell") == 0) {
+	} else if (strcmp(interface, "zwp_fullscreen_shell_v1") == 0) {
 		d->fshell = wl_registry_bind(registry,
-					     id, &_wl_fullscreen_shell_interface, 1);
-	} else if (strcmp(interface, "zlinux_dmabuf") == 0) {
+					     id, &zwp_fullscreen_shell_v1_interface, 1);
+	} else if (strcmp(interface, "zwp_linux_dmabuf_v1") == 0) {
 		d->dmabuf = wl_registry_bind(registry,
-					     id, &zlinux_dmabuf_interface, 1);
-		zlinux_dmabuf_add_listener(d->dmabuf, &dmabuf_listener, d);
+					     id, &zwp_linux_dmabuf_v1_interface, 1);
+		zwp_linux_dmabuf_v1_add_listener(d->dmabuf, &dmabuf_listener, d);
 	}
 }
 
@@ -515,7 +510,7 @@ create_display(void)
 				 &registry_listener, display);
 	wl_display_roundtrip(display->display);
 	if (display->dmabuf == NULL) {
-		fprintf(stderr, "No zlinux_dmabuf global\n");
+		fprintf(stderr, "No zwp_linux_dmabuf global\n");
 		exit(1);
 	}
 
@@ -533,13 +528,13 @@ static void
 destroy_display(struct display *display)
 {
 	if (display->dmabuf)
-		zlinux_dmabuf_destroy(display->dmabuf);
+		zwp_linux_dmabuf_v1_destroy(display->dmabuf);
 
 	if (display->shell)
 		xdg_shell_destroy(display->shell);
 
 	if (display->fshell)
-		_wl_fullscreen_shell_release(display->fshell);
+		zwp_fullscreen_shell_v1_release(display->fshell);
 
 	if (display->compositor)
 		wl_compositor_destroy(display->compositor);
@@ -574,9 +569,11 @@ main(int argc, char **argv)
 	sigint.sa_flags = SA_RESETHAND;
 	sigaction(SIGINT, &sigint, NULL);
 
-	/* Initialise damage to full surface, so the padding gets painted */
-	wl_surface_damage(window->surface, 0, 0,
-			  window->width, window->height);
+	/* Here we retrieve the linux-dmabuf objects, or error */
+	wl_display_roundtrip(display->display);
+
+	if (!running)
+		return 1;
 
 	redraw(window, NULL, 0);
 

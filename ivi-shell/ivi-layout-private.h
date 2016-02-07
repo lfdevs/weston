@@ -32,11 +32,11 @@
 struct ivi_layout_surface {
 	struct wl_list link;
 	struct wl_signal property_changed;
-	struct wl_list layer_list;
 	int32_t update_count;
 	uint32_t id_surface;
 
 	struct ivi_layout *layout;
+	struct ivi_layout_layer *on_layer;
 	struct weston_surface *surface;
 
 	struct weston_transform transform;
@@ -65,11 +65,10 @@ struct ivi_layout_surface {
 struct ivi_layout_layer {
 	struct wl_list link;
 	struct wl_signal property_changed;
-	struct wl_list screen_list;
-	struct wl_list link_to_surface;
 	uint32_t id_layer;
 
 	struct ivi_layout *layout;
+	struct ivi_layout_screen *on_screen;
 
 	struct ivi_layout_layer_properties prop;
 	uint32_t event_mask;

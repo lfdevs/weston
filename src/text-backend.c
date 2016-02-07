@@ -33,8 +33,8 @@
 #include <time.h>
 
 #include "compositor.h"
-#include "text-server-protocol.h"
-#include "input-method-server-protocol.h"
+#include "text-input-unstable-v1-server-protocol.h"
+#include "input-method-unstable-v1-server-protocol.h"
 #include "shared/helpers.h"
 
 struct text_input_manager;
@@ -100,14 +100,13 @@ struct text_backend {
 
 	struct {
 		char *path;
-		struct wl_resource *binding;
-		struct weston_process process;
 		struct wl_client *client;
 
 		unsigned deathcount;
 		uint32_t deathstamp;
 	} input_method;
 
+	struct wl_listener client_listener;
 	struct wl_listener seat_created_listener;
 };
 
@@ -128,7 +127,7 @@ deactivate_input_method(struct input_method *input_method)
 
 	if (input_method->context && input_method->input_method_binding) {
 		input_method_context_end_keyboard_grab(input_method->context);
-		wl_input_method_send_deactivate(
+		zwp_input_method_v1_send_deactivate(
 			input_method->input_method_binding,
 			input_method->context->resource);
 	}
@@ -143,7 +142,7 @@ deactivate_input_method(struct input_method *input_method)
 		text_input->input_panel_visible = false;
 		text_input->manager->current_panel = NULL;
 	}
-	wl_text_input_send_leave(text_input->resource);
+	zwp_text_input_v1_send_leave(text_input->resource);
 }
 
 static void
@@ -173,7 +172,7 @@ text_input_set_surrounding_text(struct wl_client *client,
 			      &text_input->input_methods, link) {
 		if (!input_method->context)
 			continue;
-		wl_input_method_context_send_surrounding_text(
+		zwp_input_method_context_v1_send_surrounding_text(
 			input_method->context->resource, text, cursor, anchor);
 	}
 }
@@ -220,8 +219,8 @@ text_input_activate(struct wl_client *client,
 		text_input->manager->current_panel = text_input;
 	}
 
-	wl_text_input_send_enter(text_input->resource,
-				 text_input->surface->resource);
+	zwp_text_input_v1_send_enter(text_input->resource,
+				     text_input->surface->resource);
 }
 
 static void
@@ -246,7 +245,7 @@ text_input_reset(struct wl_client *client,
 			      &text_input->input_methods, link) {
 		if (!input_method->context)
 			continue;
-		wl_input_method_context_send_reset(
+		zwp_input_method_context_v1_send_reset(
 			input_method->context->resource);
 	}
 }
@@ -284,7 +283,7 @@ text_input_set_content_type(struct wl_client *client,
 			      &text_input->input_methods, link) {
 		if (!input_method->context)
 			continue;
-		wl_input_method_context_send_content_type(
+		zwp_input_method_context_v1_send_content_type(
 			input_method->context->resource, hint, purpose);
 	}
 }
@@ -302,7 +301,7 @@ text_input_invoke_action(struct wl_client *client,
 			      &text_input->input_methods, link) {
 		if (!input_method->context)
 			continue;
-		wl_input_method_context_send_invoke_action(
+		zwp_input_method_context_v1_send_invoke_action(
 			input_method->context->resource, button, index);
 	}
 }
@@ -319,7 +318,7 @@ text_input_commit_state(struct wl_client *client,
 			      &text_input->input_methods, link) {
 		if (!input_method->context)
 			continue;
-		wl_input_method_context_send_commit_state(
+		zwp_input_method_context_v1_send_commit_state(
 			input_method->context->resource, serial);
 	}
 }
@@ -369,12 +368,12 @@ text_input_set_preferred_language(struct wl_client *client,
 			      &text_input->input_methods, link) {
 		if (!input_method->context)
 			continue;
-		wl_input_method_context_send_preferred_language(
+		zwp_input_method_context_v1_send_preferred_language(
 			input_method->context->resource, language);
 	}
 }
 
-static const struct wl_text_input_interface text_input_implementation = {
+static const struct zwp_text_input_v1_interface text_input_implementation = {
 	text_input_activate,
 	text_input_deactivate,
 	text_input_show_input_panel,
@@ -401,7 +400,7 @@ static void text_input_manager_create_text_input(struct wl_client *client,
 		return;
 
 	text_input->resource =
-		wl_resource_create(client, &wl_text_input_interface, 1, id);
+		wl_resource_create(client, &zwp_text_input_v1_interface, 1, id);
 	wl_resource_set_implementation(text_input->resource,
 				       &text_input_implementation,
 				       text_input, destroy_text_input);
@@ -412,7 +411,7 @@ static void text_input_manager_create_text_input(struct wl_client *client,
 	wl_list_init(&text_input->input_methods);
 };
 
-static const struct wl_text_input_manager_interface manager_implementation = {
+static const struct zwp_text_input_manager_v1_interface manager_implementation = {
 	text_input_manager_create_text_input
 };
 
@@ -428,7 +427,7 @@ bind_text_input_manager(struct wl_client *client,
 	/* No checking for duplicate binding necessary.  */
 	resource =
 		wl_resource_create(client,
-				   &wl_text_input_manager_interface, 1, id);
+				   &zwp_text_input_manager_v1_interface, 1, id);
 	if (resource)
 		wl_resource_set_implementation(resource,
 					       &manager_implementation,
@@ -461,7 +460,7 @@ text_input_manager_create(struct weston_compositor *ec)
 
 	text_input_manager->text_input_manager_global =
 		wl_global_create(ec->wl_display,
-				 &wl_text_input_manager_interface, 1,
+				 &zwp_text_input_manager_v1_interface, 1,
 				 text_input_manager, bind_text_input_manager);
 
 	text_input_manager->destroy_listener.notify =
@@ -487,8 +486,8 @@ input_method_context_commit_string(struct wl_client *client,
 		wl_resource_get_user_data(resource);
 
 	if (context->input)
-		wl_text_input_send_commit_string(context->input->resource,
-						 serial, text);
+		zwp_text_input_v1_send_commit_string(context->input->resource,
+						     serial, text);
 }
 
 static void
@@ -502,8 +501,8 @@ input_method_context_preedit_string(struct wl_client *client,
 		wl_resource_get_user_data(resource);
 
 	if (context->input)
-		wl_text_input_send_preedit_string(context->input->resource,
-						  serial, text, commit);
+		zwp_text_input_v1_send_preedit_string(context->input->resource,
+						      serial, text, commit);
 }
 
 static void
@@ -517,8 +516,8 @@ input_method_context_preedit_styling(struct wl_client *client,
 		wl_resource_get_user_data(resource);
 
 	if (context->input)
-		wl_text_input_send_preedit_styling(context->input->resource,
-						   index, length, style);
+		zwp_text_input_v1_send_preedit_styling(context->input->resource,
+						       index, length, style);
 }
 
 static void
@@ -530,8 +529,8 @@ input_method_context_preedit_cursor(struct wl_client *client,
 		wl_resource_get_user_data(resource);
 
 	if (context->input)
-		wl_text_input_send_preedit_cursor(context->input->resource,
-						  cursor);
+		zwp_text_input_v1_send_preedit_cursor(context->input->resource,
+						      cursor);
 }
 
 static void
@@ -544,7 +543,7 @@ input_method_context_delete_surrounding_text(struct wl_client *client,
 		wl_resource_get_user_data(resource);
 
 	if (context->input)
-		wl_text_input_send_delete_surrounding_text(
+		zwp_text_input_v1_send_delete_surrounding_text(
 			context->input->resource, index, length);
 }
 
@@ -558,8 +557,8 @@ input_method_context_cursor_position(struct wl_client *client,
 		wl_resource_get_user_data(resource);
 
 	if (context->input)
-		wl_text_input_send_cursor_position(context->input->resource,
-						   index, anchor);
+		zwp_text_input_v1_send_cursor_position(context->input->resource,
+						       index, anchor);
 }
 
 static void
@@ -571,7 +570,8 @@ input_method_context_modifiers_map(struct wl_client *client,
 		wl_resource_get_user_data(resource);
 
 	if (context->input)
-		wl_text_input_send_modifiers_map(context->input->resource, map);
+		zwp_text_input_v1_send_modifiers_map(context->input->resource,
+						     map);
 }
 
 static void
@@ -587,8 +587,9 @@ input_method_context_keysym(struct wl_client *client,
 		wl_resource_get_user_data(resource);
 
 	if (context->input)
-		wl_text_input_send_keysym(context->input->resource,
-					  serial, time, sym, state, modifiers);
+		zwp_text_input_v1_send_keysym(context->input->resource,
+					      serial, time,
+					      sym, state, modifiers);
 }
 
 static void
@@ -725,8 +726,8 @@ input_method_context_language(struct wl_client *client,
 		wl_resource_get_user_data(resource);
 
 	if (context->input)
-		wl_text_input_send_language(context->input->resource,
-					    serial, language);
+		zwp_text_input_v1_send_language(context->input->resource,
+						serial, language);
 }
 
 static void
@@ -739,12 +740,12 @@ input_method_context_text_direction(struct wl_client *client,
 		wl_resource_get_user_data(resource);
 
 	if (context->input)
-		wl_text_input_send_text_direction(context->input->resource,
-						  serial, direction);
+		zwp_text_input_v1_send_text_direction(context->input->resource,
+						      serial, direction);
 }
 
 
-static const struct wl_input_method_context_interface context_implementation = {
+static const struct zwp_input_method_context_v1_interface context_implementation = {
 	input_method_context_destroy,
 	input_method_context_commit_string,
 	input_method_context_preedit_string,
@@ -793,7 +794,8 @@ input_method_context_create(struct text_input *input,
 	binding = input_method->input_method_binding;
 	context->resource =
 		wl_resource_create(wl_resource_get_client(binding),
-				   &wl_input_method_context_interface, 1, 0);
+				   &zwp_input_method_context_v1_interface,
+				   1, 0);
 	wl_resource_set_implementation(context->resource,
 				       &context_implementation,
 				       context, destroy_input_method_context);
@@ -803,7 +805,7 @@ input_method_context_create(struct text_input *input,
 	input_method->context = context;
 
 
-	wl_input_method_send_activate(binding, context->resource);
+	zwp_input_method_v1_send_activate(binding, context->resource);
 }
 
 static void
@@ -831,12 +833,9 @@ static void
 unbind_input_method(struct wl_resource *resource)
 {
 	struct input_method *input_method = wl_resource_get_user_data(resource);
-	struct text_backend *text_backend = input_method->text_backend;
 
 	input_method->input_method_binding = NULL;
 	input_method->context = NULL;
-
-	text_backend->input_method.binding = NULL;
 }
 
 static void
@@ -850,7 +849,8 @@ bind_input_method(struct wl_client *client,
 	struct wl_resource *resource;
 
 	resource =
-		wl_resource_create(client, &wl_input_method_interface, 1, id);
+		wl_resource_create(client,
+				   &zwp_input_method_v1_interface, 1, id);
 
 	if (input_method->input_method_binding != NULL) {
 		wl_resource_post_error(resource,
@@ -870,8 +870,6 @@ bind_input_method(struct wl_client *client,
 	wl_resource_set_implementation(resource, NULL, input_method,
 				       unbind_input_method);
 	input_method->input_method_binding = resource;
-
-	text_backend->input_method.binding = resource;
 }
 
 static void
@@ -928,14 +926,9 @@ input_method_init_seat(struct weston_seat *seat)
 static void launch_input_method(struct text_backend *text_backend);
 
 static void
-handle_input_method_sigchld(struct weston_process *process, int status)
+respawn_input_method_process(struct text_backend *text_backend)
 {
 	uint32_t time;
-	struct text_backend *text_backend =
-		container_of(process, struct text_backend, input_method.process);
-
-	text_backend->input_method.process.pid = 0;
-	text_backend->input_method.client = NULL;
 
 	/* if input_method dies more than 5 times in 10 seconds, give up */
 	time = weston_compositor_get_time();
@@ -946,38 +939,48 @@ handle_input_method_sigchld(struct weston_process *process, int status)
 
 	text_backend->input_method.deathcount++;
 	if (text_backend->input_method.deathcount > 5) {
-		weston_log("input_method died, giving up.\n");
+		weston_log("input_method disconnected, giving up.\n");
 		return;
 	}
 
-	weston_log("input_method died, respawning...\n");
+	weston_log("input_method disconnected, respawning...\n");
 	launch_input_method(text_backend);
+}
+
+static void
+input_method_client_notifier(struct wl_listener *listener, void *data)
+{
+	struct text_backend *text_backend;
+
+	text_backend = container_of(listener, struct text_backend,
+				    client_listener);
+
+	text_backend->input_method.client = NULL;
+	respawn_input_method_process(text_backend);
 }
 
 static void
 launch_input_method(struct text_backend *text_backend)
 {
-	if (text_backend->input_method.binding)
-		return;
-
 	if (!text_backend->input_method.path)
 		return;
 
 	if (strcmp(text_backend->input_method.path, "") == 0)
 		return;
 
-	if (text_backend->input_method.process.pid != 0)
-		return;
-
 	text_backend->input_method.client =
-		weston_client_launch(text_backend->compositor,
-				     &text_backend->input_method.process,
-				     text_backend->input_method.path,
-				     handle_input_method_sigchld);
+		weston_client_start(text_backend->compositor,
+				    text_backend->input_method.path);
 
-	if (!text_backend->input_method.client)
+	if (!text_backend->input_method.client) {
 		weston_log("not able to start %s\n",
 			   text_backend->input_method.path);
+		return;
+	}
+
+	text_backend->client_listener.notify = input_method_client_notifier;
+	wl_client_add_destroy_listener(text_backend->input_method.client,
+				       &text_backend->client_listener);
 }
 
 static void
@@ -998,15 +1001,14 @@ text_backend_seat_created(struct text_backend *text_backend,
 	input_method->text_backend = text_backend;
 
 	input_method->input_method_global =
-		wl_global_create(ec->wl_display, &wl_input_method_interface, 1,
+		wl_global_create(ec->wl_display,
+				 &zwp_input_method_v1_interface, 1,
 				 input_method, bind_input_method);
 
 	input_method->destroy_listener.notify = input_method_notifier_destroy;
 	wl_signal_add(&seat->destroy_signal, &input_method->destroy_listener);
 
 	seat->input_method = input_method;
-
-	launch_input_method(text_backend);
 }
 
 static void
@@ -1042,8 +1044,11 @@ text_backend_configuration(struct text_backend *text_backend)
 WL_EXPORT void
 text_backend_destroy(struct text_backend *text_backend)
 {
-	if (text_backend->input_method.client)
+	if (text_backend->input_method.client) {
+		/* disable respawn */
+		wl_list_remove(&text_backend->client_listener.link);
 		wl_client_destroy(text_backend->input_method.client);
+	}
 
 	free(text_backend->input_method.path);
 	free(text_backend);
@@ -1070,6 +1075,8 @@ text_backend_init(struct weston_compositor *ec)
 		      &text_backend->seat_created_listener);
 
 	text_input_manager_create(ec);
+
+	launch_input_method(text_backend);
 
 	return text_backend;
 }

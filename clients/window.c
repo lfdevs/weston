@@ -68,9 +68,8 @@ typedef void *EGLContext;
 #include <wayland-client.h>
 #include "shared/cairo-util.h"
 #include "shared/helpers.h"
-#include "xdg-shell-client-protocol.h"
+#include "xdg-shell-unstable-v5-client-protocol.h"
 #include "text-cursor-position-client-protocol.h"
-#include "workspaces-client-protocol.h"
 #include "shared/os-compatibility.h"
 
 #include "window.h"
@@ -96,7 +95,6 @@ struct display {
 	struct wl_shm *shm;
 	struct wl_data_device_manager *data_device_manager;
 	struct text_cursor_position *text_cursor_position;
-	struct workspace_manager *workspace_manager;
 	struct xdg_shell *xdg_shell;
 	struct ivi_application *ivi_application; /* ivi style shell */
 	EGLDisplay dpy;
@@ -132,15 +130,11 @@ struct display {
 
 	struct xkb_context *xkb_context;
 
-	uint32_t workspace;
-	uint32_t workspace_count;
-
 	/* A hack to get text extents for tooltips */
 	cairo_surface_t *dummy_surface;
 	void *dummy_surface_data;
 
 	int has_rgb565;
-	int seat_version;
 	int data_device_manager_version;
 };
 
@@ -151,8 +145,8 @@ struct window_output {
 
 struct toysurface {
 	/*
-	 * Prepare the surface for drawing. Makes sure there is a surface
-	 * of the right size available for rendering, and returns it.
+	 * Prepare the surface for drawing. Ensure there is a surface
+	 * of the right size available for rendering, and return it.
 	 * dx,dy are the x,y of wl_surface.attach.
 	 * width,height are the new buffer size.
 	 * If flags has SURFACE_HINT_RESIZE set, the user is
@@ -174,7 +168,7 @@ struct toysurface {
 
 	/*
 	 * Make the toysurface current with the given EGL context.
-	 * Returns 0 on success, and negative of failure.
+	 * Returns 0 on success, and negative on failure.
 	 */
 	int (*acquire)(struct toysurface *base, EGLContext ctx);
 
@@ -288,6 +282,10 @@ struct widget {
 	widget_touch_frame_handler_t touch_frame_handler;
 	widget_touch_cancel_handler_t touch_cancel_handler;
 	widget_axis_handler_t axis_handler;
+	widget_pointer_frame_handler_t pointer_frame_handler;
+	widget_axis_source_handler_t axis_source_handler;
+	widget_axis_stop_handler_t axis_stop_handler;
+	widget_axis_discrete_handler_t axis_discrete_handler;
 	void *user_data;
 	int opaque;
 	int tooltip_count;
@@ -362,6 +360,7 @@ struct input {
 	uint32_t repeat_sym;
 	uint32_t repeat_key;
 	uint32_t repeat_time;
+	int seat_version;
 };
 
 struct output {
@@ -1266,6 +1265,19 @@ static const char *watches[] = {
 	"0426c94ea35c87780ff01dc239897213"
 };
 
+static const char *move_draggings[] = {
+	"dnd-move"
+};
+
+static const char *copy_draggings[] = {
+	"dnd-copy"
+};
+
+static const char *forbidden_draggings[] = {
+	"dnd-none",
+	"dnd-no-drop"
+};
+
 struct cursor_alternatives {
 	const char **names;
 	size_t count;
@@ -1285,6 +1297,9 @@ static const struct cursor_alternatives cursors[] = {
 	{xterms, ARRAY_LENGTH(xterms)},
 	{hand1s, ARRAY_LENGTH(hand1s)},
 	{watches, ARRAY_LENGTH(watches)},
+	{move_draggings, ARRAY_LENGTH(move_draggings)},
+	{copy_draggings, ARRAY_LENGTH(copy_draggings)},
+	{forbidden_draggings, ARRAY_LENGTH(forbidden_draggings)},
 };
 
 static void
@@ -1935,6 +1950,26 @@ widget_set_axis_handler(struct widget *widget,
 	widget->axis_handler = handler;
 }
 
+void
+widget_set_pointer_frame_handler(struct widget *widget,
+				 widget_pointer_frame_handler_t handler)
+{
+	widget->pointer_frame_handler = handler;
+}
+
+void
+widget_set_axis_handlers(struct widget *widget,
+			widget_axis_handler_t axis_handler,
+			widget_axis_source_handler_t axis_source_handler,
+			widget_axis_stop_handler_t axis_stop_handler,
+			widget_axis_discrete_handler_t axis_discrete_handler)
+{
+	widget->axis_handler = axis_handler;
+	widget->axis_source_handler = axis_source_handler;
+	widget->axis_stop_handler = axis_stop_handler;
+	widget->axis_discrete_handler = axis_discrete_handler;
+}
+
 static void
 window_schedule_redraw_task(struct window *window);
 
@@ -2003,7 +2038,7 @@ get_text_extents(struct display *display, struct tooltip *tooltip)
 	cairo_t *cr;
 	cairo_text_extents_t extents;
 
-	/* Use the dummy_surface because tooltip's surface was not
+	/* Use the dummy_surface because the tooltip's surface was not
 	 * created yet, and parent does not have a valid surface
 	 * outside repaint, either.
 	 */
@@ -2128,22 +2163,6 @@ widget_set_tooltip(struct widget *parent, char *entry, float x, float y)
 
 	return 0;
 }
-
-static void
-workspace_manager_state(void *data,
-			struct workspace_manager *workspace_manager,
-			uint32_t current,
-			uint32_t count)
-{
-	struct display *display = data;
-
-	display->workspace = current;
-	display->workspace_count = count;
-}
-
-static const struct workspace_manager_listener workspace_manager_listener = {
-	workspace_manager_state
-};
 
 static void
 frame_resize_handler(struct widget *widget,
@@ -2272,29 +2291,12 @@ static void
 frame_menu_func(void *data, struct input *input, int index)
 {
 	struct window *window = data;
-	struct display *display;
 
 	switch (index) {
 	case 0: /* close */
 		window_close(window);
 		break;
-	case 1: /* move to workspace above */
-		display = window->display;
-		if (display->workspace > 0)
-			workspace_manager_move_surface(
-				display->workspace_manager,
-				window->main_surface->surface,
-				display->workspace - 1);
-		break;
-	case 2: /* move to workspace below */
-		display = window->display;
-		if (display->workspace < display->workspace_count - 1)
-			workspace_manager_move_surface(
-				display->workspace_manager,
-				window->main_surface->surface,
-				display->workspace + 1);
-		break;
-	case 3: /* fullscreen */
+	case 1: /* fullscreen */
 		/* we don't have a way to get out of fullscreen for now */
 		if (window->fullscreen_handler)
 			window->fullscreen_handler(window, window->user_data);
@@ -2311,7 +2313,6 @@ window_show_frame_menu(struct window *window,
 
 	static const char *entries[] = {
 		"Close",
-		"Move to workspace above", "Move to workspace below",
 		"Fullscreen"
 	};
 
@@ -2746,10 +2747,13 @@ pointer_handle_motion(void *data, struct wl_pointer *pointer,
 
 	/* when making the window smaller - e.g. after a unmaximise we might
 	 * still have a pending motion event that the compositor has picked
-	 * based on the old surface dimensions
+	 * based on the old surface dimensions. However, if we have an active
+	 * grab, we expect to see input from outside the window anyway.
 	 */
-	if (sx > window->main_surface->allocation.width ||
-	    sy > window->main_surface->allocation.height)
+	if (!input->grab && (sx < window->main_surface->allocation.x ||
+	    sy < window->main_surface->allocation.y ||
+	    sx > window->main_surface->allocation.width ||
+	    sy > window->main_surface->allocation.height))
 		return;
 
 	if (!(input->grab && input->grab_button)) {
@@ -2816,12 +2820,83 @@ pointer_handle_axis(void *data, struct wl_pointer *pointer,
 					widget->user_data);
 }
 
+static void
+pointer_handle_frame(void *data, struct wl_pointer *pointer)
+{
+	struct input *input = data;
+	struct widget *widget;
+
+	widget = input->focus_widget;
+	if (input->grab)
+		widget = input->grab;
+	if (widget && widget->pointer_frame_handler)
+		(*widget->pointer_frame_handler)(widget,
+						 input,
+						 widget->user_data);
+}
+
+static void
+pointer_handle_axis_source(void *data, struct wl_pointer *pointer,
+			   uint32_t source)
+{
+	struct input *input = data;
+	struct widget *widget;
+
+	widget = input->focus_widget;
+	if (input->grab)
+		widget = input->grab;
+	if (widget && widget->axis_source_handler)
+		(*widget->axis_source_handler)(widget,
+					       input,
+					       source,
+					       widget->user_data);
+}
+
+static void
+pointer_handle_axis_stop(void *data, struct wl_pointer *pointer,
+			 uint32_t time, uint32_t axis)
+{
+	struct input *input = data;
+	struct widget *widget;
+
+	widget = input->focus_widget;
+	if (input->grab)
+		widget = input->grab;
+	if (widget && widget->axis_stop_handler)
+		(*widget->axis_stop_handler)(widget,
+					     input, time,
+					     axis,
+					     widget->user_data);
+}
+
+static void
+pointer_handle_axis_discrete(void *data, struct wl_pointer *pointer,
+			     uint32_t axis, int32_t discrete)
+{
+	struct input *input = data;
+	struct widget *widget;
+
+	widget = input->focus_widget;
+	if (input->grab)
+		widget = input->grab;
+	if (widget && widget->axis_discrete_handler)
+		(*widget->axis_discrete_handler)(widget,
+						 input,
+						 axis,
+						 discrete,
+						 widget->user_data);
+}
+
 static const struct wl_pointer_listener pointer_listener = {
 	pointer_handle_enter,
 	pointer_handle_leave,
 	pointer_handle_motion,
 	pointer_handle_button,
 	pointer_handle_axis,
+	pointer_handle_frame,
+	pointer_handle_axis_source,
+	pointer_handle_axis_stop,
+	pointer_handle_axis_discrete,
 };
 
 static void
@@ -3256,7 +3331,10 @@ seat_handle_capabilities(void *data, struct wl_seat *seat,
 		wl_pointer_add_listener(input->pointer, &pointer_listener,
 					input);
 	} else if (!(caps & WL_SEAT_CAPABILITY_POINTER) && input->pointer) {
-		wl_pointer_destroy(input->pointer);
+		if (input->seat_version >= WL_POINTER_RELEASE_SINCE_VERSION)
+			wl_pointer_release(input->pointer);
+		else
+			wl_pointer_destroy(input->pointer);
 		input->pointer = NULL;
 	}
 
@@ -3266,7 +3344,10 @@ seat_handle_capabilities(void *data, struct wl_seat *seat,
 		wl_keyboard_add_listener(input->keyboard, &keyboard_listener,
 					 input);
 	} else if (!(caps & WL_SEAT_CAPABILITY_KEYBOARD) && input->keyboard) {
-		wl_keyboard_destroy(input->keyboard);
+		if (input->seat_version >= WL_KEYBOARD_RELEASE_SINCE_VERSION)
+			wl_keyboard_release(input->keyboard);
+		else
+			wl_keyboard_destroy(input->keyboard);
 		input->keyboard = NULL;
 	}
 
@@ -3275,7 +3356,10 @@ seat_handle_capabilities(void *data, struct wl_seat *seat,
 		wl_touch_set_user_data(input->touch, input);
 		wl_touch_add_listener(input->touch, &touch_listener, input);
 	} else if (!(caps & WL_SEAT_CAPABILITY_TOUCH) && input->touch) {
-		wl_touch_destroy(input->touch);
+		if (input->seat_version >= WL_TOUCH_RELEASE_SINCE_VERSION)
+			wl_touch_release(input->touch);
+		else
+			wl_touch_destroy(input->touch);
 		input->touch = NULL;
 	}
 }
@@ -3350,6 +3434,8 @@ struct data_offer {
 	int fd;
 	data_func_t func;
 	int32_t x, y;
+	uint32_t dnd_action;
+	uint32_t source_actions;
 	void *user_data;
 };
 
@@ -3363,8 +3449,26 @@ data_offer_offer(void *data, struct wl_data_offer *wl_data_offer, const char *ty
 	*p = strdup(type);
 }
 
+static void
+data_offer_source_actions(void *data, struct wl_data_offer *wl_data_offer, uint32_t source_actions)
+{
+	struct data_offer *offer = data;
+
+	offer->source_actions = source_actions;
+}
+
+static void
+data_offer_action(void *data, struct wl_data_offer *wl_data_offer, uint32_t dnd_action)
+{
+	struct data_offer *offer = data;
+
+	offer->dnd_action = dnd_action;
+}
+
 static const struct wl_data_offer_listener data_offer_listener = {
 	data_offer_offer,
+	data_offer_source_actions,
+	data_offer_action
 };
 
 static void
@@ -3428,6 +3532,14 @@ data_device_enter(void *data, struct wl_data_device *data_device,
 		*p = NULL;
 
 		types_data = input->drag_offer->types.data;
+
+		if (input->display->data_device_manager_version >=
+		    WL_DATA_OFFER_SET_ACTIONS_SINCE_VERSION) {
+			wl_data_offer_set_actions(offer,
+						  WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY |
+						  WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE,
+						  WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE);
+		}
 	} else {
 		input->drag_offer = NULL;
 		types_data = NULL;
@@ -3744,6 +3856,7 @@ offer_io_func(struct task *task, uint32_t events)
 {
 	struct data_offer *offer =
 		container_of(task, struct data_offer, io_task);
+	struct display *display = offer->input->display;
 	unsigned int len;
 	char buffer[4096];
 
@@ -3752,6 +3865,9 @@ offer_io_func(struct task *task, uint32_t events)
 		    offer->x, offer->y, offer->user_data);
 
 	if (len == 0) {
+		if (display->data_device_manager_version >=
+		    WL_DATA_OFFER_FINISH_SINCE_VERSION)
+			wl_data_offer_finish(offer->offer);
 		close(offer->fd);
 		data_offer_destroy(offer);
 	}
@@ -4253,7 +4369,7 @@ surface_redraw(struct surface *surface)
 
 	if (surface->widget->use_cairo &&
 	    !widget_get_cairo_surface(surface->widget)) {
-		DBG_OBJ(surface->surface, "cancelled due buffer failure\n");
+		DBG_OBJ(surface->surface, "cancelled due to buffer failure\n");
 		return -1;
 	}
 
@@ -4500,13 +4616,6 @@ window_set_text_cursor_position(struct window *window, int32_t x, int32_t y)
 				    wl_fixed_from_int(y));
 }
 
-void
-window_damage(struct window *window, int32_t x, int32_t y,
-	      int32_t width, int32_t height)
-{
-	wl_surface_damage(window->main_surface->surface, x, y, width, height);
-}
-
 static void
 surface_enter(void *data,
 	      struct wl_surface *wl_surface, struct wl_output *wl_output)
@@ -4738,7 +4847,7 @@ menu_button_handler(struct widget *widget,
 		/* Either relase after press-drag-release or
 		 * click-motion-click. */
 		menu->func(menu->user_data, input, menu->current);
-		input_ungrab(input);
+		input_ungrab(menu->input);
 		menu_destroy(menu);
 	} else if (state == WL_POINTER_BUTTON_STATE_RELEASED) {
 		menu->release_count++;
@@ -5209,17 +5318,20 @@ fini_xkb(struct input *input)
 }
 
 static void
-display_add_input(struct display *d, uint32_t id)
+display_add_input(struct display *d, uint32_t id, int display_seat_version)
 {
 	struct input *input;
+	int seat_version = MIN(display_seat_version, 5);
 
 	input = xzalloc(sizeof *input);
 	input->display = d;
 	input->seat = wl_registry_bind(d->registry, id, &wl_seat_interface,
-				       MIN(d->seat_version, 4));
+				       seat_version);
 	input->touch_focus = NULL;
 	input->pointer_focus = NULL;
 	input->keyboard_focus = NULL;
+	input->seat_version = seat_version;
+
 	wl_list_init(&input->touch_point_list);
 	wl_list_insert(d->input_list.prev, &input->link);
 
@@ -5269,11 +5381,20 @@ input_destroy(struct input *input)
 		else
 			wl_data_device_destroy(input->data_device);
 	}
-	if (input->display->seat_version >= 3) {
+	if (input->seat_version >= WL_POINTER_RELEASE_SINCE_VERSION) {
+		if (input->touch)
+			wl_touch_release(input->touch);
 		if (input->pointer)
 			wl_pointer_release(input->pointer);
 		if (input->keyboard)
 			wl_keyboard_release(input->keyboard);
+	} else {
+		if (input->touch)
+			wl_touch_destroy(input->touch);
+		if (input->pointer)
+			wl_pointer_destroy(input->pointer);
+		if (input->keyboard)
+			wl_keyboard_destroy(input->keyboard);
 	}
 
 	fini_xkb(input);
@@ -5285,18 +5406,6 @@ input_destroy(struct input *input)
 	close(input->repeat_timer_fd);
 	close(input->cursor_delay_fd);
 	free(input);
-}
-
-static void
-init_workspace_manager(struct display *d, uint32_t id)
-{
-	d->workspace_manager =
-		wl_registry_bind(d->registry, id,
-				 &workspace_manager_interface, 1);
-	if (d->workspace_manager != NULL)
-		workspace_manager_add_listener(d->workspace_manager,
-					       &workspace_manager_listener,
-					       d);
 }
 
 static void
@@ -5347,13 +5456,12 @@ registry_handle_global(void *data, struct wl_registry *registry, uint32_t id,
 	} else if (strcmp(interface, "wl_output") == 0) {
 		display_add_output(d, id);
 	} else if (strcmp(interface, "wl_seat") == 0) {
-		d->seat_version = version;
-		display_add_input(d, id);
+		display_add_input(d, id, version);
 	} else if (strcmp(interface, "wl_shm") == 0) {
 		d->shm = wl_registry_bind(registry, id, &wl_shm_interface, 1);
 		wl_shm_add_listener(d->shm, &shm_listener, d);
 	} else if (strcmp(interface, "wl_data_device_manager") == 0) {
-		d->data_device_manager_version = MIN(version, 2);
+		d->data_device_manager_version = MIN(version, 3);
 		d->data_device_manager =
 			wl_registry_bind(registry, id,
 					 &wl_data_device_manager_interface,
@@ -5367,8 +5475,6 @@ registry_handle_global(void *data, struct wl_registry *registry, uint32_t id,
 		d->text_cursor_position =
 			wl_registry_bind(registry, id,
 					 &text_cursor_position_interface, 1);
-	} else if (strcmp(interface, "workspace_manager") == 0) {
-		init_workspace_manager(d, id);
 	} else if (strcmp(interface, "wl_subcompositor") == 0) {
 		d->subcompositor =
 			wl_registry_bind(registry, id,
@@ -5599,9 +5705,6 @@ display_create(int *argc, char *argv[])
 	wl_list_init(&d->input_list);
 	wl_list_init(&d->output_list);
 	wl_list_init(&d->global_list);
-
-	d->workspace = 0;
-	d->workspace_count = 1;
 
 	d->registry = wl_display_get_registry(d->display);
 	wl_registry_add_listener(d->registry, &registry_listener, d);
@@ -5871,6 +5974,12 @@ void
 display_exit(struct display *display)
 {
 	display->running = 0;
+}
+
+int
+display_get_data_device_manager_version(struct display *display)
+{
+	return display->data_device_manager_version;
 }
 
 void

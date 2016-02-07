@@ -393,7 +393,9 @@ clock_name(clockid_t clk_id)
 		[CLOCK_MONOTONIC_RAW] =		"CLOCK_MONOTONIC_RAW",
 		[CLOCK_REALTIME_COARSE] =	"CLOCK_REALTIME_COARSE",
 		[CLOCK_MONOTONIC_COARSE] =	"CLOCK_MONOTONIC_COARSE",
+#ifdef CLOCK_BOOTTIME
 		[CLOCK_BOOTTIME] =		"CLOCK_BOOTTIME",
+#endif
 	};
 
 	if (clk_id < 0 || (unsigned)clk_id >= ARRAY_LENGTH(names))
@@ -497,6 +499,7 @@ weston_compositor_init_config(struct weston_compositor *ec,
 	struct xkb_rule_names xkb_names;
 	struct weston_config_section *s;
 	int repaint_msec;
+	int vt_switching;
 
 	s = weston_config_get_section(config, "keyboard", NULL, NULL);
 	weston_config_section_get_string(s, "keymap_rules",
@@ -517,6 +520,10 @@ weston_compositor_init_config(struct weston_compositor *ec,
 				      &ec->kb_repeat_rate, 40);
 	weston_config_section_get_int(s, "repeat-delay",
 				      &ec->kb_repeat_delay, 400);
+
+	weston_config_section_get_bool(s, "vt-switching",
+				       &vt_switching, true);
+	ec->vt_switching = vt_switching;
 
 	s = weston_config_get_section(config, "core", NULL, NULL);
 	weston_config_section_get_int(s, "repaint-window", &repaint_msec,
@@ -629,6 +636,47 @@ handle_exit(struct weston_compositor *c)
 	wl_display_terminate(c->wl_display);
 }
 
+/* Temporary function to be removed when all backends are converted. */
+static int
+load_backend_old(struct weston_compositor *compositor, const char *backend,
+		 int *argc, char **argv, struct weston_config *wc)
+{
+	int (*backend_init)(struct weston_compositor *c,
+			    int *argc, char *argv[],
+			    struct weston_config *config,
+			    struct weston_backend_config *config_base);
+
+	backend_init = weston_load_module(backend, "backend_init");
+	if (!backend_init)
+		return -1;
+
+	return backend_init(compositor, argc, argv, wc, NULL);
+}
+
+static int
+load_backend(struct weston_compositor *compositor, const char *backend,
+	     int *argc, char **argv, struct weston_config *config)
+{
+#if 0
+	if (strstr(backend, "drm-backend.so"))
+		return load_drm_backend(compositor, backend, argc, argv, config);
+	else if (strstr(backend, "wayland-backend.so"))
+		return load_wayland_backend(compositor, backend, argc, argv, config);
+	else if (strstr(backend, "x11-backend.so"))
+		return load_x11_backend(compositor, backend, argc, argv, config);
+	else if (strstr(backend, "fbdev-backend.so"))
+		return load_fbdev_backend(compositor, backend, argc, argv, config);
+	else if (strstr(backend, "headless-backend.so"))
+		return load_headless_backend(compositor, backend, argc, argv, config);
+	else if (strstr(backend, "rpi-backend.so"))
+		return load_rpi_backend(compositor, backend, argc, argv, config);
+	else if (strstr(backend, "rdp-backend.so"))
+		return load_rdp_backend(compositor, backend, argc, argv, config);
+#endif
+
+	return load_backend_old(compositor, backend, argc, argv, config);
+}
+
 int main(int argc, char *argv[])
 {
 	int ret = EXIT_FAILURE;
@@ -636,9 +684,6 @@ int main(int argc, char *argv[])
 	struct weston_compositor *ec;
 	struct wl_event_source *signals[4];
 	struct wl_event_loop *loop;
-	int (*backend_init)(struct weston_compositor *c,
-			    int *argc, char *argv[],
-			    struct weston_config *config);
 	int i, fd;
 	char *backend = NULL;
 	char *shell = NULL;
@@ -723,23 +768,19 @@ int main(int argc, char *argv[])
 			backend = weston_choose_default_backend();
 	}
 
-	backend_init = weston_load_module(backend, "backend_init");
-	if (!backend_init)
-		goto out_signals;
-
 	ec = weston_compositor_create(display, NULL);
 	if (ec == NULL) {
 		weston_log("fatal: failed to create compositor\n");
-		goto out_signals;
+		goto out;
 	}
 
 	ec->config = config;
 	if (weston_compositor_init_config(ec, config) < 0)
-		goto out_signals;
+		goto out;
 
-	if (backend_init(ec, &argc, argv, config) < 0) {
+	if (load_backend(ec, backend, &argc, argv, config) < 0) {
 		weston_log("fatal: failed to create compositor backend\n");
-		goto out_signals;
+		goto out;
 	}
 
 	catch_signals();

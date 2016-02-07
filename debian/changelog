@@ -1,3 +1,13 @@
+weston (1.9.92-1) experimental; urgency=medium
+
+  * New upstream release
+  * d/control: build depend on wayland-protocols
+  * d/watch: update https url
+  * d/p/0001-Add-suport-for-new-libsystemd.patch: drop
+    - merged upstream.
+
+ -- Héctor Orón Martínez <zumbi@debian.org>  Sun, 07 Feb 2016 21:22:32 +0100
+
 weston (1.9.0-3) unstable; urgency=medium
 
   * debian/patches/0001-Add-suport-for-new-libsystemd.patch:

@@ -130,6 +130,20 @@ struct window_delete_data {
 
 struct gl_renderer_interface *gl_renderer;
 
+static xcb_screen_t *
+x11_compositor_get_default_screen(struct x11_backend *b)
+{
+	xcb_screen_iterator_t iter;
+	int i, screen_nbr = XDefaultScreen(b->dpy);
+
+	iter = xcb_setup_roots_iterator(xcb_get_setup(b->conn));
+	for (i = 0; iter.rem; xcb_screen_next(&iter), i++)
+		if (i == screen_nbr)
+			return iter.data;
+
+	return xcb_setup_roots_iterator(xcb_get_setup(b->conn)).data;
+}
+
 static struct xkb_keymap *
 x11_backend_get_keymap(struct x11_backend *b)
 {
@@ -668,8 +682,8 @@ static int
 x11_output_init_shm(struct x11_backend *b, struct x11_output *output,
 	int width, int height)
 {
-	xcb_screen_iterator_t iter;
 	xcb_visualtype_t *visual_type;
+	xcb_screen_t *screen;
 	xcb_format_iterator_t fmt;
 	xcb_void_cookie_t cookie;
 	xcb_generic_error_t *err;
@@ -686,8 +700,8 @@ x11_output_init_shm(struct x11_backend *b, struct x11_output *output,
 		return -1;
 	}
 
-	iter = xcb_setup_roots_iterator(xcb_get_setup(b->conn));
-	visual_type = find_visual_by_id(iter.data, iter.data->root_visual);
+	screen = x11_compositor_get_default_screen(b);
+	visual_type = find_visual_by_id(screen, screen->root_visual);
 	if (!visual_type) {
 		weston_log("Failed to lookup visual for root window\n");
 		errno = ENOENT;
@@ -698,7 +712,7 @@ x11_output_init_shm(struct x11_backend *b, struct x11_output *output,
 		visual_type->red_mask,
 		visual_type->green_mask,
 		visual_type->blue_mask);
-	output->depth = get_depth_of_visual(iter.data, iter.data->root_visual);
+	output->depth = get_depth_of_visual(screen, screen->root_visual);
 	weston_log("Visual depth is %d\n", output->depth);
 
 	for (fmt = xcb_setup_pixmap_formats_iterator(xcb_get_setup(b->conn));
@@ -774,7 +788,7 @@ x11_backend_create_output(struct x11_backend *b, int x, int y,
 	static const char class[] = "weston-1\0Weston Compositor";
 	char title[32];
 	struct x11_output *output;
-	xcb_screen_iterator_t iter;
+	xcb_screen_t *screen;
 	struct wm_normal_hints normal_hints;
 	struct wl_event_loop *loop;
 	int output_width, output_height, width_mm, height_mm;
@@ -825,16 +839,16 @@ x11_backend_create_output(struct x11_backend *b, int x, int y,
 
 	values[1] = b->null_cursor;
 	output->window = xcb_generate_id(b->conn);
-	iter = xcb_setup_roots_iterator(xcb_get_setup(b->conn));
+	screen = x11_compositor_get_default_screen(b);
 	xcb_create_window(b->conn,
 			  XCB_COPY_FROM_PARENT,
 			  output->window,
-			  iter.data->root,
+			  screen->root,
 			  0, 0,
 			  output_width, output_height,
 			  0,
 			  XCB_WINDOW_CLASS_INPUT_OUTPUT,
-			  iter.data->root_visual,
+			  screen->root_visual,
 			  mask, values);
 
 	if (fullscreen) {
@@ -1033,6 +1047,7 @@ x11_backend_deliver_button_event(struct x11_backend *b,
 		(xcb_button_press_event_t *) event;
 	uint32_t button;
 	struct x11_output *output;
+	struct weston_pointer_axis_event weston_event;
 
 	output = x11_backend_find_output(b, button_event->event);
 	if (!output)
@@ -1068,32 +1083,52 @@ x11_backend_deliver_button_event(struct x11_backend *b,
 	case 4:
 		/* Axis are measured in pixels, but the xcb events are discrete
 		 * steps. Therefore move the axis by some pixels every step. */
-		if (state)
+		if (state) {
+			weston_event.value = -DEFAULT_AXIS_STEP_DISTANCE;
+			weston_event.discrete = -1;
+			weston_event.has_discrete = true;
+			weston_event.axis =
+				WL_POINTER_AXIS_VERTICAL_SCROLL;
 			notify_axis(&b->core_seat,
 				    weston_compositor_get_time(),
-				    WL_POINTER_AXIS_VERTICAL_SCROLL,
-				    -DEFAULT_AXIS_STEP_DISTANCE);
+				    &weston_event);
+		}
 		return;
 	case 5:
-		if (state)
+		if (state) {
+			weston_event.value = DEFAULT_AXIS_STEP_DISTANCE;
+			weston_event.discrete = 1;
+			weston_event.has_discrete = true;
+			weston_event.axis =
+				WL_POINTER_AXIS_VERTICAL_SCROLL;
 			notify_axis(&b->core_seat,
 				    weston_compositor_get_time(),
-				    WL_POINTER_AXIS_VERTICAL_SCROLL,
-				    DEFAULT_AXIS_STEP_DISTANCE);
+				    &weston_event);
+		}
 		return;
 	case 6:
-		if (state)
+		if (state) {
+			weston_event.value = -DEFAULT_AXIS_STEP_DISTANCE;
+			weston_event.discrete = -1;
+			weston_event.has_discrete = true;
+			weston_event.axis =
+				WL_POINTER_AXIS_HORIZONTAL_SCROLL;
 			notify_axis(&b->core_seat,
 				    weston_compositor_get_time(),
-				    WL_POINTER_AXIS_HORIZONTAL_SCROLL,
-				    -DEFAULT_AXIS_STEP_DISTANCE);
+				    &weston_event);
+		}
 		return;
 	case 7:
-		if (state)
+		if (state) {
+			weston_event.value = DEFAULT_AXIS_STEP_DISTANCE;
+			weston_event.discrete = 1;
+			weston_event.has_discrete = true;
+			weston_event.axis =
+				WL_POINTER_AXIS_HORIZONTAL_SCROLL;
 			notify_axis(&b->core_seat,
 				    weston_compositor_get_time(),
-				    WL_POINTER_AXIS_HORIZONTAL_SCROLL,
-				    DEFAULT_AXIS_STEP_DISTANCE);
+				    &weston_event);
+		}
 		return;
 	default:
 		button = button_event->detail + BTN_SIDE - 8;
@@ -1104,6 +1139,7 @@ x11_backend_deliver_button_event(struct x11_backend *b,
 		      weston_compositor_get_time(), button,
 		      state ? WL_POINTER_BUTTON_STATE_PRESSED :
 			      WL_POINTER_BUTTON_STATE_RELEASED);
+	notify_pointer_frame(&b->core_seat);
 }
 
 static void
@@ -1112,6 +1148,7 @@ x11_backend_deliver_motion_event(struct x11_backend *b,
 {
 	struct x11_output *output;
 	wl_fixed_t x, y;
+	struct weston_pointer_motion_event motion_event = { 0 };
 	xcb_motion_notify_event_t *motion_notify =
 			(xcb_motion_notify_event_t *) event;
 
@@ -1126,8 +1163,15 @@ x11_backend_deliver_motion_event(struct x11_backend *b,
 					   wl_fixed_from_int(motion_notify->event_y),
 					   &x, &y);
 
+	motion_event = (struct weston_pointer_motion_event) {
+		.mask = WESTON_POINTER_MOTION_REL,
+		.dx = wl_fixed_to_double(x - b->prev_x),
+		.dy = wl_fixed_to_double(y - b->prev_y)
+	};
+
 	notify_motion(&b->core_seat, weston_compositor_get_time(),
-		      x - b->prev_x, y - b->prev_y);
+		      &motion_event);
+	notify_pointer_frame(&b->core_seat);
 
 	b->prev_x = x;
 	b->prev_y = y;
@@ -1529,7 +1573,6 @@ x11_backend_create(struct weston_compositor *compositor,
 	struct x11_backend *b;
 	struct x11_output *output;
 	struct weston_config_section *section;
-	xcb_screen_iterator_t s;
 	int i, x = 0, output_count = 0;
 	int width, height, scale, count;
 	const char *section_name;
@@ -1556,8 +1599,7 @@ x11_backend_create(struct weston_compositor *compositor,
 	if (xcb_connection_has_error(b->conn))
 		goto err_xdisplay;
 
-	s = xcb_setup_roots_iterator(xcb_get_setup(b->conn));
-	b->screen = s.data;
+	b->screen = x11_compositor_get_default_screen(b);
 	wl_array_init(&b->keys);
 
 	x11_backend_get_resources(b);
@@ -1689,7 +1731,8 @@ err_free:
 
 WL_EXPORT int
 backend_init(struct weston_compositor *compositor, int *argc, char *argv[],
-	     struct weston_config *config)
+	     struct weston_config *config,
+	     struct weston_backend_config *config_base)
 {
 	struct x11_backend *b;
 	int fullscreen = 0;

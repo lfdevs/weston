@@ -258,11 +258,15 @@ sets the effect used with the focused and unfocused windows. Can be
 .B none.
 By default, no animation is used.
 .TP 7
+.BI "allow-zap=" true
+whether the shell should quit when the Ctrl-Alt-Backspace key combination is
+pressed
+.TP 7
 .BI "binding-modifier=" ctrl
 sets the modifier key used for common bindings (string), such as moving
 surfaces, resizing, rotating, switching, closing and setting the transparency
 for windows, controlling the backlight and zooming the desktop. Possible values:
-ctrl, alt, super (default)
+none, ctrl, alt, super (default)
 .TP 7
 .BI "num-workspaces=" 6
 defines the number of workspaces (unsigned integer). The user can switch
@@ -453,6 +457,12 @@ integer)
 .BI "numlock-on=" "false"
 sets the default state of the numlock on weston startup for the backends which
 support it.
+.RE
+.RE
+.TP 7
+.BI "vt-switching=" "true"
+Whether to allow the use of Ctrl+Alt+Fn key combinations to switch away from
+the compositor's virtual console.
 .RE
 .RE
 .SH "TERMINAL SECTION"

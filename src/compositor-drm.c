@@ -308,7 +308,7 @@ drm_fb_create_dumb(struct drm_backend *b, unsigned width, unsigned height)
 	if (ret)
 		goto err_add_fb;
 
-	fb->map = mmap(0, fb->size, PROT_WRITE,
+	fb->map = mmap(NULL, fb->size, PROT_WRITE,
 		       MAP_SHARED, b->drm.fd, map_arg.offset);
 	if (fb->map == MAP_FAILED)
 		goto err_add_fb;
@@ -983,14 +983,14 @@ drm_output_prepare_overlay_view(struct drm_output *output,
 		 * support a mix of gbm_bos and drmfbs.
 		 */
 		struct gbm_import_fd_data gbm_dmabuf = {
-			.fd     = dmabuf->dmabuf_fd[0],
-			.width  = dmabuf->width,
-			.height = dmabuf->height,
-			.stride = dmabuf->stride[0],
-			.format = dmabuf->format
+			.fd     = dmabuf->attributes.fd[0],
+			.width  = dmabuf->attributes.width,
+			.height = dmabuf->attributes.height,
+			.stride = dmabuf->attributes.stride[0],
+			.format = dmabuf->attributes.format
 		};
 
-		if (dmabuf->n_planes != 1 || dmabuf->offset[0] != 0)
+		if (dmabuf->attributes.n_planes != 1 || dmabuf->attributes.offset[0] != 0)
 			return NULL;
 
 		bo = gbm_bo_import(b->gbm, GBM_BO_IMPORT_FD, &gbm_dmabuf,
@@ -1095,6 +1095,9 @@ drm_output_prepare_cursor_view(struct drm_output *output,
 		(struct drm_backend *)output->base.compositor->backend;
 	struct weston_buffer_viewport *viewport = &ev->surface->buffer_viewport;
 
+	if (ev->transform.enabled &&
+	    (ev->transform.matrix.type > WESTON_MATRIX_TRANSFORM_TRANSLATE))
+		return NULL;
 	if (b->gbm == NULL)
 		return NULL;
 	if (output->base.transform != WL_OUTPUT_TRANSFORM_NORMAL)
@@ -1166,7 +1169,7 @@ drm_output_set_cursor(struct drm_output *output)
 		(struct drm_backend *) output->base.compositor->backend;
 	EGLint handle;
 	struct gbm_bo *bo;
-	int x, y;
+	float x, y;
 
 	output->cursor_view = NULL;
 	if (ev == NULL) {
@@ -1192,8 +1195,14 @@ drm_output_set_cursor(struct drm_output *output)
 		}
 	}
 
-	x = (ev->geometry.x - output->base.x) * output->base.current_scale;
-	y = (ev->geometry.y - output->base.y) * output->base.current_scale;
+	weston_view_to_global_float(ev, 0, 0, &x, &y);
+
+	/* From global to output space, output transform is guaranteed to be
+	 * NORMAL by drm_output_prepare_cursor_view().
+	 */
+	x = (x - output->base.x) * output->base.current_scale;
+	y = (y - output->base.y) * output->base.current_scale;
+
 	if (output->cursor_plane.x != x || output->cursor_plane.y != y) {
 		if (drmModeMoveCursor(b->drm.fd, output->crtc_id, x, y)) {
 			weston_log("failed to move cursor: %m\n");
@@ -1245,7 +1254,8 @@ drm_assign_planes(struct weston_output *output_base)
 		if (b->use_pixman ||
 		    (es->buffer_ref.buffer &&
 		    (!wl_shm_buffer_get(es->buffer_ref.buffer->resource) ||
-		     (ev->surface->width <= 64 && ev->surface->height <= 64))))
+		     (ev->surface->width <= b->cursor_width &&
+		      ev->surface->height <= b->cursor_height))))
 			es->keep_buffer = true;
 		else
 			es->keep_buffer = false;
@@ -1558,14 +1568,15 @@ fallback_format_for(uint32_t format)
 static int
 drm_backend_create_gl_renderer(struct drm_backend *b)
 {
-	EGLint format[2] = {
+	EGLint format[3] = {
 		b->format,
 		fallback_format_for(b->format),
+		0,
 	};
-	int n_formats = 1;
+	int n_formats = 2;
 
 	if (format[1])
-		n_formats = 2;
+		n_formats = 3;
 	if (gl_renderer->create(b->compositor,
 				EGL_PLATFORM_GBM_KHR,
 				(void *)b->gbm,
@@ -1932,6 +1943,9 @@ edid_parse_string(const uint8_t *data, char text[])
 	/* this is always 12 bytes, but we can't guarantee it's null
 	 * terminated or not junk. */
 	strncpy(text, (const char *) data, 12);
+
+	/* guarantee our new string is null-terminated */
+	text[12] = '\0';
 
 	/* remove insane chars */
 	for (i = 0; text[i] != '\0'; i++) {
@@ -2801,15 +2815,6 @@ session_notify(struct wl_listener *listener, void *data)
 	};
 }
 
-static void
-switch_vt_binding(struct weston_keyboard *keyboard, uint32_t time,
-		  uint32_t key, void *data)
-{
-	struct weston_compositor *compositor = data;
-
-	weston_launcher_activate_vt(compositor->launcher, key - KEY_F1 + 1);
-}
-
 /*
  * Find primary GPU
  * Some systems may have multiple DRM devices attached to a single seat. This
@@ -3062,7 +3067,6 @@ drm_backend_create(struct weston_compositor *compositor,
 	struct udev_device *drm_device;
 	struct wl_event_loop *loop;
 	const char *path;
-	uint32_t key;
 
 	weston_log("initializing drm backend\n");
 
@@ -3138,10 +3142,7 @@ drm_backend_create(struct weston_compositor *compositor,
 
 	b->prev_state = WESTON_COMPOSITOR_ACTIVE;
 
-	for (key = KEY_F1; key < KEY_F9; key++)
-		weston_compositor_add_key_binding(compositor, key,
-						  MODIFIER_CTRL | MODIFIER_ALT,
-						  switch_vt_binding, compositor);
+	weston_setup_vt_switch_bindings(compositor);
 
 	wl_list_init(&b->sprite_list);
 	create_sprites(b);
@@ -3234,7 +3235,8 @@ err_base:
 
 WL_EXPORT int
 backend_init(struct weston_compositor *compositor, int *argc, char *argv[],
-	     struct weston_config *config)
+	     struct weston_config *config,
+	     struct weston_backend_config *config_base)
 {
 	struct drm_backend *b;
 	struct drm_parameters param = { 0, };

@@ -136,10 +136,15 @@ pixman_renderer_read_pixels(struct weston_output *output,
 static void
 region_global_to_output(struct weston_output *output, pixman_region32_t *region)
 {
-	pixman_region32_translate(region, -output->x, -output->y);
-	weston_transformed_region(output->width, output->height,
-				  output->transform, output->current_scale,
-				  region, region);
+	if (output->zoom.active) {
+		weston_matrix_transform_region(region, &output->matrix, region);
+	} else {
+		pixman_region32_translate(region, -output->x, -output->y);
+		weston_transformed_region(output->width, output->height,
+					  output->transform,
+					  output->current_scale,
+					  region, region);
+	}
 }
 
 #define D2F(v) pixman_double_to_fixed((double)v)
@@ -470,7 +475,6 @@ static void
 draw_view(struct weston_view *ev, struct weston_output *output,
 	  pixman_region32_t *damage) /* in global coordinates */
 {
-	static int zoom_logged = 0;
 	struct pixman_surface_state *ps = get_surface_state(ev->surface);
 	/* repaint bounding region in global coordinates: */
 	pixman_region32_t repaint;
@@ -486,11 +490,6 @@ draw_view(struct weston_view *ev, struct weston_output *output,
 
 	if (!pixman_region32_not_empty(&repaint))
 		goto out;
-
-	if (output->zoom.active && !zoom_logged) {
-		weston_log("pixman renderer does not support zoom\n");
-		zoom_logged = 1;
-	}
 
 	if (view_transformation_is_translation(ev)) {
 		/* The simple case: The surface regions opaque, non-opaque,
@@ -614,7 +613,7 @@ pixman_renderer_attach(struct weston_surface *es, struct weston_buffer *buffer)
 
 	if (!buffer)
 		return;
-	
+
 	shm_buffer = wl_shm_buffer_get(buffer->resource);
 
 	if (! shm_buffer) {
@@ -735,7 +734,7 @@ pixman_renderer_surface_set_color(struct weston_surface *es,
 	color.green = green * 0xffff;
 	color.blue = blue * 0xffff;
 	color.alpha = alpha * 0xffff;
-	
+
 	if (ps->image) {
 		pixman_image_unref(ps->image);
 		ps->image = NULL;

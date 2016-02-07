@@ -39,6 +39,7 @@ Build-Depends:
  libvpx-dev,
  libsystemd-dev,
  libinput-dev (>= 0.8.0),
+ wayland-protocols,
 Standards-Version: 3.9.6
 Homepage: http://wayland.freedesktop.org/
 Vcs-Git: git://anonscm.debian.org/pkg-xorg/wayland/weston

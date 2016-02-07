@@ -45,6 +45,95 @@ empty_region(pixman_region32_t *region)
 	pixman_region32_init(region);
 }
 
+static struct weston_pointer_client *
+weston_pointer_client_create(struct wl_client *client)
+{
+	struct weston_pointer_client *pointer_client;
+
+	pointer_client = zalloc(sizeof *pointer_client);
+	if (!pointer_client)
+		return NULL;
+
+	pointer_client->client = client;
+	wl_list_init(&pointer_client->pointer_resources);
+
+	return pointer_client;
+}
+
+static void
+weston_pointer_client_destroy(struct weston_pointer_client *pointer_client)
+{
+	free(pointer_client);
+}
+
+static bool
+weston_pointer_client_is_empty(struct weston_pointer_client *pointer_client)
+{
+	return wl_list_empty(&pointer_client->pointer_resources);
+}
+
+static struct weston_pointer_client *
+weston_pointer_get_pointer_client(struct weston_pointer *pointer,
+				  struct wl_client *client)
+{
+	struct weston_pointer_client *pointer_client;
+
+	wl_list_for_each(pointer_client, &pointer->pointer_clients, link) {
+		if (pointer_client->client == client)
+			return pointer_client;
+	}
+
+	return NULL;
+}
+
+static struct weston_pointer_client *
+weston_pointer_ensure_pointer_client(struct weston_pointer *pointer,
+				     struct wl_client *client)
+{
+	struct weston_pointer_client *pointer_client;
+
+	pointer_client = weston_pointer_get_pointer_client(pointer, client);
+	if (pointer_client)
+		return pointer_client;
+
+	pointer_client = weston_pointer_client_create(client);
+	wl_list_insert(&pointer->pointer_clients, &pointer_client->link);
+
+	if (pointer->focus &&
+	    pointer->focus->surface->resource &&
+	    wl_resource_get_client(pointer->focus->surface->resource) == client) {
+		pointer->focus_client = pointer_client;
+	}
+
+	return pointer_client;
+}
+
+static void
+weston_pointer_cleanup_pointer_client(struct weston_pointer *pointer,
+				      struct weston_pointer_client *pointer_client)
+{
+	if (weston_pointer_client_is_empty(pointer_client)) {
+		if (pointer->focus_client == pointer_client)
+			pointer->focus_client = NULL;
+		wl_list_remove(&pointer_client->link);
+		weston_pointer_client_destroy(pointer_client);
+	}
+}
+
+static void
+unbind_pointer_client_resource(struct wl_resource *resource)
+{
+	struct weston_pointer *pointer = wl_resource_get_user_data(resource);
+	struct wl_client *client = wl_resource_get_client(resource);
+	struct weston_pointer_client *pointer_client;
+
+	pointer_client = weston_pointer_get_pointer_client(pointer, client);
+	assert(pointer_client);
+
+	wl_list_remove(wl_resource_get_link(resource));
+	weston_pointer_cleanup_pointer_client(pointer, pointer_client);
+}
+
 static void unbind_resource(struct wl_resource *resource)
 {
 	wl_list_remove(wl_resource_get_link(resource));
@@ -167,22 +256,30 @@ default_grab_pointer_focus(struct weston_pointer_grab *grab)
 
 static void
 default_grab_pointer_motion(struct weston_pointer_grab *grab, uint32_t time,
-			    wl_fixed_t x, wl_fixed_t y)
+			    struct weston_pointer_motion_event *event)
 {
 	struct weston_pointer *pointer = grab->pointer;
 	struct wl_list *resource_list;
 	struct wl_resource *resource;
+	wl_fixed_t x, y;
+	wl_fixed_t old_sx = pointer->sx;
+	wl_fixed_t old_sy = pointer->sy;
 
-	if (pointer->focus)
+	if (pointer->focus) {
+		weston_pointer_motion_to_abs(pointer, event, &x, &y);
 		weston_view_from_global_fixed(pointer->focus, x, y,
 					      &pointer->sx, &pointer->sy);
+	}
 
-	weston_pointer_move(pointer, x, y);
+	weston_pointer_move(pointer, event);
 
-	resource_list = &pointer->focus_resource_list;
-	wl_resource_for_each(resource, resource_list) {
-		wl_pointer_send_motion(resource, time,
-				       pointer->sx, pointer->sy);
+	if (pointer->focus_client &&
+	    (old_sx != pointer->sx || old_sy != pointer->sy)) {
+		resource_list = &pointer->focus_client->pointer_resources;
+		wl_resource_for_each(resource, resource_list) {
+			wl_pointer_send_motion(resource, time,
+					       pointer->sx, pointer->sy);
+		}
 	}
 }
 
@@ -198,10 +295,12 @@ default_grab_pointer_button(struct weston_pointer_grab *grab,
 	enum wl_pointer_button_state state = state_w;
 	struct wl_display *display = compositor->wl_display;
 	wl_fixed_t sx, sy;
-	struct wl_list *resource_list;
+	struct wl_list *resource_list = NULL;
 
-	resource_list = &pointer->focus_resource_list;
-	if (!wl_list_empty(resource_list)) {
+	if (pointer->focus_client)
+		resource_list = &pointer->focus_client->pointer_resources;
+	if (resource_list && !wl_list_empty(resource_list)) {
+		resource_list = &pointer->focus_client->pointer_resources;
 		serial = wl_display_next_serial(display);
 		wl_resource_for_each(resource, resource_list)
 			wl_pointer_send_button(resource,
@@ -221,6 +320,105 @@ default_grab_pointer_button(struct weston_pointer_grab *grab,
 	}
 }
 
+/** Send wl_pointer.axis events to focused resources.
+ *
+ * \param pointer The pointer where the axis events originates from.
+ * \param time The timestamp of the event
+ * \param axis The axis enum value of the event
+ * \param value The axis value of the event
+ *
+ * For every resource that is currently in focus, send a wl_pointer.axis event
+ * with the passed parameters. The focused resources are the wl_pointer
+ * resources of the client which currently has the surface with pointer focus.
+ */
+WL_EXPORT void
+weston_pointer_send_axis(struct weston_pointer *pointer,
+			 uint32_t time,
+			 struct weston_pointer_axis_event *event)
+{
+	struct wl_resource *resource;
+	struct wl_list *resource_list;
+
+	if (!pointer->focus_client)
+		return;
+
+	resource_list = &pointer->focus_client->pointer_resources;
+	wl_resource_for_each(resource, resource_list) {
+		if (event->has_discrete &&
+		    wl_resource_get_version(resource) >=
+		    WL_POINTER_AXIS_DISCRETE_SINCE_VERSION)
+			wl_pointer_send_axis_discrete(resource, event->axis,
+						      event->discrete);
+
+		if (event->value)
+			wl_pointer_send_axis(resource, time,
+					     event->axis, event->value);
+		else if (wl_resource_get_version(resource) >=
+			 WL_POINTER_AXIS_STOP_SINCE_VERSION)
+			wl_pointer_send_axis_stop(resource, time,
+						  event->axis);
+	}
+}
+
+WL_EXPORT void
+weston_pointer_send_axis_source(struct weston_pointer *pointer, uint32_t source)
+{
+	struct wl_resource *resource;
+	struct wl_list *resource_list;
+
+	resource_list = &pointer->focus_client->pointer_resources;
+	wl_resource_for_each(resource, resource_list) {
+		if (wl_resource_get_version(resource) >=
+		    WL_POINTER_AXIS_SOURCE_SINCE_VERSION) {
+			wl_pointer_send_axis_source(resource, source);
+		}
+	}
+}
+
+static void
+pointer_send_frame(struct wl_resource *resource)
+{
+	if (wl_resource_get_version(resource) >=
+	    WL_POINTER_FRAME_SINCE_VERSION) {
+		wl_pointer_send_frame(resource);
+	}
+}
+
+WL_EXPORT void
+weston_pointer_send_frame(struct weston_pointer *pointer)
+{
+	struct wl_resource *resource;
+	struct wl_list *resource_list;
+
+	if (!pointer->focus_client)
+		return;
+
+	resource_list = &pointer->focus_client->pointer_resources;
+	wl_resource_for_each(resource, resource_list)
+		pointer_send_frame(resource);
+}
+
+static void
+default_grab_pointer_axis(struct weston_pointer_grab *grab,
+			  uint32_t time,
+			  struct weston_pointer_axis_event *event)
+{
+	weston_pointer_send_axis(grab->pointer, time, event);
+}
+
+static void
+default_grab_pointer_axis_source(struct weston_pointer_grab *grab,
+				 uint32_t source)
+{
+	weston_pointer_send_axis_source(grab->pointer, source);
+}
+
+static void
+default_grab_pointer_frame(struct weston_pointer_grab *grab)
+{
+	weston_pointer_send_frame(grab->pointer);
+}
+
 static void
 default_grab_pointer_cancel(struct weston_pointer_grab *grab)
 {
@@ -231,6 +429,9 @@ static const struct weston_pointer_grab_interface
 	default_grab_pointer_focus,
 	default_grab_pointer_motion,
 	default_grab_pointer_button,
+	default_grab_pointer_axis,
+	default_grab_pointer_axis_source,
+	default_grab_pointer_frame,
 	default_grab_pointer_cancel,
 };
 
@@ -245,11 +446,14 @@ default_grab_touch_down(struct weston_touch_grab *grab, uint32_t time,
 	struct wl_list *resource_list;
 	wl_fixed_t sx, sy;
 
+	if (!touch->focus)
+		return;
+
 	weston_view_from_global_fixed(touch->focus, x, y, &sx, &sy);
 
 	resource_list = &touch->focus_resource_list;
 
-	if (!wl_list_empty(resource_list) && touch->focus) {
+	if (!wl_list_empty(resource_list)) {
 		serial = wl_display_next_serial(display);
 		wl_resource_for_each(resource, resource_list)
 				wl_touch_send_down(resource, serial, time,
@@ -369,6 +573,31 @@ send_modifiers_to_client_in_list(struct wl_client *client,
 	}
 }
 
+static struct weston_pointer_client *
+find_pointer_client_for_surface(struct weston_pointer *pointer,
+				struct weston_surface *surface)
+{
+	struct wl_client *client;
+
+	if (!surface)
+		return NULL;
+
+	if (!surface->resource)
+		return NULL;
+
+	client = wl_resource_get_client(surface->resource);
+	return weston_pointer_get_pointer_client(pointer, client);
+}
+
+static struct weston_pointer_client *
+find_pointer_client_for_view(struct weston_pointer *pointer, struct weston_view *view)
+{
+	if (!view)
+		return NULL;
+
+	return find_pointer_client_for_surface(pointer, view->surface);
+}
+
 static struct wl_resource *
 find_resource_for_surface(struct wl_list *list, struct weston_surface *surface)
 {
@@ -379,15 +608,6 @@ find_resource_for_surface(struct wl_list *list, struct weston_surface *surface)
 		return NULL;
 
 	return wl_resource_find_for_client(list, wl_resource_get_client(surface->resource));
-}
-
-static struct wl_resource *
-find_resource_for_view(struct wl_list *list, struct weston_view *view)
-{
-	if (!view)
-		return NULL;
-
-	return find_resource_for_surface(list, view->surface);
 }
 
 static void
@@ -475,8 +695,7 @@ weston_pointer_create(struct weston_seat *seat)
 	if (pointer == NULL)
 		return NULL;
 
-	wl_list_init(&pointer->resource_list);
-	wl_list_init(&pointer->focus_resource_list);
+	wl_list_init(&pointer->pointer_clients);
 	weston_pointer_set_default_grab(pointer,
 					seat->compositor->default_pointer_grab);
 	wl_list_init(&pointer->focus_resource_listener.link);
@@ -656,8 +875,10 @@ weston_pointer_set_focus(struct weston_pointer *pointer,
 			 struct weston_view *view,
 			 wl_fixed_t sx, wl_fixed_t sy)
 {
+	struct weston_pointer_client *pointer_client;
 	struct weston_keyboard *kbd = weston_seat_get_keyboard(pointer->seat);
 	struct wl_resource *resource;
+	struct wl_resource *surface_resource;
 	struct wl_display *display = pointer->seat->compositor->wl_display;
 	uint32_t serial;
 	struct wl_list *focus_resource_list;
@@ -669,21 +890,24 @@ weston_pointer_set_focus(struct weston_pointer *pointer,
 	    pointer->sx != sx || pointer->sy != sy)
 		refocus = 1;
 
-	focus_resource_list = &pointer->focus_resource_list;
-
-	if (!wl_list_empty(focus_resource_list) && refocus) {
-		serial = wl_display_next_serial(display);
-		wl_resource_for_each(resource, focus_resource_list) {
-			wl_pointer_send_leave(resource, serial,
-					      pointer->focus->surface->resource);
+	if (pointer->focus_client && refocus) {
+		focus_resource_list = &pointer->focus_client->pointer_resources;
+		if (!wl_list_empty(focus_resource_list)) {
+			serial = wl_display_next_serial(display);
+			surface_resource = pointer->focus->surface->resource;
+			wl_resource_for_each(resource, focus_resource_list) {
+				wl_pointer_send_leave(resource, serial,
+						      surface_resource);
+				pointer_send_frame(resource);
+			}
 		}
 
-		move_resources(&pointer->resource_list, focus_resource_list);
+		pointer->focus_client = NULL;
 	}
 
-	if (find_resource_for_view(&pointer->resource_list, view) && refocus) {
-		struct wl_client *surface_client =
-			wl_resource_get_client(view->surface->resource);
+	pointer_client = find_pointer_client_for_view(pointer, view);
+	if (pointer_client && refocus) {
+		struct wl_client *surface_client = pointer_client->client;
 
 		serial = wl_display_next_serial(display);
 
@@ -693,15 +917,15 @@ weston_pointer_set_focus(struct weston_pointer *pointer,
 							 serial,
 							 kbd);
 
-		move_resources_for_client(focus_resource_list,
-					  &pointer->resource_list,
-					  surface_client);
+		pointer->focus_client = pointer_client;
 
+		focus_resource_list = &pointer->focus_client->pointer_resources;
 		wl_resource_for_each(resource, focus_resource_list) {
 			wl_pointer_send_enter(resource,
 					      serial,
 					      view->surface->resource,
 					      sx, sy);
+			pointer_send_frame(resource);
 		}
 
 		pointer->focus_serial = serial;
@@ -905,9 +1129,9 @@ weston_pointer_clamp(struct weston_pointer *pointer, wl_fixed_t *fx, wl_fixed_t 
 		weston_pointer_clamp_for_output(pointer, prev, fx, fy);
 }
 
-/* Takes absolute values */
-WL_EXPORT void
-weston_pointer_move(struct weston_pointer *pointer, wl_fixed_t x, wl_fixed_t y)
+static void
+weston_pointer_move_to(struct weston_pointer *pointer,
+		       wl_fixed_t x, wl_fixed_t y)
 {
 	int32_t ix, iy;
 
@@ -928,6 +1152,33 @@ weston_pointer_move(struct weston_pointer *pointer, wl_fixed_t x, wl_fixed_t y)
 
 	pointer->grab->interface->focus(pointer->grab);
 	wl_signal_emit(&pointer->motion_signal, pointer);
+}
+
+WL_EXPORT void
+weston_pointer_motion_to_abs(struct weston_pointer *pointer,
+			     struct weston_pointer_motion_event *event,
+			     wl_fixed_t *x, wl_fixed_t *y)
+{
+	if (event->mask & WESTON_POINTER_MOTION_ABS) {
+		*x = wl_fixed_from_double(event->x);
+		*y = wl_fixed_from_double(event->y);
+	} else if (event->mask & WESTON_POINTER_MOTION_REL) {
+		*x = pointer->x + wl_fixed_from_double(event->dx);
+		*y = pointer->y + wl_fixed_from_double(event->dy);
+	} else {
+		assert(!"invalid motion event");
+		*x = *y = 0;
+	}
+}
+
+WL_EXPORT void
+weston_pointer_move(struct weston_pointer *pointer,
+		    struct weston_pointer_motion_event *event)
+{
+	wl_fixed_t x, y;
+
+	weston_pointer_motion_to_abs(pointer, event, &x, &y);
+	weston_pointer_move_to(pointer, x, y);
 }
 
 /** Verify if the pointer is in a valid position and move it if it isn't.
@@ -971,18 +1222,19 @@ weston_pointer_handle_output_destroy(struct wl_listener *listener, void *data)
 	fy = pointer->y;
 
 	weston_pointer_clamp_for_output(pointer, closest, &fx, &fy);
-	weston_pointer_move(pointer, fx, fy);
+	weston_pointer_move_to(pointer, fx, fy);
 }
 
 WL_EXPORT void
 notify_motion(struct weston_seat *seat,
-	      uint32_t time, wl_fixed_t dx, wl_fixed_t dy)
+	      uint32_t time,
+	      struct weston_pointer_motion_event *event)
 {
 	struct weston_compositor *ec = seat->compositor;
 	struct weston_pointer *pointer = weston_seat_get_pointer(seat);
 
 	weston_compositor_wake(ec);
-	pointer->grab->interface->motion(pointer->grab, time, pointer->x + dx, pointer->y + dy);
+	pointer->grab->interface->motion(pointer->grab, time, event);
 }
 
 static void
@@ -1027,9 +1279,17 @@ notify_motion_absolute(struct weston_seat *seat,
 {
 	struct weston_compositor *ec = seat->compositor;
 	struct weston_pointer *pointer = weston_seat_get_pointer(seat);
+	struct weston_pointer_motion_event event = { 0 };
 
 	weston_compositor_wake(ec);
-	pointer->grab->interface->motion(pointer->grab, time, x, y);
+
+	event = (struct weston_pointer_motion_event) {
+		.mask = WESTON_POINTER_MOTION_ABS,
+		.x = wl_fixed_to_double(x),
+		.y = wl_fixed_to_double(y),
+	};
+
+	pointer->grab->interface->motion(pointer->grab, time, &event);
 }
 
 WL_EXPORT void
@@ -1079,27 +1339,41 @@ notify_button(struct weston_seat *seat, uint32_t time, int32_t button,
 }
 
 WL_EXPORT void
-notify_axis(struct weston_seat *seat, uint32_t time, uint32_t axis,
-	    wl_fixed_t value)
+notify_axis(struct weston_seat *seat, uint32_t time,
+	    struct weston_pointer_axis_event *event)
 {
 	struct weston_compositor *compositor = seat->compositor;
 	struct weston_pointer *pointer = weston_seat_get_pointer(seat);
-	struct wl_resource *resource;
-	struct wl_list *resource_list;
 
 	weston_compositor_wake(compositor);
 
-	if (!value)
-		return;
-
 	if (weston_compositor_run_axis_binding(compositor, pointer,
-					       time, axis, value))
+					       time, event))
 		return;
 
-	resource_list = &pointer->focus_resource_list;
-	wl_resource_for_each(resource, resource_list)
-		wl_pointer_send_axis(resource, time, axis,
-				     value);
+	pointer->grab->interface->axis(pointer->grab, time, event);
+}
+
+WL_EXPORT void
+notify_axis_source(struct weston_seat *seat, uint32_t source)
+{
+	struct weston_compositor *compositor = seat->compositor;
+	struct weston_pointer *pointer = weston_seat_get_pointer(seat);
+
+	weston_compositor_wake(compositor);
+
+	pointer->grab->interface->axis_source(pointer->grab, source);
+}
+
+WL_EXPORT void
+notify_pointer_frame(struct weston_seat *seat)
+{
+	struct weston_compositor *compositor = seat->compositor;
+	struct weston_pointer *pointer = weston_seat_get_pointer(seat);
+
+	weston_compositor_wake(compositor);
+
+	pointer->grab->interface->frame(pointer->grab);
 }
 
 WL_EXPORT int
@@ -1413,7 +1687,7 @@ notify_pointer_focus(struct weston_seat *seat, struct weston_output *output,
 	struct weston_pointer *pointer = weston_seat_get_pointer(seat);
 
 	if (output) {
-		weston_pointer_move(pointer, x, y);
+		weston_pointer_move_to(pointer, x, y);
 	} else {
 		/* FIXME: We should call weston_pointer_set_focus(seat,
 		 * NULL) here, but somehow that breaks re-entry... */
@@ -1571,7 +1845,7 @@ notify_touch(struct weston_seat *seat, uint32_t time, int touch_id,
 			/* Unexpected condition: We have non-initial touch but
 			 * there is no focused surface.
 			 */
-			weston_log("touch event received with %d points down"
+			weston_log("touch event received with %d points down "
 				   "but no surface focused\n", touch->num_tp);
 			return;
 		}
@@ -1623,6 +1897,15 @@ notify_touch_frame(struct weston_seat *seat)
 	struct weston_touch_grab *grab = touch->grab;
 
 	grab->interface->frame(grab);
+}
+
+WL_EXPORT void
+notify_touch_cancel(struct weston_seat *seat)
+{
+	struct weston_touch *touch = weston_seat_get_touch(seat);
+	struct weston_touch_grab *grab = touch->grab;
+
+	grab->interface->cancel(grab);
 }
 
 static int
@@ -1749,6 +2032,7 @@ seat_get_pointer(struct wl_client *client, struct wl_resource *resource,
 	 */
 	struct weston_pointer *pointer = seat->pointer_state;
 	struct wl_resource *cr;
+	struct weston_pointer_client *pointer_client;
 
 	if (!pointer)
 		return;
@@ -1760,12 +2044,16 @@ seat_get_pointer(struct wl_client *client, struct wl_resource *resource,
 		return;
 	}
 
-	/* May be moved to focused list later by either
-	 * weston_pointer_set_focus or directly if this client is already
-	 * focused */
-	wl_list_insert(&pointer->resource_list, wl_resource_get_link(cr));
+	pointer_client = weston_pointer_ensure_pointer_client(pointer, client);
+	if (!pointer_client) {
+		wl_client_post_no_memory(client);
+		return;
+	}
+
+	wl_list_insert(&pointer_client->pointer_resources,
+		       wl_resource_get_link(cr));
 	wl_resource_set_implementation(cr, &pointer_interface, pointer,
-				       unbind_resource);
+				       unbind_pointer_client_resource);
 
 	if (pointer->focus && pointer->focus->surface->resource &&
 	    wl_resource_get_client(pointer->focus->surface->resource) == client) {
@@ -1776,13 +2064,11 @@ seat_get_pointer(struct wl_client *client, struct wl_resource *resource,
 					      pointer->y,
 					      &sx, &sy);
 
-		wl_list_remove(wl_resource_get_link(cr));
-		wl_list_insert(&pointer->focus_resource_list,
-			       wl_resource_get_link(cr));
 		wl_pointer_send_enter(cr,
 				      pointer->focus_serial,
 				      pointer->focus->surface->resource,
 				      sx, sy);
+		pointer_send_frame(cr);
 	}
 }
 
@@ -1934,10 +2220,10 @@ seat_get_touch(struct wl_client *client, struct wl_resource *resource,
 
 	if (touch->focus &&
 	    wl_resource_get_client(touch->focus->surface->resource) == client) {
-		wl_list_insert(&touch->resource_list,
+		wl_list_insert(&touch->focus_resource_list,
 			       wl_resource_get_link(cr));
 	} else {
-		wl_list_insert(&touch->focus_resource_list,
+		wl_list_insert(&touch->resource_list,
 			       wl_resource_get_link(cr));
 	}
 	wl_resource_set_implementation(cr, &touch_interface,
@@ -1958,7 +2244,7 @@ bind_seat(struct wl_client *client, void *data, uint32_t version, uint32_t id)
 	enum wl_seat_capability caps = 0;
 
 	resource = wl_resource_create(client,
-				      &wl_seat_interface, MIN(version, 4), id);
+				      &wl_seat_interface, version, id);
 	wl_list_insert(&seat->base_resource_list, wl_resource_get_link(resource));
 	wl_resource_set_implementation(resource, &seat_interface, data,
 				       unbind_resource);
@@ -2361,7 +2647,7 @@ weston_seat_init(struct weston_seat *seat, struct weston_compositor *ec,
 	wl_signal_init(&seat->destroy_signal);
 	wl_signal_init(&seat->updated_caps_signal);
 
-	seat->global = wl_global_create(ec->wl_display, &wl_seat_interface, 4,
+	seat->global = wl_global_create(ec->wl_display, &wl_seat_interface, 5,
 					seat, bind_seat);
 
 	seat->compositor = ec;

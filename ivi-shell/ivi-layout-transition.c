@@ -27,6 +27,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdbool.h>
 
 #include "ivi-layout-export.h"
 #include "ivi-layout-private.h"
@@ -181,7 +182,7 @@ ivi_layout_transition_set_create(struct weston_compositor *ec)
 	return transitions;
 }
 
-static void
+static bool
 layout_transition_register(struct ivi_layout_transition *trans)
 {
 	struct ivi_layout *layout = get_instance();
@@ -190,11 +191,12 @@ layout_transition_register(struct ivi_layout_transition *trans)
 	node = malloc(sizeof(*node));
 	if (node == NULL) {
 		weston_log("%s: memory allocation fails\n", __func__);
-		return;
+		return false;
 	}
 
 	node->transition = trans;
 	wl_list_insert(&layout->pending_transition_list, &node->link);
+	return true;
 }
 
 static void
@@ -251,6 +253,7 @@ create_layout_transition(void)
 
 	transition->is_done = 0;
 
+	transition->is_transition_func = NULL;
 	transition->private_data = NULL;
 	transition->user_data = NULL;
 
@@ -340,6 +343,7 @@ create_move_resize_view_transition(
 	data = malloc(sizeof(*data));
 	if (data == NULL) {
 		weston_log("%s: memory allocation fails\n", __func__);
+		free(transition);
 		return NULL;
 	}
 
@@ -414,7 +418,9 @@ ivi_layout_transition_move_resize_view(struct ivi_layout_surface *surface,
 		transition_move_resize_view_destroy,
 		duration);
 
-	layout_transition_register(transition);
+	if(transition && layout_transition_register(transition))
+		return;
+	layout_transition_destroy(transition);
 }
 
 /* fade transition */
@@ -468,6 +474,7 @@ create_fade_view_transition(
 	data = malloc(sizeof(*data));
 	if (data == NULL) {
 		weston_log("%s: memory allocation fails\n", __func__);
+		free(transition);
 		return NULL;
 	}
 
@@ -507,7 +514,9 @@ create_visibility_transition(struct ivi_layout_surface *surface,
 		destroy_func,
 		duration);
 
-	layout_transition_register(transition);
+	if (transition && layout_transition_register(transition))
+		return;
+	layout_transition_destroy(transition);
 }
 
 static void
@@ -697,6 +706,7 @@ create_move_layer_transition(
 	data = malloc(sizeof(*data));
 	if (data == NULL) {
 		weston_log("%s: memory allocation fails\n", __func__);
+		free(transition);
 		return NULL;
 	}
 
@@ -739,9 +749,10 @@ ivi_layout_transition_move_layer(struct ivi_layout_layer *layer,
 		NULL, NULL,
 		duration);
 
-	layout_transition_register(transition);
+	if (transition && layout_transition_register(transition))
+		return;
 
-	return;
+	free(transition);
 }
 
 void
@@ -843,6 +854,7 @@ ivi_layout_transition_fade_layer(
 	data = malloc(sizeof(*data));
 	if (data == NULL) {
 		weston_log("%s: memory allocation fails\n", __func__);
+		free(transition);
 		return;
 	}
 
@@ -864,7 +876,8 @@ ivi_layout_transition_fade_layer(
 	data->end_alpha = end_alpha;
 	data->destroy_func = destroy_func;
 
-	layout_transition_register(transition);
+	if (!layout_transition_register(transition))
+		layout_transition_destroy(transition);
 
 	return;
 }

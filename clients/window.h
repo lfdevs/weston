@@ -175,6 +175,9 @@ display_run(struct display *d);
 void
 display_exit(struct display *d);
 
+int
+display_get_data_device_manager_version(struct display *d);
+
 enum cursor_type {
 	CURSOR_BOTTOM_LEFT,
 	CURSOR_BOTTOM_RIGHT,
@@ -189,6 +192,9 @@ enum cursor_type {
 	CURSOR_IBEAM,
 	CURSOR_HAND1,
 	CURSOR_WATCH,
+	CURSOR_DND_MOVE,
+	CURSOR_DND_COPY,
+	CURSOR_DND_FORBIDDEN,
 
 	CURSOR_BLANK
 };
@@ -267,6 +273,27 @@ typedef void (*widget_axis_handler_t)(struct widget *widget,
 				      wl_fixed_t value,
 				      void *data);
 
+typedef void (*widget_pointer_frame_handler_t)(struct widget *widget,
+					       struct input *input,
+					       void *data);
+
+typedef void (*widget_axis_source_handler_t)(struct widget *widget,
+					     struct input *input,
+					     uint32_t source,
+					     void *data);
+
+typedef void (*widget_axis_stop_handler_t)(struct widget *widget,
+					   struct input *input,
+					   uint32_t time,
+					   uint32_t axis,
+					   void *data);
+
+typedef void (*widget_axis_discrete_handler_t)(struct widget *widget,
+					       struct input *input,
+					       uint32_t axis,
+					       int32_t discrete,
+					       void *data);
+
 struct window *
 window_create(struct display *display);
 struct window *
@@ -342,10 +369,6 @@ void
 window_schedule_redraw(struct window *window);
 void
 window_schedule_resize(struct window *window, int width, int height);
-
-void
-window_damage(struct window *window, int32_t x, int32_t y,
-	      int32_t width, int32_t height);
 
 cairo_surface_t *
 window_get_surface(struct window *window);
@@ -519,6 +542,16 @@ widget_set_touch_cancel_handler(struct widget *widget,
 void
 widget_set_axis_handler(struct widget *widget,
 			widget_axis_handler_t handler);
+void
+widget_set_pointer_frame_handler(struct widget *widget,
+				 widget_pointer_frame_handler_t handler);
+void
+widget_set_axis_handlers(struct widget *widget,
+			widget_axis_handler_t axis_handler,
+			widget_axis_source_handler_t axis_source_handler,
+			widget_axis_stop_handler_t axis_stop_handler,
+			widget_axis_discrete_handler_t axis_discrete_handler);
+
 void
 widget_schedule_redraw(struct widget *widget);
 void

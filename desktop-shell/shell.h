@@ -28,7 +28,7 @@
 
 #include "compositor.h"
 
-#include "desktop-shell-server-protocol.h"
+#include "weston-desktop-shell-server-protocol.h"
 
 enum animation_type {
 	ANIMATION_NONE,
@@ -121,6 +121,7 @@ struct desktop_shell {
 
 	struct wl_listener idle_listener;
 	struct wl_listener wake_listener;
+	struct wl_listener transform_listener;
 	struct wl_listener destroy_listener;
 	struct wl_listener show_input_panel_listener;
 	struct wl_listener hide_input_panel_listener;
@@ -188,6 +189,7 @@ struct desktop_shell {
 
 	struct exposay exposay;
 
+	bool allow_zap;
 	uint32_t binding_modifier;
 	uint32_t exposay_modifier;
 	enum animation_type win_animation_type;
@@ -202,7 +204,7 @@ struct desktop_shell {
 	struct wl_listener output_move_listener;
 	struct wl_list output_list;
 
-	enum desktop_shell_panel_position panel_position;
+	enum weston_desktop_shell_panel_position panel_position;
 
 	char *client;
 

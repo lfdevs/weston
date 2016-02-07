@@ -348,12 +348,12 @@ exposay_focus(struct weston_pointer_grab *grab)
 
 static void
 exposay_motion(struct weston_pointer_grab *grab, uint32_t time,
-	       wl_fixed_t x, wl_fixed_t y)
+	       struct weston_pointer_motion_event *event)
 {
 	struct desktop_shell *shell =
 		container_of(grab, struct desktop_shell, exposay.grab_ptr);
 
-	weston_pointer_move(grab->pointer, x, y);
+	weston_pointer_move(grab->pointer, event);
 
 	exposay_pick(shell,
 	             wl_fixed_to_int(grab->pointer->x),
@@ -386,6 +386,22 @@ exposay_button(struct weston_pointer_grab *grab, uint32_t time, uint32_t button,
 }
 
 static void
+exposay_axis(struct weston_pointer_grab *grab,
+	     uint32_t time, struct weston_pointer_axis_event *event)
+{
+}
+
+static void
+exposay_axis_source(struct weston_pointer_grab *grab, uint32_t source)
+{
+}
+
+static void
+exposay_frame(struct weston_pointer_grab *grab)
+{
+}
+
+static void
 exposay_pointer_grab_cancel(struct weston_pointer_grab *grab)
 {
 	struct desktop_shell *shell =
@@ -398,6 +414,9 @@ static const struct weston_pointer_grab_interface exposay_ptr_grab = {
 	exposay_focus,
 	exposay_motion,
 	exposay_button,
+	exposay_axis,
+	exposay_axis_source,
+	exposay_frame,
 	exposay_pointer_grab_cancel,
 };
 

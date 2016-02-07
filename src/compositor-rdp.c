@@ -70,7 +70,7 @@
 #include "pixman-renderer.h"
 
 #define MAX_FREERDP_FDS 32
-#define DEFAULT_AXIS_STEP_DISTANCE wl_fixed_from_int(10)
+#define DEFAULT_AXIS_STEP_DISTANCE 10
 #define RDP_MODE_FREQ 60 * 1000
 
 struct rdp_backend_config {
@@ -717,7 +717,6 @@ struct rdp_to_xkb_keyboard_layout rdp_keyboards[] = {
 	{KBD_NORWEGIAN, "no", 0},
 	{KBD_POLISH_PROGRAMMERS, "pl", 0},
 	{KBD_POLISH_214, "pl", "qwertz"},
-	// {KBD_PORTUGUESE_BRAZILIAN_ABN0416, 0},
 	{KBD_ROMANIAN, "ro", 0},
 	{KBD_RUSSIAN, "ru", 0},
 	{KBD_RUSSIAN_TYPEWRITER, "ru", "typewriter"},
@@ -943,10 +942,11 @@ static BOOL xf_peer_post_connect(freerdp_peer *client)
 static FREERDP_CB_RET_TYPE
 xf_mouseEvent(rdpInput *input, UINT16 flags, UINT16 x, UINT16 y)
 {
-	wl_fixed_t wl_x, wl_y, axis;
+	wl_fixed_t wl_x, wl_y;
 	RdpPeerContext *peerContext = (RdpPeerContext *)input->context;
 	struct rdp_output *output;
 	uint32_t button = 0;
+	bool need_frame = false;
 
 	if (flags & PTR_FLAGS_MOVE) {
 		output = peerContext->rdpBackend->output;
@@ -955,6 +955,7 @@ xf_mouseEvent(rdpInput *input, UINT16 flags, UINT16 x, UINT16 y)
 			wl_y = wl_fixed_from_int((int)y);
 			notify_motion_absolute(&peerContext->item.seat, weston_compositor_get_time(),
 					wl_x, wl_y);
+			need_frame = true;
 		}
 	}
 
@@ -969,23 +970,35 @@ xf_mouseEvent(rdpInput *input, UINT16 flags, UINT16 x, UINT16 y)
 		notify_button(&peerContext->item.seat, weston_compositor_get_time(), button,
 			(flags & PTR_FLAGS_DOWN) ? WL_POINTER_BUTTON_STATE_PRESSED : WL_POINTER_BUTTON_STATE_RELEASED
 		);
+		need_frame = true;
 	}
 
 	if (flags & PTR_FLAGS_WHEEL) {
+		struct weston_pointer_axis_event weston_event;
+		double value;
+
 		/* DEFAULT_AXIS_STEP_DISTANCE is stolen from compositor-x11.c
 		 * The RDP specs says the lower bits of flags contains the "the number of rotation
 		 * units the mouse wheel was rotated".
 		 *
-		 * http://blogs.msdn.com/b/oldnewthing/archive/2013/01/23/10387366.aspx explains the 120 value
+		 * https://blogs.msdn.microsoft.com/oldnewthing/20130123-00/?p=5473 explains the 120 value
 		 */
-		axis = (DEFAULT_AXIS_STEP_DISTANCE * (flags & 0xff)) / 120;
+		value = (flags & 0xff) / 120.0;
 		if (flags & PTR_FLAGS_WHEEL_NEGATIVE)
-			axis = -axis;
+			value = -value;
+
+		weston_event.axis = WL_POINTER_AXIS_VERTICAL_SCROLL;
+		weston_event.value = wl_fixed_from_double(DEFAULT_AXIS_STEP_DISTANCE * value);
+		weston_event.discrete = (int)value;
+		weston_event.has_discrete = true;
 
 		notify_axis(&peerContext->item.seat, weston_compositor_get_time(),
-					    WL_POINTER_AXIS_VERTICAL_SCROLL,
-					    axis);
+			    &weston_event);
+		need_frame = true;
 	}
+
+	if (need_frame)
+		notify_pointer_frame(&peerContext->item.seat);
 
 	FREERDP_CB_RETURN(TRUE);
 }
@@ -1241,7 +1254,7 @@ rdp_backend_create(struct weston_compositor *compositor,
 		/* get the socket from RDP_FD var */
 		fd_str = getenv("RDP_FD");
 		if (!fd_str) {
-			weston_log("RDP_FD env variable not set");
+			weston_log("RDP_FD env variable not set\n");
 			goto err_output;
 		}
 
@@ -1269,7 +1282,8 @@ err_free_strings:
 
 WL_EXPORT int
 backend_init(struct weston_compositor *compositor, int *argc, char *argv[],
-	     struct weston_config *wconfig)
+	     struct weston_config *wconfig,
+	     struct weston_backend_config *config_base)
 {
 	struct rdp_backend *b;
 	struct rdp_backend_config config;

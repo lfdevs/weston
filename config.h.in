@@ -154,6 +154,9 @@
 /* Define to 1 if you have the ANSI C header files. */
 #undef STDC_HEADERS
 
+/* Build the systemd sd_notify support */
+#undef SYSTEMD_NOTIFY_SUPPORT
+
 /* Use the GLESv2 GL cairo backend */
 #undef USE_CAIRO_GLESV2
 

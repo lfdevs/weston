@@ -46,8 +46,9 @@
 #include "shared/image-loader.h"
 #include "shared/os-compatibility.h"
 #include "shared/cairo-util.h"
-#include "fullscreen-shell-client-protocol.h"
+#include "fullscreen-shell-unstable-v1-client-protocol.h"
 #include "presentation_timing-server-protocol.h"
+#include "linux-dmabuf.h"
 
 #define WINDOW_TITLE "Weston Compositor"
 
@@ -60,7 +61,7 @@ struct wayland_backend {
 		struct wl_registry *registry;
 		struct wl_compositor *compositor;
 		struct wl_shell *shell;
-		struct _wl_fullscreen_shell *fshell;
+		struct zwp_fullscreen_shell_v1 *fshell;
 		struct wl_shm *shm;
 
 		struct wl_list output_list;
@@ -176,9 +177,16 @@ struct wayland_input {
 	enum weston_key_state_update keyboard_state_update;
 	uint32_t key_serial;
 	uint32_t enter_serial;
-	int focus;
+	uint32_t touch_points;
+	bool touch_active;
+	bool has_focus;
+	int seat_version;
+
 	struct wayland_output *output;
+	struct wayland_output *touch_focus;
 	struct wayland_output *keyboard_focus;
+
+	struct weston_pointer_axis_event vert, horiz;
 };
 
 struct gl_renderer_interface *gl_renderer;
@@ -811,9 +819,9 @@ wayland_output_set_fullscreen(struct wayland_output *output,
 		wl_shell_surface_set_fullscreen(output->parent.shell_surface,
 						method, framerate, target);
 	} else if (b->parent.fshell) {
-		_wl_fullscreen_shell_present_surface(b->parent.fshell,
-						     output->parent.surface,
-						     method, target);
+		zwp_fullscreen_shell_v1_present_surface(b->parent.fshell,
+							output->parent.surface,
+							method, target);
 	}
 }
 
@@ -849,7 +857,7 @@ enum mode_status {
 
 static void
 mode_feedback_successful(void *data,
-			 struct _wl_fullscreen_shell_mode_feedback *fb)
+			 struct zwp_fullscreen_shell_mode_feedback_v1 *fb)
 {
 	enum mode_status *value = data;
 
@@ -859,7 +867,7 @@ mode_feedback_successful(void *data,
 }
 
 static void
-mode_feedback_failed(void *data, struct _wl_fullscreen_shell_mode_feedback *fb)
+mode_feedback_failed(void *data, struct zwp_fullscreen_shell_mode_feedback_v1 *fb)
 {
 	enum mode_status *value = data;
 
@@ -869,7 +877,7 @@ mode_feedback_failed(void *data, struct _wl_fullscreen_shell_mode_feedback *fb)
 }
 
 static void
-mode_feedback_cancelled(void *data, struct _wl_fullscreen_shell_mode_feedback *fb)
+mode_feedback_cancelled(void *data, struct zwp_fullscreen_shell_mode_feedback_v1 *fb)
 {
 	enum mode_status *value = data;
 
@@ -878,7 +886,7 @@ mode_feedback_cancelled(void *data, struct _wl_fullscreen_shell_mode_feedback *f
 	*value = MODE_STATUS_CANCEL;
 }
 
-struct _wl_fullscreen_shell_mode_feedback_listener mode_feedback_listener = {
+struct zwp_fullscreen_shell_mode_feedback_v1_listener mode_feedback_listener = {
 	mode_feedback_successful,
 	mode_feedback_failed,
 	mode_feedback_cancelled,
@@ -892,7 +900,7 @@ wayland_output_switch_mode(struct weston_output *output_base,
 	struct wayland_backend *b;
 	struct wl_surface *old_surface;
 	struct weston_mode *old_mode;
-	struct _wl_fullscreen_shell_mode_feedback *mode_feedback;
+	struct zwp_fullscreen_shell_mode_feedback_v1 *mode_feedback;
 	enum mode_status mode_status;
 	int ret = 0;
 
@@ -929,13 +937,13 @@ wayland_output_switch_mode(struct weston_output *output_base,
 	wayland_output_resize_surface(output);
 
 	mode_feedback =
-		_wl_fullscreen_shell_present_surface_for_mode(b->parent.fshell,
-							      output->parent.surface,
-							      output->parent.output,
-							      mode->refresh);
-	_wl_fullscreen_shell_mode_feedback_add_listener(mode_feedback,
-							&mode_feedback_listener,
-							&mode_status);
+		zwp_fullscreen_shell_v1_present_surface_for_mode(b->parent.fshell,
+								 output->parent.surface,
+								 output->parent.output,
+								 mode->refresh);
+	zwp_fullscreen_shell_mode_feedback_v1_add_listener(mode_feedback,
+							   &mode_feedback_listener,
+							   &mode_status);
 
 	/* This should kick-start things again */
 	output->parent.draw_initial_frame = 1;
@@ -945,7 +953,7 @@ wayland_output_switch_mode(struct weston_output *output_base,
 	while (mode_status == MODE_STATUS_UNKNOWN && ret >= 0)
 		ret = wl_display_dispatch(b->parent.wl_display);
 
-	_wl_fullscreen_shell_mode_feedback_destroy(mode_feedback);
+	zwp_fullscreen_shell_mode_feedback_v1_destroy(mode_feedback);
 
 	if (mode_status == MODE_STATUS_FAIL) {
 		output->base.current_mode = old_mode;
@@ -1157,7 +1165,7 @@ wayland_output_create_for_parent_output(struct wayland_backend *b,
 		mode = container_of(poutput->mode_list.next,
 				    struct weston_mode, link);
 	} else {
-		weston_log("No valid modes found.  Skipping output");
+		weston_log("No valid modes found.  Skipping output\n");
 		return NULL;
 	}
 
@@ -1192,15 +1200,15 @@ wayland_output_create_for_parent_output(struct wayland_backend *b,
 						WL_SHELL_SURFACE_FULLSCREEN_METHOD_DRIVER,
 						mode->refresh, poutput->global);
 	} else if (b->parent.fshell) {
-		_wl_fullscreen_shell_present_surface(b->parent.fshell,
-						     output->parent.surface,
-						     _WL_FULLSCREEN_SHELL_PRESENT_METHOD_CENTER,
-						     poutput->global);
-		_wl_fullscreen_shell_mode_feedback_destroy(
-			_wl_fullscreen_shell_present_surface_for_mode(b->parent.fshell,
-								      output->parent.surface,
-								      poutput->global,
-								      mode->refresh));
+		zwp_fullscreen_shell_v1_present_surface(b->parent.fshell,
+							output->parent.surface,
+							ZWP_FULLSCREEN_SHELL_V1_PRESENT_METHOD_CENTER,
+							poutput->global);
+		zwp_fullscreen_shell_mode_feedback_v1_destroy(
+			zwp_fullscreen_shell_v1_present_surface_for_mode(b->parent.fshell,
+									 output->parent.surface,
+									 poutput->global,
+									 mode->refresh));
 	}
 
 	return output;
@@ -1295,12 +1303,12 @@ input_handle_pointer_enter(void *data, struct wl_pointer *pointer,
 	weston_output_transform_coordinate(&input->output->base, x, y, &x, &y);
 
 	if (location == THEME_LOCATION_CLIENT_AREA) {
-		input->focus = 1;
+		input->has_focus = true;
 		notify_pointer_focus(&input->base, &input->output->base, x, y);
 		wl_pointer_set_cursor(input->parent.pointer,
 				      input->enter_serial, NULL, 0, 0);
 	} else {
-		input->focus = 0;
+		input->has_focus = false;
 		notify_pointer_focus(&input->base, NULL, 0, 0);
 		input_set_cursor(input);
 	}
@@ -1324,7 +1332,7 @@ input_handle_pointer_leave(void *data, struct wl_pointer *pointer,
 
 	notify_pointer_focus(&input->base, NULL, 0, 0);
 	input->output = NULL;
-	input->focus = 0;
+	input->has_focus = false;
 }
 
 static void
@@ -1334,6 +1342,7 @@ input_handle_motion(void *data, struct wl_pointer *pointer,
 	struct wayland_input *input = data;
 	int32_t fx, fy;
 	enum theme_location location;
+	bool want_frame = false;
 
 	if (!input->output)
 		return;
@@ -1354,19 +1363,27 @@ input_handle_motion(void *data, struct wl_pointer *pointer,
 
 	weston_output_transform_coordinate(&input->output->base, x, y, &x, &y);
 
-	if (input->focus && location != THEME_LOCATION_CLIENT_AREA) {
+	if (input->has_focus && location != THEME_LOCATION_CLIENT_AREA) {
 		input_set_cursor(input);
 		notify_pointer_focus(&input->base, NULL, 0, 0);
-		input->focus = 0;
-	} else if (!input->focus && location == THEME_LOCATION_CLIENT_AREA) {
+		input->has_focus = false;
+		want_frame = true;
+	} else if (!input->has_focus &&
+		   location == THEME_LOCATION_CLIENT_AREA) {
 		wl_pointer_set_cursor(input->parent.pointer,
 				      input->enter_serial, NULL, 0, 0);
 		notify_pointer_focus(&input->base, &input->output->base, x, y);
-		input->focus = 1;
+		input->has_focus = true;
+		want_frame = true;
 	}
 
-	if (location == THEME_LOCATION_CLIENT_AREA)
+	if (location == THEME_LOCATION_CLIENT_AREA) {
 		notify_motion_absolute(&input->base, time, x, y);
+		want_frame = true;
+	}
+
+	if (want_frame && input->seat_version < WL_POINTER_FRAME_SINCE_VERSION)
+		notify_pointer_frame(&input->base);
 }
 
 static void
@@ -1415,8 +1432,11 @@ input_handle_button(void *data, struct wl_pointer *pointer,
 		location = THEME_LOCATION_CLIENT_AREA;
 	}
 
-	if (location == THEME_LOCATION_CLIENT_AREA)
+	if (location == THEME_LOCATION_CLIENT_AREA) {
 		notify_button(&input->base, time, button, state);
+		if (input->seat_version < WL_POINTER_FRAME_SINCE_VERSION)
+			notify_pointer_frame(&input->base);
+	}
 }
 
 static void
@@ -1424,8 +1444,72 @@ input_handle_axis(void *data, struct wl_pointer *pointer,
 		  uint32_t time, uint32_t axis, wl_fixed_t value)
 {
 	struct wayland_input *input = data;
+	struct weston_pointer_axis_event weston_event;
 
-	notify_axis(&input->base, time, axis, value);
+	weston_event.axis = axis;
+	weston_event.value = value;
+
+	if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL &&
+	    input->vert.has_discrete) {
+		weston_event.has_discrete = true;
+		weston_event.discrete = input->vert.discrete;
+		input->vert.has_discrete = false;
+	} else if (axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL &&
+		   input->horiz.has_discrete) {
+		weston_event.has_discrete = true;
+		weston_event.discrete = input->horiz.discrete;
+		input->horiz.has_discrete = false;
+	}
+
+	notify_axis(&input->base, time, &weston_event);
+
+	if (input->seat_version < WL_POINTER_FRAME_SINCE_VERSION)
+		notify_pointer_frame(&input->base);
+}
+
+static void
+input_handle_frame(void *data, struct wl_pointer *pointer)
+{
+	struct wayland_input *input = data;
+
+	notify_pointer_frame(&input->base);
+}
+
+static void
+input_handle_axis_source(void *data, struct wl_pointer *pointer,
+			 uint32_t source)
+{
+	struct wayland_input *input = data;
+
+	notify_axis_source(&input->base, source);
+}
+
+static void
+input_handle_axis_stop(void *data, struct wl_pointer *pointer,
+		       uint32_t time, uint32_t axis)
+{
+	struct wayland_input *input = data;
+	struct weston_pointer_axis_event weston_event;
+
+	weston_event.axis = axis;
+	weston_event.value = 0;
+
+	notify_axis(&input->base, time, &weston_event);
+}
+
+static void
+input_handle_axis_discrete(void *data, struct wl_pointer *pointer,
+			   uint32_t axis, int32_t discrete)
+{
+	struct wayland_input *input = data;
+
+	if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL) {
+		input->vert.has_discrete = true;
+		input->vert.discrete = discrete;
+	} else if (axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL) {
+		input->horiz.has_discrete = true;
+		input->horiz.discrete = discrete;
+	}
 }
 
 static const struct wl_pointer_listener pointer_listener = {
@@ -1434,6 +1518,10 @@ static const struct wl_pointer_listener pointer_listener = {
 	input_handle_motion,
 	input_handle_button,
 	input_handle_axis,
+	input_handle_frame,
+	input_handle_axis_source,
+	input_handle_axis_stop,
+	input_handle_axis_discrete,
 };
 
 static void
@@ -1615,6 +1703,148 @@ static const struct wl_keyboard_listener keyboard_listener = {
 };
 
 static void
+input_handle_touch_down(void *data, struct wl_touch *wl_touch,
+			uint32_t serial, uint32_t time,
+			struct wl_surface *surface, int32_t id, wl_fixed_t x,
+			wl_fixed_t y)
+{
+	struct wayland_input *input = data;
+	struct wayland_output *output;
+	enum theme_location location;
+	bool first_touch;
+	int32_t fx, fy;
+
+	first_touch = (input->touch_points == 0);
+	input->touch_points++;
+
+	input->touch_focus = wl_surface_get_user_data(surface);
+	output = input->touch_focus;
+	if (!first_touch && !input->touch_active)
+		return;
+
+	if (output->frame) {
+		location = frame_touch_down(output->frame, input, id,
+					    wl_fixed_to_int(x),
+					    wl_fixed_to_int(y));
+
+		frame_interior(output->frame, &fx, &fy, NULL, NULL);
+		x -= wl_fixed_from_int(fx);
+		y -= wl_fixed_from_int(fy);
+
+		if (frame_status(output->frame) & FRAME_STATUS_REPAINT)
+			weston_output_schedule_repaint(&output->base);
+
+		if (first_touch && (frame_status(output->frame) & FRAME_STATUS_MOVE)) {
+			input->touch_points--;
+			wl_shell_surface_move(output->parent.shell_surface,
+					      input->parent.seat, serial);
+			frame_status_clear(output->frame,
+					   FRAME_STATUS_MOVE);
+			return;
+		}
+
+		if (first_touch && location != THEME_LOCATION_CLIENT_AREA)
+			return;
+	}
+
+	weston_output_transform_coordinate(&output->base, x, y, &x, &y);
+
+	notify_touch(&input->base, time, id, x, y, WL_TOUCH_DOWN);
+	input->touch_active = true;
+}
+
+static void
+input_handle_touch_up(void *data, struct wl_touch *wl_touch,
+		      uint32_t serial, uint32_t time, int32_t id)
+{
+	struct wayland_input *input = data;
+	struct wayland_output *output = input->touch_focus;
+	bool active = input->touch_active;
+
+	input->touch_points--;
+	if (input->touch_points == 0) {
+		input->touch_focus = NULL;
+		input->touch_active = false;
+	}
+
+	if (!output)
+		return;
+
+	if (output->frame) {
+		frame_touch_up(output->frame, input, id);
+
+		if (frame_status(output->frame) & FRAME_STATUS_CLOSE) {
+			wayland_output_destroy(&output->base);
+			input->touch_focus = NULL;
+			input->keyboard_focus = NULL;
+			if (wl_list_empty(&input->backend->compositor->output_list))
+				weston_compositor_exit(input->backend->compositor);
+
+			return;
+		}
+		if (frame_status(output->frame) & FRAME_STATUS_REPAINT)
+			weston_output_schedule_repaint(&output->base);
+	}
+
+	if (active)
+		notify_touch(&input->base, time, id, 0, 0, WL_TOUCH_UP);
+}
+
+static void
+input_handle_touch_motion(void *data, struct wl_touch *wl_touch,
+                        uint32_t time, int32_t id, wl_fixed_t x,
+                        wl_fixed_t y)
+{
+	struct wayland_input *input = data;
+	struct wayland_output *output = input->touch_focus;
+	int32_t fx, fy;
+
+	if (!output || !input->touch_active)
+		return;
+
+	if (output->frame) {
+		frame_interior(output->frame, &fx, &fy, NULL, NULL);
+		x -= wl_fixed_from_int(fx);
+		y -= wl_fixed_from_int(fy);
+	}
+
+	weston_output_transform_coordinate(&output->base, x, y, &x, &y);
+
+	notify_touch(&input->base, time, id, x, y, WL_TOUCH_MOTION);
+}
+
+static void
+input_handle_touch_frame(void *data, struct wl_touch *wl_touch)
+{
+	struct wayland_input *input = data;
+
+	if (!input->touch_focus || !input->touch_active)
+		return;
+
+	notify_touch_frame(&input->base);
+}
+
+static void
+input_handle_touch_cancel(void *data, struct wl_touch *wl_touch)
+{
+	struct wayland_input *input = data;
+
+	if (!input->touch_focus || !input->touch_active)
+		return;
+
+	notify_touch_cancel(&input->base);
+}
+
+static const struct wl_touch_listener touch_listener = {
+	input_handle_touch_down,
+	input_handle_touch_up,
+	input_handle_touch_motion,
+	input_handle_touch_frame,
+	input_handle_touch_cancel,
+};
+
+
+static void
 input_handle_capabilities(void *data, struct wl_seat *seat,
 		          enum wl_seat_capability caps)
 {
@@ -1627,8 +1857,12 @@ input_handle_capabilities(void *data, struct wl_seat *seat,
 					&pointer_listener, input);
 		weston_seat_init_pointer(&input->base);
 	} else if (!(caps & WL_SEAT_CAPABILITY_POINTER) && input->parent.pointer) {
-		wl_pointer_destroy(input->parent.pointer);
+		if (input->seat_version >= WL_POINTER_RELEASE_SINCE_VERSION)
+			wl_pointer_release(input->parent.pointer);
+		else
+			wl_pointer_destroy(input->parent.pointer);
 		input->parent.pointer = NULL;
+		weston_seat_release_pointer(&input->base);
 	}
 
 	if ((caps & WL_SEAT_CAPABILITY_KEYBOARD) && !input->parent.keyboard) {
@@ -1637,8 +1871,27 @@ input_handle_capabilities(void *data, struct wl_seat *seat,
 		wl_keyboard_add_listener(input->parent.keyboard,
 					 &keyboard_listener, input);
 	} else if (!(caps & WL_SEAT_CAPABILITY_KEYBOARD) && input->parent.keyboard) {
-		wl_keyboard_destroy(input->parent.keyboard);
+		if (input->seat_version >= WL_KEYBOARD_RELEASE_SINCE_VERSION)
+			wl_keyboard_release(input->parent.keyboard);
+		else
+			wl_keyboard_destroy(input->parent.keyboard);
 		input->parent.keyboard = NULL;
+		weston_seat_release_keyboard(&input->base);
+	}
+
+	if ((caps & WL_SEAT_CAPABILITY_TOUCH) && !input->parent.touch) {
+		input->parent.touch = wl_seat_get_touch(seat);
+		wl_touch_set_user_data(input->parent.touch, input);
+		wl_touch_add_listener(input->parent.touch,
+				      &touch_listener, input);
+		weston_seat_init_touch(&input->base);
+	} else if (!(caps & WL_SEAT_CAPABILITY_TOUCH) && input->parent.touch) {
+		if (input->seat_version >= WL_TOUCH_RELEASE_SINCE_VERSION)
+			wl_touch_release(input->parent.touch);
+		else
+			wl_touch_destroy(input->parent.touch);
+		input->parent.touch = NULL;
+		weston_seat_release_touch(&input->base);
 	}
 }
 
@@ -1654,9 +1907,10 @@ static const struct wl_seat_listener seat_listener = {
 };
 
 static void
-display_add_seat(struct wayland_backend *b, uint32_t id, uint32_t version)
+display_add_seat(struct wayland_backend *b, uint32_t id, uint32_t available_version)
 {
 	struct wayland_input *input;
+	uint32_t version = MIN(available_version, 4);
 
 	input = zalloc(sizeof *input);
 	if (input == NULL)
@@ -1665,7 +1919,8 @@ display_add_seat(struct wayland_backend *b, uint32_t id, uint32_t version)
 	weston_seat_init(&input->base, b->compositor, "default");
 	input->backend = b;
 	input->parent.seat = wl_registry_bind(b->parent.registry, id,
-					      &wl_seat_interface, MIN(version, 4));
+					      &wl_seat_interface, version);
+	input->seat_version = version;
 	wl_list_insert(b->input_list.prev, &input->link);
 
 	wl_seat_add_listener(input->parent.seat, &seat_listener, input);
@@ -1673,6 +1928,9 @@ display_add_seat(struct wayland_backend *b, uint32_t id, uint32_t version)
 
 	input->parent.cursor.surface =
 		wl_compositor_create_surface(b->parent.compositor);
+
+	input->vert.axis = WL_POINTER_AXIS_VERTICAL_SCROLL;
+	input->horiz.axis = WL_POINTER_AXIS_HORIZONTAL_SCROLL;
 }
 
 static void
@@ -1816,10 +2074,10 @@ registry_handle_global(void *data, struct wl_registry *registry, uint32_t name,
 		b->parent.shell =
 			wl_registry_bind(registry, name,
 					 &wl_shell_interface, 1);
-	} else if (strcmp(interface, "_wl_fullscreen_shell") == 0) {
+	} else if (strcmp(interface, "zwp_fullscreen_shell_v1") == 0) {
 		b->parent.fshell =
 			wl_registry_bind(registry, name,
-					 &_wl_fullscreen_shell_interface, 1);
+					 &zwp_fullscreen_shell_v1_interface, 1);
 	} else if (strcmp(interface, "wl_seat") == 0) {
 		display_add_seat(b, name, version);
 	} else if (strcmp(interface, "wl_output") == 0) {
@@ -2022,6 +2280,12 @@ wayland_backend_create(struct weston_compositor *compositor, int use_pixman,
 
 	wl_event_source_check(b->parent.wl_source);
 
+	if (compositor->renderer->import_dmabuf) {
+		if (linux_dmabuf_setup(compositor) < 0)
+			weston_log("Error: initializing dmabuf "
+			           "support failed.\n");
+	}
+
 	compositor->backend = &b->base;
 	return b;
 err_display:
@@ -2049,7 +2313,8 @@ wayland_backend_destroy(struct wayland_backend *b)
 
 WL_EXPORT int
 backend_init(struct weston_compositor *compositor, int *argc, char *argv[],
-	     struct weston_config *config)
+	     struct weston_config *config,
+	     struct weston_backend_config *config_base)
 {
 	struct wayland_backend *b;
 	struct wayland_output *output;

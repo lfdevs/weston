@@ -65,7 +65,7 @@ weston_LDFLAGS = -export-dynamic
 weston_CPPFLAGS = $(AM_CPPFLAGS) -DIN_WESTON
 weston_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS) $(LIBUNWIND_CFLAGS)
 weston_LDADD = $(COMPOSITOR_LIBS) $(LIBUNWIND_LIBS) \
-	$(DLOPEN_LIBS) -lm libshared.la
+	$(DLOPEN_LIBS) -lm -lrt libshared.la
 
 weston_SOURCES =					\
 	src/git-version.h				\
@@ -97,23 +97,36 @@ weston_SOURCES =					\
 	shared/platform.h				\
 	src/weston-egl-ext.h
 
+if SYSTEMD_NOTIFY_SUPPORT
+module_LTLIBRARIES += systemd-notify.la
+systemd_notify_la_LDFLAGS = -module -avoid-version
+systemd_notify_la_LIBADD = $(SYSTEMD_DAEMON_LIBS)
+systemd_notify_la_CFLAGS =			\
+	$(SYSTEMD_DAEMON_LIBS)			\
+	$(PIXMAN_CFLAGS)			\
+	$(AM_CFLAGS)
+systemd_notify_la_SOURCES =			\
+	src/systemd-notify.c			\
+	shared/helpers.h			\
+	shared/zalloc.h				\
+	src/compositor.h
+endif
+
 nodist_weston_SOURCES =					\
-	protocol/screenshooter-protocol.c		\
-	protocol/screenshooter-server-protocol.h	\
+	protocol/weston-screenshooter-protocol.c			\
+	protocol/weston-screenshooter-server-protocol.h			\
 	protocol/text-cursor-position-protocol.c	\
 	protocol/text-cursor-position-server-protocol.h	\
-	protocol/text-protocol.c			\
-	protocol/text-server-protocol.h			\
-	protocol/input-method-protocol.c		\
-	protocol/input-method-server-protocol.h		\
-	protocol/workspaces-protocol.c			\
-	protocol/workspaces-server-protocol.h		\
+	protocol/text-input-unstable-v1-protocol.c			\
+	protocol/text-input-unstable-v1-server-protocol.h		\
+	protocol/input-method-unstable-v1-protocol.c			\
+	protocol/input-method-unstable-v1-server-protocol.h		\
 	protocol/presentation_timing-protocol.c		\
 	protocol/presentation_timing-server-protocol.h	\
 	protocol/scaler-protocol.c			\
 	protocol/scaler-server-protocol.h		\
-	protocol/linux-dmabuf-protocol.c		\
-	protocol/linux-dmabuf-server-protocol.h
+	protocol/linux-dmabuf-unstable-v1-protocol.c	\
+	protocol/linux-dmabuf-unstable-v1-server-protocol.h
 
 BUILT_SOURCES += $(nodist_weston_SOURCES)
 
@@ -127,9 +140,12 @@ noinst_LTLIBRARIES +=				\
 	libsession-helper.la
 
 libsession_helper_la_SOURCES =			\
-	src/weston-launch.h			\
 	src/launcher-util.c			\
-	src/launcher-util.h
+	src/launcher-util.h			\
+	src/launcher-impl.h			\
+	src/weston-launch.h			\
+	src/launcher-weston-launch.c		\
+	src/launcher-direct.c
 libsession_helper_la_CFLAGS = $(AM_CFLAGS) $(LIBDRM_CFLAGS) $(PIXMAN_CFLAGS) $(COMPOSITOR_CFLAGS)
 libsession_helper_la_LIBADD = $(LIBDRM_LIBS)
 
@@ -138,8 +154,7 @@ if HAVE_SYSTEMD_LOGIN
 libsession_helper_la_SOURCES +=			\
 	src/dbus.h				\
 	src/dbus.c				\
-	src/logind-util.h			\
-	src/logind-util.c
+	src/launcher-logind.c
 libsession_helper_la_CFLAGS += $(SYSTEMD_LOGIN_CFLAGS) $(DBUS_CFLAGS)
 libsession_helper_la_LIBADD += $(SYSTEMD_LOGIN_LIBS) $(DBUS_LIBS)
 endif
@@ -197,6 +212,11 @@ westoninclude_HEADERS =				\
 	shared/config-parser.h			\
 	shared/zalloc.h				\
 	shared/platform.h
+
+if ENABLE_IVI_SHELL
+westoninclude_HEADERS +=				\
+	ivi-shell/ivi-layout-export.h
+endif
 
 if ENABLE_EGL
 module_LTLIBRARIES += gl-renderer.la
@@ -287,8 +307,8 @@ wayland_backend_la_SOURCES = 			\
 	src/compositor-wayland.c		\
 	shared/helpers.h
 nodist_wayland_backend_la_SOURCES =			\
-	protocol/fullscreen-shell-protocol.c		\
-	protocol/fullscreen-shell-client-protocol.h
+	protocol/fullscreen-shell-unstable-v1-protocol.c		\
+	protocol/fullscreen-shell-unstable-v1-client-protocol.h
 endif
 
 if ENABLE_RPI_COMPOSITOR
@@ -451,10 +471,10 @@ demo_clients +=					\
 
 weston_simple_shm_SOURCES = clients/simple-shm.c
 nodist_weston_simple_shm_SOURCES =		\
-	protocol/xdg-shell-protocol.c		\
-	protocol/xdg-shell-client-protocol.h	\
-	protocol/fullscreen-shell-protocol.c	\
-	protocol/fullscreen-shell-client-protocol.h	\
+	protocol/xdg-shell-unstable-v5-protocol.c		\
+	protocol/xdg-shell-unstable-v5-client-protocol.h	\
+	protocol/fullscreen-shell-unstable-v1-protocol.c	\
+	protocol/fullscreen-shell-unstable-v1-client-protocol.h	\
 	protocol/ivi-application-protocol.c		\
 	protocol/ivi-application-client-protocol.h
 weston_simple_shm_CFLAGS = $(AM_CFLAGS) $(SIMPLE_CLIENT_CFLAGS)
@@ -464,10 +484,10 @@ weston_simple_damage_SOURCES = clients/simple-damage.c
 nodist_weston_simple_damage_SOURCES =		\
 	protocol/scaler-protocol.c		\
 	protocol/scaler-client-protocol.h	\
-	protocol/xdg-shell-protocol.c		\
-	protocol/xdg-shell-client-protocol.h	\
-	protocol/fullscreen-shell-protocol.c	\
-	protocol/fullscreen-shell-client-protocol.h
+	protocol/xdg-shell-unstable-v5-protocol.c		\
+	protocol/xdg-shell-unstable-v5-client-protocol.h	\
+	protocol/fullscreen-shell-unstable-v1-protocol.c	\
+	protocol/fullscreen-shell-unstable-v1-client-protocol.h
 weston_simple_damage_CFLAGS = $(AM_CFLAGS) $(SIMPLE_CLIENT_CFLAGS)
 weston_simple_damage_LDADD = $(SIMPLE_CLIENT_LIBS) libshared.la
 
@@ -484,7 +504,7 @@ nodist_weston_presentation_shm_SOURCES =		\
 	protocol/presentation_timing-protocol.c		\
 	protocol/presentation_timing-client-protocol.h
 weston_presentation_shm_CFLAGS = $(AM_CFLAGS) $(SIMPLE_CLIENT_CFLAGS)
-weston_presentation_shm_LDADD = $(SIMPLE_CLIENT_LIBS) libshared.la -lm
+weston_presentation_shm_LDADD = $(SIMPLE_CLIENT_LIBS) libshared.la -lm -lrt
 
 weston_multi_resource_SOURCES = clients/multi-resource.c
 weston_multi_resource_CFLAGS = $(AM_CFLAGS) $(SIMPLE_CLIENT_CFLAGS)
@@ -495,27 +515,42 @@ if BUILD_SIMPLE_EGL_CLIENTS
 demo_clients += weston-simple-egl
 weston_simple_egl_SOURCES = clients/simple-egl.c
 nodist_weston_simple_egl_SOURCES =		\
-	protocol/xdg-shell-protocol.c		\
-	protocol/xdg-shell-client-protocol.h		\
+	protocol/xdg-shell-unstable-v5-protocol.c		\
+	protocol/xdg-shell-unstable-v5-client-protocol.h	\
 	protocol/ivi-application-protocol.c		\
 	protocol/ivi-application-client-protocol.h
 weston_simple_egl_CFLAGS = $(AM_CFLAGS) $(SIMPLE_EGL_CLIENT_CFLAGS)
 weston_simple_egl_LDADD = $(SIMPLE_EGL_CLIENT_LIBS) -lm
 endif
 
-if BUILD_SIMPLE_INTEL_DMABUF_CLIENT
-demo_clients += weston-simple-dmabuf
-weston_simple_dmabuf_SOURCES = clients/simple-dmabuf.c
-nodist_weston_simple_dmabuf_SOURCES =		\
-	protocol/xdg-shell-protocol.c		\
-	protocol/xdg-shell-client-protocol.h	\
-	protocol/fullscreen-shell-protocol.c	\
-	protocol/fullscreen-shell-client-protocol.h \
-	protocol/linux-dmabuf-protocol.c \
-	protocol/linux-dmabuf-client-protocol.h
-weston_simple_dmabuf_CFLAGS = $(AM_CFLAGS) $(SIMPLE_DMABUF_CLIENT_CFLAGS)
-weston_simple_dmabuf_LDADD = $(SIMPLE_DMABUF_CLIENT_LIBS) libshared.la
-BUILT_SOURCES += protocol/linux-dmabuf-client-protocol.h
+if BUILD_SIMPLE_DMABUF_INTEL_CLIENT
+demo_clients += weston-simple-dmabuf-intel
+weston_simple_dmabuf_intel_SOURCES = clients/simple-dmabuf-intel.c
+nodist_weston_simple_dmabuf_intel_SOURCES =		\
+	protocol/xdg-shell-unstable-v5-protocol.c		\
+	protocol/xdg-shell-unstable-v5-client-protocol.h	\
+	protocol/fullscreen-shell-unstable-v1-protocol.c	\
+	protocol/fullscreen-shell-unstable-v1-client-protocol.h \
+	protocol/linux-dmabuf-unstable-v1-protocol.c \
+	protocol/linux-dmabuf-unstable-v1-client-protocol.h
+weston_simple_dmabuf_intel_CFLAGS = $(AM_CFLAGS) $(SIMPLE_DMABUF_INTEL_CLIENT_CFLAGS)
+weston_simple_dmabuf_intel_LDADD = $(SIMPLE_DMABUF_INTEL_CLIENT_LIBS) libshared.la
+BUILT_SOURCES += protocol/linux-dmabuf-unstable-v1-client-protocol.h
+endif
+
+if BUILD_SIMPLE_DMABUF_V4L_CLIENT
+demo_clients += weston-simple-dmabuf-v4l
+weston_simple_dmabuf_v4l_SOURCES = clients/simple-dmabuf-v4l.c
+nodist_weston_simple_dmabuf_v4l_SOURCES =		\
+	protocol/xdg-shell-unstable-v5-protocol.c		\
+	protocol/xdg-shell-unstable-v5-client-protocol.h	\
+	protocol/fullscreen-shell-unstable-v1-protocol.c	\
+	protocol/fullscreen-shell-unstable-v1-client-protocol.h \
+	protocol/linux-dmabuf-unstable-v1-protocol.c \
+	protocol/linux-dmabuf-unstable-v1-client-protocol.h
+weston_simple_dmabuf_v4l_CFLAGS = $(AM_CFLAGS) $(SIMPLE_DMABUF_V4L_CLIENT_CFLAGS)
+weston_simple_dmabuf_v4l_LDADD = $(SIMPLE_DMABUF_V4L_CLIENT_LIBS) libshared.la
+BUILT_SOURCES += protocol/linux-dmabuf-unstable-v1-client-protocol.h
 endif
 
 noinst_LTLIBRARIES += libtoytoolkit.la
@@ -530,12 +565,10 @@ nodist_libtoytoolkit_la_SOURCES =			\
 	protocol/text-cursor-position-client-protocol.h	\
 	protocol/scaler-protocol.c			\
 	protocol/scaler-client-protocol.h		\
-	protocol/workspaces-protocol.c			\
-	protocol/workspaces-client-protocol.h		\
 	protocol/presentation_timing-protocol.c		\
 	protocol/presentation_timing-client-protocol.h	\
-	protocol/xdg-shell-protocol.c			\
-	protocol/xdg-shell-client-protocol.h		\
+	protocol/xdg-shell-unstable-v5-protocol.c			\
+	protocol/xdg-shell-unstable-v5-client-protocol.h		\
 	protocol/ivi-application-protocol.c		\
 	protocol/ivi-application-client-protocol.h
 
@@ -555,8 +588,8 @@ weston_flower_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 weston_screenshooter_SOURCES =				\
 	clients/screenshot.c
 nodist_weston_screenshooter_SOURCES =			\
-	protocol/screenshooter-protocol.c		\
-	protocol/screenshooter-client-protocol.h
+	protocol/weston-screenshooter-protocol.c	\
+	protocol/weston-screenshooter-client-protocol.h
 weston_screenshooter_LDADD = $(CLIENT_LIBS) libshared.la
 weston_screenshooter_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
@@ -627,8 +660,8 @@ weston_transformed_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
 weston_fullscreen_SOURCES = clients/fullscreen.c
 nodist_weston_fullscreen_SOURCES =			\
-	protocol/fullscreen-shell-protocol.c		\
-	protocol/fullscreen-shell-client-protocol.h
+	protocol/fullscreen-shell-unstable-v1-protocol.c		\
+	protocol/fullscreen-shell-unstable-v1-client-protocol.h
 weston_fullscreen_LDADD = libtoytoolkit.la
 weston_fullscreen_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
@@ -664,25 +697,25 @@ weston_editor_SOURCES = 			\
 	clients/editor.c			\
 	shared/helpers.h
 nodist_weston_editor_SOURCES =			\
-	protocol/text-protocol.c		\
-	protocol/text-client-protocol.h
+	protocol/text-input-unstable-v1-protocol.c		\
+	protocol/text-input-unstable-v1-client-protocol.h
 weston_editor_LDADD = libtoytoolkit.la $(PANGO_LIBS)
 weston_editor_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS) $(PANGO_CFLAGS)
 endif
 
 weston_keyboard_SOURCES = clients/keyboard.c
-nodist_weston_keyboard_SOURCES =			\
-	protocol/desktop-shell-client-protocol.h	\
-	protocol/desktop-shell-protocol.c		\
-	protocol/input-method-protocol.c		\
-	protocol/input-method-client-protocol.h
+nodist_weston_keyboard_SOURCES =				\
+	protocol/weston-desktop-shell-client-protocol.h		\
+	protocol/weston-desktop-shell-protocol.c		\
+	protocol/input-method-unstable-v1-protocol.c		\
+	protocol/input-method-unstable-v1-client-protocol.h
 weston_keyboard_LDADD = libtoytoolkit.la
 weston_keyboard_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
 weston_simple_im_SOURCES = clients/weston-simple-im.c
 nodist_weston_simple_im_SOURCES =		\
-	protocol/input-method-protocol.c	\
-	protocol/input-method-client-protocol.h
+	protocol/input-method-unstable-v1-protocol.c		\
+	protocol/input-method-unstable-v1-client-protocol.h
 weston_simple_im_LDADD = $(CLIENT_LIBS)
 weston_simple_im_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
@@ -699,8 +732,8 @@ weston_desktop_shell_SOURCES = 				\
 	clients/desktop-shell.c				\
 	shared/helpers.h
 nodist_weston_desktop_shell_SOURCES =			\
-	protocol/desktop-shell-client-protocol.h	\
-	protocol/desktop-shell-protocol.c
+	protocol/weston-desktop-shell-client-protocol.h	\
+	protocol/weston-desktop-shell-protocol.c
 weston_desktop_shell_LDADD = libtoytoolkit.la
 weston_desktop_shell_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
@@ -727,24 +760,22 @@ endif
 endif
 
 BUILT_SOURCES +=					\
-	protocol/screenshooter-protocol.c		\
-	protocol/screenshooter-client-protocol.h	\
+	protocol/weston-screenshooter-protocol.c			\
+	protocol/weston-screenshooter-client-protocol.h			\
 	protocol/text-cursor-position-client-protocol.h	\
 	protocol/text-cursor-position-protocol.c	\
-	protocol/text-protocol.c			\
-	protocol/text-client-protocol.h			\
-	protocol/input-method-protocol.c		\
-	protocol/input-method-client-protocol.h		\
-	protocol/desktop-shell-client-protocol.h	\
-	protocol/desktop-shell-protocol.c		\
+	protocol/text-input-unstable-v1-protocol.c			\
+	protocol/text-input-unstable-v1-client-protocol.h		\
+	protocol/input-method-unstable-v1-protocol.c			\
+	protocol/input-method-unstable-v1-client-protocol.h		\
+	protocol/weston-desktop-shell-client-protocol.h			\
+	protocol/weston-desktop-shell-protocol.c			\
 	protocol/scaler-client-protocol.h		\
 	protocol/scaler-protocol.c			\
-	protocol/workspaces-client-protocol.h		\
-	protocol/workspaces-protocol.c			\
-	protocol/fullscreen-shell-protocol.c		\
-	protocol/fullscreen-shell-client-protocol.h	\
-	protocol/xdg-shell-protocol.c			\
-	protocol/xdg-shell-client-protocol.h		\
+	protocol/fullscreen-shell-unstable-v1-protocol.c		\
+	protocol/fullscreen-shell-unstable-v1-client-protocol.h	\
+	protocol/xdg-shell-unstable-v5-protocol.c			\
+	protocol/xdg-shell-unstable-v5-client-protocol.h		\
 	protocol/ivi-hmi-controller-protocol.c		\
 	protocol/ivi-hmi-controller-client-protocol.h	\
 	protocol/ivi-application-protocol.c		\
@@ -817,10 +848,10 @@ desktop_shell_la_SOURCES =				\
 	desktop-shell/input-panel.c			\
 	shared/helpers.h
 nodist_desktop_shell_la_SOURCES =			\
-	protocol/desktop-shell-protocol.c		\
-	protocol/desktop-shell-server-protocol.h	\
-	protocol/xdg-shell-protocol.c			\
-	protocol/xdg-shell-server-protocol.h
+	protocol/weston-desktop-shell-protocol.c	\
+	protocol/weston-desktop-shell-server-protocol.h	\
+	protocol/xdg-shell-unstable-v5-protocol.c	\
+	protocol/xdg-shell-unstable-v5-server-protocol.h
 
 BUILT_SOURCES += $(nodist_desktop_shell_la_SOURCES)
 endif
@@ -843,8 +874,8 @@ fullscreen_shell_la_SOURCES =			\
 	fullscreen-shell/fullscreen-shell.c	\
 	shared/helpers.h
 nodist_fullscreen_shell_la_SOURCES =			\
-	protocol/fullscreen-shell-protocol.c		\
-	protocol/fullscreen-shell-server-protocol.h
+	protocol/fullscreen-shell-unstable-v1-protocol.c		\
+	protocol/fullscreen-shell-unstable-v1-server-protocol.h
 
 BUILT_SOURCES += $(nodist_fullscreen_shell_la_SOURCES)
 endif
@@ -909,8 +940,8 @@ screen_share_la_SOURCES =			\
 	src/screen-share.c			\
 	shared/helpers.h
 nodist_screen_share_la_SOURCES =			\
-	protocol/fullscreen-shell-protocol.c		\
-	protocol/fullscreen-shell-client-protocol.h
+	protocol/fullscreen-shell-unstable-v1-protocol.c		\
+	protocol/fullscreen-shell-unstable-v1-client-protocol.h
 
 endif
 
@@ -1151,8 +1182,8 @@ libtest_client_la_SOURCES =			\
 nodist_libtest_client_la_SOURCES =		\
 	protocol/weston-test-protocol.c	\
 	protocol/weston-test-client-protocol.h
-libtest_client_la_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
-libtest_client_la_LIBADD = $(TEST_CLIENT_LIBS) libshared.la libtest-runner.la
+libtest_client_la_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS) $(CAIRO_CFLAGS)
+libtest_client_la_LIBADD = $(TEST_CLIENT_LIBS) $(CAIRO_LIBS) libshared.la libtest-runner.la
 
 
 #
@@ -1160,8 +1191,8 @@ libtest_client_la_LIBADD = $(TEST_CLIENT_LIBS) libshared.la libtest-runner.la
 #
 
 internal_screenshot_weston_SOURCES = tests/internal-screenshot-test.c
-internal_screenshot_weston_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS) $(CAIRO_CFLAGS)
-internal_screenshot_weston_LDADD = libtest-client.la  $(CAIRO_LIBS)
+internal_screenshot_weston_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
+internal_screenshot_weston_LDADD = libtest-client.la
 
 
 #
@@ -1190,8 +1221,8 @@ devices_weston_LDADD = libtest-client.la
 
 text_weston_SOURCES = tests/text-test.c
 nodist_text_weston_SOURCES =			\
-	protocol/text-protocol.c		\
-	protocol/text-client-protocol.h
+	protocol/text-input-unstable-v1-protocol.c		\
+	protocol/text-input-unstable-v1-client-protocol.h
 text_weston_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
 text_weston_LDADD = libtest-client.la
 
@@ -1314,24 +1345,18 @@ BUILT_SOURCES +=				\
 	protocol/weston-test-protocol.c	\
 	protocol/weston-test-server-protocol.h	\
 	protocol/weston-test-client-protocol.h	\
-	protocol/text-protocol.c		\
-	protocol/text-client-protocol.h
+	protocol/text-input-unstable-v1-protocol.c		\
+	protocol/text-input-unstable-v1-client-protocol.h
 
 EXTRA_DIST +=					\
-	protocol/desktop-shell.xml		\
-	protocol/screenshooter.xml		\
-	protocol/text.xml			\
-	protocol/input-method.xml		\
-	protocol/workspaces.xml			\
+	protocol/weston-desktop-shell.xml	\
+	protocol/weston-screenshooter.xml	\
 	protocol/text-cursor-position.xml	\
 	protocol/weston-test.xml		\
-	protocol/xdg-shell.xml			\
-	protocol/fullscreen-shell.xml		\
 	protocol/presentation_timing.xml	\
 	protocol/scaler.xml			\
 	protocol/ivi-application.xml		\
-	protocol/ivi-hmi-controller.xml		\
-	protocol/linux-dmabuf.xml
+	protocol/ivi-hmi-controller.xml
 
 #
 # manual test modules in tests subdirectory
@@ -1394,6 +1419,25 @@ $(DOCDIRS):
 .PHONY: doc $(DOXYGEN_INDICES)
 
 doc: $(DOXYGEN_INDICES)
+
+.SECONDEXPANSION:
+
+define protostability
+$(shell echo $1 | sed 's/.*\(\<unstable\>\|\<stable\>\).*/\1/')
+endef
+
+define protoname
+$(shell echo $1 | sed 's/\([a-z\-]\+\)-[a-z]\+-v[0-9]\+/\1/')
+endef
+
+protocol/%-protocol.c : $(WAYLAND_PROTOCOLS_DATADIR)/$$(call protostability,$$*)/$$(call protoname,$$*)/$$*.xml
+	$(AM_V_GEN)$(MKDIR_P) $(dir $@) && $(wayland_scanner) code < $< > $@
+
+protocol/%-server-protocol.h : $(WAYLAND_PROTOCOLS_DATADIR)/$$(call protostability,$$*)/$$(call protoname,$$*)/$$*.xml
+	$(AM_V_GEN)$(MKDIR_P) $(dir $@) && $(wayland_scanner) server-header < $< > $@
+
+protocol/%-client-protocol.h : $(WAYLAND_PROTOCOLS_DATADIR)/$$(call protostability,$$*)/$$(call protoname,$$*)/$$*.xml
+	$(AM_V_GEN)$(MKDIR_P) $(dir $@) && $(wayland_scanner) client-header < $< > $@
 
 protocol/%-protocol.c : $(top_srcdir)/protocol/%.xml
 	$(AM_V_GEN)$(MKDIR_P) $(dir $@) && $(wayland_scanner) code < $< > $@

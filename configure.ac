@@ -1,6 +1,6 @@
 m4_define([weston_major_version], [1])
 m4_define([weston_minor_version], [9])
-m4_define([weston_micro_version], [0])
+m4_define([weston_micro_version], [92])
 m4_define([weston_version],
           [weston_major_version.weston_minor_version.weston_micro_version])
 
@@ -59,7 +59,7 @@ AC_CHECK_HEADERS([execinfo.h])
 
 AC_CHECK_FUNCS([mkostemp strchrnul initgroups posix_fallocate])
 
-COMPOSITOR_MODULES="wayland-server >= 1.9.0 pixman-1 >= 0.25.2"
+COMPOSITOR_MODULES="wayland-server >= 1.9.91 pixman-1 >= 0.25.2"
 
 AC_CONFIG_FILES([doc/doxygen/tools.doxygen doc/doxygen/tooldev.doxygen])
 
@@ -85,8 +85,8 @@ AC_ARG_ENABLE(egl, [  --disable-egl],,
 AM_CONDITIONAL(ENABLE_EGL, test x$enable_egl = xyes)
 if test x$enable_egl = xyes; then
 	AC_DEFINE([ENABLE_EGL], [1], [Build Weston with EGL support])
-	PKG_CHECK_MODULES(EGL, [egl >= 7.10 glesv2])
-        PKG_CHECK_MODULES([EGL_TESTS], [egl >= 7.10 glesv2 wayland-client wayland-egl])
+	PKG_CHECK_MODULES(EGL, [egl glesv2])
+        PKG_CHECK_MODULES([EGL_TESTS], [egl glesv2 wayland-client wayland-egl])
 	PKG_CHECK_MODULES([GL_RENDERER], [libdrm])
 fi
 
@@ -180,6 +180,10 @@ fi
 
 PKG_CHECK_MODULES(LIBINPUT_BACKEND, [libinput >= 0.8.0])
 PKG_CHECK_MODULES(COMPOSITOR, [$COMPOSITOR_MODULES])
+
+PKG_CHECK_MODULES(WAYLAND_PROTOCOLS, [wayland-protocols >= 1.0],
+		  [ac_wayland_protocols_pkgdatadir=`$PKG_CONFIG --variable=pkgdatadir wayland-protocols`])
+AC_SUBST(WAYLAND_PROTOCOLS_DATADIR, $ac_wayland_protocols_pkgdatadir)
 
 AC_ARG_ENABLE(wayland-compositor, [  --enable-wayland-compositor],,
 	      enable_wayland_compositor=yes)
@@ -317,7 +321,7 @@ AC_SUBST(JPEG_LIBS)
 
 PKG_CHECK_MODULES(CAIRO, [cairo])
 
-PKG_CHECK_MODULES(TEST_CLIENT, [wayland-client >= 1.9.0])
+PKG_CHECK_MODULES(TEST_CLIENT, [wayland-client >= 1.9.91])
 
 AC_ARG_ENABLE(simple-clients,
               AS_HELP_STRING([--disable-simple-clients],
@@ -335,22 +339,36 @@ AC_ARG_ENABLE(simple-egl-clients,
 AM_CONDITIONAL(BUILD_SIMPLE_EGL_CLIENTS, test "x$enable_simple_egl_clients" = "xyes")
 if test x$enable_simple_egl_clients = xyes; then
   PKG_CHECK_MODULES(SIMPLE_EGL_CLIENT,
-                    [egl >= 7.10 glesv2 wayland-client wayland-egl wayland-cursor])
+                    [egl glesv2 wayland-client wayland-egl wayland-cursor])
 fi
 
-AC_ARG_ENABLE(simple-intel-dmabuf-client,
-              AS_HELP_STRING([--disable-simple-intel-dmabuf-client],
-                             [do not build the simple intel dmabuf client]),,
-              enable_simple_intel_dmabuf_client="auto")
-if ! test "x$enable_simple_intel_dmabuf_client" = "xno"; then
-  PKG_CHECK_MODULES(SIMPLE_DMABUF_CLIENT, [wayland-client libdrm libdrm_intel],
-		    have_simple_dmabuf_client=yes, have_simple_dmabuf_client=no)
-  if test "x$have_simple_dmabuf_client" = "xno" -a "x$enable_simple_intel_dmabuf_client" = "xyes"; then
+AC_ARG_ENABLE(simple-dmabuf-intel-client,
+              AS_HELP_STRING([--disable-simple-dmabuf-intel-client],
+                             [do not build the simple dmabuf intel client]),,
+              enable_simple_dmabuf_intel_client="auto")
+if ! test "x$enable_simple_dmabuf_intel_client" = "xno"; then
+  PKG_CHECK_MODULES(SIMPLE_DMABUF_INTEL_CLIENT, [wayland-client libdrm libdrm_intel],
+		    have_simple_dmabuf_intel_client=yes, have_simple_dmabuf_intel_client=no)
+  if test "x$have_simple_dmabuf_intel_client" = "xno" -a "x$enable_simple_dmabuf_intel_client" = "xyes"; then
     AC_MSG_ERROR([Intel dmabuf client explicitly enabled, but libdrm_intel couldn't be found])
   fi
-  enable_simple_intel_dmabuf_client="$have_simple_dmabuf_client"
+  enable_simple_dmabuf_intel_client="$have_simple_dmabuf_intel_client"
 fi
-AM_CONDITIONAL(BUILD_SIMPLE_INTEL_DMABUF_CLIENT, test "x$enable_simple_intel_dmabuf_client" = "xyes")
+AM_CONDITIONAL(BUILD_SIMPLE_DMABUF_INTEL_CLIENT, test "x$enable_simple_dmabuf_intel_client" = "xyes")
+
+AC_ARG_ENABLE(simple-dmabuf-v4l-client,
+              AS_HELP_STRING([--disable-simple-dmabuf-v4l-client],
+                             [do not build the simple dmabuf v4l client]),,
+              enable_simple_dmabuf_v4l_client="auto")
+if ! test "x$enable_simple_dmabuf_v4l_client" = "xno"; then
+  PKG_CHECK_MODULES(SIMPLE_DMABUF_V4L_CLIENT, [wayland-client libdrm],
+		    have_simple_dmabuf_v4l_client=yes, have_simple_dmabuf_v4l_client=no)
+  if test "x$have_simple_dmabuf_v4l_client" = "xno" -a "x$enable_simple_dmabuf_v4l_client" = "xyes"; then
+    AC_MSG_ERROR([V4L dmabuf client explicitly enabled, but libdrm couldn't be found])
+  fi
+  enable_simple_dmabuf_v4l_client="$have_simple_dmabuf_v4l_client"
+fi
+AM_CONDITIONAL(BUILD_SIMPLE_DMABUF_V4L_CLIENT, test "x$enable_simple_dmabuf_v4l_client" = "xyes")
 
 AC_ARG_ENABLE(clients, [  --enable-clients],, enable_clients=yes)
 AM_CONDITIONAL(BUILD_CLIENTS, test x$enable_clients = xyes)
@@ -363,7 +381,7 @@ if test x$enable_clients = xyes; then
 
   # Only check for cairo-egl if a GL or GLES renderer requested
   AS_IF([test "x$cairo_modules" = "xcairo-gl" -o "x$cairo_modules" = "xcairo-glesv2"], [
-    PKG_CHECK_MODULES(CAIRO_EGL, [wayland-egl egl >= 7.10 cairo-egl >= 1.11.3 $cairo_modules],
+    PKG_CHECK_MODULES(CAIRO_EGL, [wayland-egl egl cairo-egl >= 1.11.3 $cairo_modules],
                       [have_cairo_egl=yes], [have_cairo_egl=no])
     AS_IF([test "x$have_cairo_egl" = "xyes"],
 	  [AC_DEFINE([HAVE_CAIRO_EGL], [1], [Have cairo-egl])],
@@ -380,14 +398,35 @@ AC_ARG_ENABLE(resize-optimization,
 AS_IF([test "x$enable_resize_optimization" = "xyes"],
       [AC_DEFINE([USE_RESIZE_POOL], [1], [Use resize memory pool as a performance optimization])])
 
-PKG_CHECK_MODULES(SYSTEMD_LOGIN, [libsystemd-login >= 198],
-                  [have_systemd_login=yes], [have_systemd_login=no])
+AC_ARG_ENABLE(systemd-login,
+              AS_HELP_STRING([--enable-systemd-login],
+                             [Enable logind support]),,
+              enable_systemd_login=auto)
+if test x$enable_systemd_login != xno; then
+  PKG_CHECK_MODULES(SYSTEMD_LOGIN,
+                    [libsystemd >= 209],
+                    [have_systemd_login_209=yes;have_systemd_login=yes],
+                    [have_systemd_login_209=no;have_systemd_login=no])
+
+  # Older versions of systemd package systemd-login separately. Fall back on that
+  AS_IF([test x$have_systemd_login != xyes],[
+        PKG_CHECK_MODULES(SYSTEMD_LOGIN,
+                          [libsystemd-login >= 198],
+                          [have_systemd_login=yes],
+                          [have_systemd_login=no])
+        ])
+else
+  have_systemd_login=no
+fi
+
+if test "x$have_systemd_login" = "xno" -a "x$enable_systemd_login" = "xyes"; then
+  AC_MSG_ERROR([systemd-login support explicitly enabled, but can't find libsystemd>=209 or libsystemd-login])
+fi
+
 AS_IF([test "x$have_systemd_login" = "xyes"],
       [AC_DEFINE([HAVE_SYSTEMD_LOGIN], [1], [Have systemd-login])])
 AM_CONDITIONAL(HAVE_SYSTEMD_LOGIN, test "x$have_systemd_login" = "xyes")
 
-PKG_CHECK_MODULES(SYSTEMD_LOGIN_209, [libsystemd-login >= 209],
-                  [have_systemd_login_209=yes], [have_systemd_login_209=no])
 AS_IF([test "x$have_systemd_login_209" = "xyes"],
       [AC_DEFINE([HAVE_SYSTEMD_LOGIN_209], [1], [Have systemd-login >= 209])])
 
@@ -552,17 +591,41 @@ AC_ARG_ENABLE(demo-clients-install,
 			     enable_demo_clients_install=no)
 AM_CONDITIONAL(INSTALL_DEMO_CLIENTS, [test "x$enable_demo_clients_install" = "xyes"])
 
-PKG_CHECK_MODULES(LCMS, lcms2,
-                  [have_lcms=yes], [have_lcms=no])
-if test "x$have_lcms" = xyes; then
-       AC_DEFINE(HAVE_LCMS, 1, [Have lcms support])
+AC_ARG_ENABLE(lcms,
+              AS_HELP_STRING([--disable-lcms],
+                             [Disable lcms support]),,
+              enable_lcms=auto)
+if test "x$enable_lcms" != "xno"; then
+        PKG_CHECK_MODULES(LCMS,
+                          lcms2,
+                          have_lcms=yes,
+                          have_lcms=no)
+        if test "x$have_lcms" = "xno" -a "x$enable_lcms" = "xyes"; then
+          AC_MSG_ERROR([lcms support explicitly requested, but lcms couldn't be found])
+        fi
+        if test "x$have_lcms" = "xyes"; then
+                enable_lcms=yes
+                AC_DEFINE(HAVE_LCMS, 1, [Have lcms support])
+        fi
 fi
-AM_CONDITIONAL(HAVE_LCMS, [test "x$have_lcms" = xyes])
+AM_CONDITIONAL(HAVE_LCMS, [test "x$enable_lcms" = xyes])
 
 AC_PATH_PROG([wayland_scanner], [wayland-scanner])
 if test x$wayland_scanner = x; then
 	PKG_CHECK_MODULES(WAYLAND_SCANNER, [wayland-scanner])
 	wayland_scanner=`$PKG_CONFIG --variable=wayland_scanner wayland-scanner`
+fi
+
+AC_ARG_ENABLE(systemd_notify,
+              AS_HELP_STRING([--enable-systemd-notify],
+                             [Enables systemd notifications to
+                              notify systemd about weston state
+                              and update watchdog.]),,
+              enable_systemd_notify=no)
+AM_CONDITIONAL(SYSTEMD_NOTIFY_SUPPORT, test x$enable_systemd_notify = xyes)
+if test "x$enable_systemd_notify" = "xyes"; then
+  AC_DEFINE([SYSTEMD_NOTIFY_SUPPORT], [1], [Build the systemd sd_notify support])
+  PKG_CHECK_MODULES(SYSTEMD_DAEMON, [libsystemd])
 fi
 
 AC_CONFIG_FILES([Makefile src/version.h src/weston.pc])
@@ -590,6 +653,7 @@ AC_MSG_RESULT([
 
 	weston-launch utility		${enable_weston_launch}
 	systemd-login support		${have_systemd_login}
+	systemd notify support		${enable_systemd_notify}
 
 	DRM Compositor			${enable_drm_compositor}
 	X11 Compositor			${enable_x11_compositor}
