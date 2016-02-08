@@ -1,3 +1,9 @@
+weston (1.9.92-2) experimental; urgency=medium
+
+  * d/control: tighten build depend libwayland-dev versioning.
+
+ -- Héctor Orón Martínez <zumbi@debian.org>  Tue, 09 Feb 2016 00:00:10 +0100
+
 weston (1.9.92-1) experimental; urgency=medium
 
   * New upstream release

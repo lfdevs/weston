@@ -20,7 +20,7 @@ Build-Depends:
  libegl1-mesa-dev (>= 9.0~),
  libegl1-mesa-drivers (>= 9.0~),
  libgles2-mesa-dev (>= 9.0~),
- libwayland-dev (>= 1.9.0),
+ libwayland-dev (>= 1.9.91),
  libxcb1-dev,
  libxcb-composite0-dev,
  libxcb-xfixes0-dev,
