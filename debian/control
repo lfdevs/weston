@@ -40,7 +40,7 @@ Build-Depends:
  libsystemd-dev,
  libinput-dev (>= 0.8.0),
  wayland-protocols,
-Standards-Version: 3.9.6
+Standards-Version: 3.9.8
 Homepage: http://wayland.freedesktop.org/
 Vcs-Git: git://anonscm.debian.org/pkg-xorg/wayland/weston
 Vcs-Browser: http://anonscm.debian.org/gitweb/?p=pkg-xorg/wayland/weston.git
