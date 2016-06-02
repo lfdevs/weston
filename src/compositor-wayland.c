@@ -40,6 +40,7 @@
 #include <wayland-cursor.h>
 
 #include "compositor.h"
+#include "compositor-wayland.h"
 #include "gl-renderer.h"
 #include "pixman-renderer.h"
 #include "shared/helpers.h"
@@ -47,7 +48,7 @@
 #include "shared/os-compatibility.h"
 #include "shared/cairo-util.h"
 #include "fullscreen-shell-unstable-v1-client-protocol.h"
-#include "presentation_timing-server-protocol.h"
+#include "presentation-time-server-protocol.h"
 #include "linux-dmabuf.h"
 
 #define WINDOW_TITLE "Weston Compositor"
@@ -1092,59 +1093,13 @@ err_name:
 
 static struct wayland_output *
 wayland_output_create_for_config(struct wayland_backend *b,
-				 struct weston_config_section *config_section,
-				 int option_width, int option_height,
-				 int option_scale, int32_t x, int32_t y)
+				 struct weston_wayland_backend_output_config *oc,
+				 int fullscreen, int32_t x, int32_t y)
 {
 	struct wayland_output *output;
-	char *mode, *t, *name, *str;
-	int width, height, scale;
-	uint32_t transform;
-	unsigned int slen;
 
-	weston_config_section_get_string(config_section, "name", &name, NULL);
-	if (name) {
-		slen = strlen(name);
-		slen += strlen(WINDOW_TITLE " - ");
-		str = malloc(slen + 1);
-		if (str)
-			snprintf(str, slen + 1, WINDOW_TITLE " - %s", name);
-		free(name);
-		name = str;
-	}
-	if (!name)
-		name = strdup(WINDOW_TITLE);
-
-	weston_config_section_get_string(config_section,
-					 "mode", &mode, "1024x600");
-	if (sscanf(mode, "%dx%d", &width, &height) != 2) {
-		weston_log("Invalid mode \"%s\" for output %s\n",
-			   mode, name);
-		width = 1024;
-		height = 640;
-	}
-	free(mode);
-
-	if (option_width)
-		width = option_width;
-	if (option_height)
-		height = option_height;
-
-	weston_config_section_get_int(config_section, "scale", &scale, 1);
-
-	if (option_scale)
-		scale = option_scale;
-
-	weston_config_section_get_string(config_section,
-					 "transform", &t, "normal");
-	if (weston_parse_transform(t, &transform) < 0)
-		weston_log("Invalid transform \"%s\" for output %s\n",
-			   t, name);
-	free(t);
-
-	output = wayland_output_create(b, x, y, width, height, name, 0,
-				       transform, scale);
-	free(name);
+	output = wayland_output_create(b, x, y, oc->width, oc->height, oc->name,
+				       fullscreen, oc->transform, oc->scale);
 
 	return output;
 }
@@ -1275,11 +1230,15 @@ input_set_cursor(struct wayland_input *input)
 static void
 input_handle_pointer_enter(void *data, struct wl_pointer *pointer,
 			   uint32_t serial, struct wl_surface *surface,
-			   wl_fixed_t x, wl_fixed_t y)
+			   wl_fixed_t fixed_x, wl_fixed_t fixed_y)
 {
 	struct wayland_input *input = data;
 	int32_t fx, fy;
 	enum theme_location location;
+	double x, y;
+
+	x = wl_fixed_to_double(fixed_x);
+	y = wl_fixed_to_double(fixed_y);
 
 	/* XXX: If we get a modifier event immediately before the focus,
 	 *      we should try to keep the same serial. */
@@ -1288,11 +1247,10 @@ input_handle_pointer_enter(void *data, struct wl_pointer *pointer,
 
 	if (input->output->frame) {
 		location = frame_pointer_enter(input->output->frame, input,
-					       wl_fixed_to_int(x),
-					       wl_fixed_to_int(y));
+					       x, y);
 		frame_interior(input->output->frame, &fx, &fy, NULL, NULL);
-		x -= wl_fixed_from_int(fx);
-		y -= wl_fixed_from_int(fy);
+		x -= fx;
+		y -= fy;
 
 		if (frame_status(input->output->frame) & FRAME_STATUS_REPAINT)
 			weston_output_schedule_repaint(&input->output->base);
@@ -1337,23 +1295,26 @@ input_handle_pointer_leave(void *data, struct wl_pointer *pointer,
 
 static void
 input_handle_motion(void *data, struct wl_pointer *pointer,
-		    uint32_t time, wl_fixed_t x, wl_fixed_t y)
+		    uint32_t time, wl_fixed_t fixed_x, wl_fixed_t fixed_y)
 {
 	struct wayland_input *input = data;
 	int32_t fx, fy;
 	enum theme_location location;
 	bool want_frame = false;
+	double x, y;
 
 	if (!input->output)
 		return;
 
+	x = wl_fixed_to_double(fixed_x);
+	y = wl_fixed_to_double(fixed_y);
+
 	if (input->output->frame) {
 		location = frame_pointer_motion(input->output->frame, input,
-						wl_fixed_to_int(x),
-						wl_fixed_to_int(y));
+						x, y);
 		frame_interior(input->output->frame, &fx, &fy, NULL, NULL);
-		x -= wl_fixed_from_int(fx);
-		y -= wl_fixed_from_int(fy);
+		x -= fx;
+		y -= fy;
 
 		if (frame_status(input->output->frame) & FRAME_STATUS_REPAINT)
 			weston_output_schedule_repaint(&input->output->base);
@@ -1447,7 +1408,7 @@ input_handle_axis(void *data, struct wl_pointer *pointer,
 	struct weston_pointer_axis_event weston_event;
 
 	weston_event.axis = axis;
-	weston_event.value = value;
+	weston_event.value = wl_fixed_to_double(value);
 
 	if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL &&
 	    input->vert.has_discrete) {
@@ -1705,14 +1666,18 @@ static const struct wl_keyboard_listener keyboard_listener = {
 static void
 input_handle_touch_down(void *data, struct wl_touch *wl_touch,
 			uint32_t serial, uint32_t time,
-			struct wl_surface *surface, int32_t id, wl_fixed_t x,
-			wl_fixed_t y)
+			struct wl_surface *surface, int32_t id,
+			wl_fixed_t fixed_x, wl_fixed_t fixed_y)
 {
 	struct wayland_input *input = data;
 	struct wayland_output *output;
 	enum theme_location location;
 	bool first_touch;
 	int32_t fx, fy;
+	double x, y;
+
+	x = wl_fixed_to_double(fixed_x);
+	y = wl_fixed_to_double(fixed_y);
 
 	first_touch = (input->touch_points == 0);
 	input->touch_points++;
@@ -1723,13 +1688,11 @@ input_handle_touch_down(void *data, struct wl_touch *wl_touch,
 		return;
 
 	if (output->frame) {
-		location = frame_touch_down(output->frame, input, id,
-					    wl_fixed_to_int(x),
-					    wl_fixed_to_int(y));
+		location = frame_touch_down(output->frame, input, id, x, y);
 
 		frame_interior(output->frame, &fx, &fy, NULL, NULL);
-		x -= wl_fixed_from_int(fx);
-		y -= wl_fixed_from_int(fy);
+		x -= fx;
+		y -= fy;
 
 		if (frame_status(output->frame) & FRAME_STATUS_REPAINT)
 			weston_output_schedule_repaint(&output->base);
@@ -1792,20 +1755,24 @@ input_handle_touch_up(void *data, struct wl_touch *wl_touch,
 
 static void
 input_handle_touch_motion(void *data, struct wl_touch *wl_touch,
-                        uint32_t time, int32_t id, wl_fixed_t x,
-                        wl_fixed_t y)
+                        uint32_t time, int32_t id,
+                        wl_fixed_t fixed_x, wl_fixed_t fixed_y)
 {
 	struct wayland_input *input = data;
 	struct wayland_output *output = input->touch_focus;
 	int32_t fx, fy;
+	double x, y;
+
+	x = wl_fixed_to_double(fixed_x);
+	y = wl_fixed_to_double(fixed_y);
 
 	if (!output || !input->touch_active)
 		return;
 
 	if (output->frame) {
 		frame_interior(output->frame, &fx, &fy, NULL, NULL);
-		x -= wl_fixed_from_int(fx);
-		y -= wl_fixed_from_int(fy);
+		x -= fx;
+		y -= fy;
 	}
 
 	weston_output_transform_coordinate(&output->base, x, y, &x, &y);
@@ -2155,24 +2122,18 @@ static const char *left_ptrs[] = {
 };
 
 static void
-create_cursor(struct wayland_backend *b, struct weston_config *config)
+create_cursor(struct wayland_backend *b,
+	      struct weston_wayland_backend_config *config)
 {
-	struct weston_config_section *s;
-	int size;
-	char *theme = NULL;
 	unsigned int i;
 
-	s = weston_config_get_section(config, "shell", NULL, NULL);
-	weston_config_section_get_string(s, "cursor-theme", &theme, NULL);
-	weston_config_section_get_int(s, "cursor-size", &size, 32);
-
-	b->cursor_theme = wl_cursor_theme_load(theme, size, b->parent.shm);
+	b->cursor_theme = wl_cursor_theme_load(config->cursor_theme,
+					       config->cursor_size,
+					       b->parent.shm);
 	if (!b->cursor_theme) {
 		fprintf(stderr, "could not load cursor theme\n");
 		return;
 	}
-
-	free(theme);
 
 	b->cursor = NULL;
 	for (i = 0; !b->cursor && i < ARRAY_LENGTH(left_ptrs); ++i)
@@ -2207,9 +2168,9 @@ fullscreen_binding(struct weston_keyboard *keyboard, uint32_t time,
 }
 
 static struct wayland_backend *
-wayland_backend_create(struct weston_compositor *compositor, int use_pixman,
-		       const char *display_name, int *argc, char *argv[],
-		       struct weston_config *config)
+wayland_backend_create(struct weston_compositor *compositor,
+		       struct weston_wayland_backend_config *new_config,
+		       int *argc, char *argv[], struct weston_config *config)
 {
 	struct wayland_backend *b;
 	struct wl_event_loop *loop;
@@ -2223,7 +2184,7 @@ wayland_backend_create(struct weston_compositor *compositor, int use_pixman,
 	if (weston_compositor_set_presentation_clock_software(compositor) < 0)
 		goto err_compositor;
 
-	b->parent.wl_display = wl_display_connect(display_name);
+	b->parent.wl_display = wl_display_connect(new_config->display_name);
 	if (b->parent.wl_display == NULL) {
 		weston_log("failed to create display: %m\n");
 		goto err_compositor;
@@ -2235,9 +2196,9 @@ wayland_backend_create(struct weston_compositor *compositor, int use_pixman,
 	wl_registry_add_listener(b->parent.registry, &registry_listener, b);
 	wl_display_roundtrip(b->parent.wl_display);
 
-	create_cursor(b, config);
+	create_cursor(b, new_config);
 
-	b->use_pixman = use_pixman;
+	b->use_pixman = new_config->use_pixman;
 
 	if (!b->use_pixman) {
 		gl_renderer = weston_load_module("gl-renderer.so",
@@ -2311,6 +2272,11 @@ wayland_backend_destroy(struct wayland_backend *b)
 	free(b);
 }
 
+static void
+config_init_to_defaults(struct weston_wayland_backend_config *config)
+{
+}
+
 WL_EXPORT int
 backend_init(struct weston_compositor *compositor, int *argc, char *argv[],
 	     struct weston_config *config,
@@ -2319,39 +2285,25 @@ backend_init(struct weston_compositor *compositor, int *argc, char *argv[],
 	struct wayland_backend *b;
 	struct wayland_output *output;
 	struct wayland_parent_output *poutput;
-	struct weston_config_section *section;
-	int x, count, width, height, scale, use_pixman, fullscreen, sprawl;
-	const char *section_name, *display_name;
-	char *name;
+	struct weston_wayland_backend_config new_config;
+	int x, count;
 
-	const struct weston_option wayland_options[] = {
-		{ WESTON_OPTION_INTEGER, "width", 0, &width },
-		{ WESTON_OPTION_INTEGER, "height", 0, &height },
-		{ WESTON_OPTION_INTEGER, "scale", 0, &scale },
-		{ WESTON_OPTION_STRING, "display", 0, &display_name },
-		{ WESTON_OPTION_BOOLEAN, "use-pixman", 0, &use_pixman },
-		{ WESTON_OPTION_INTEGER, "output-count", 0, &count },
-		{ WESTON_OPTION_BOOLEAN, "fullscreen", 0, &fullscreen },
-		{ WESTON_OPTION_BOOLEAN, "sprawl", 0, &sprawl },
-	};
+	if (config_base == NULL ||
+	    config_base->struct_version != WESTON_WAYLAND_BACKEND_CONFIG_VERSION ||
+	    config_base->struct_size > sizeof(struct weston_wayland_backend_config)) {
+		weston_log("wayland backend config structure is invalid\n");
+		return -1;
+	}
 
-	width = 0;
-	height = 0;
-	scale = 0;
-	display_name = NULL;
-	use_pixman = 0;
-	count = 1;
-	fullscreen = 0;
-	sprawl = 0;
-	parse_options(wayland_options,
-		      ARRAY_LENGTH(wayland_options), argc, argv);
+	config_init_to_defaults(&new_config);
+	memcpy(&new_config, config_base, config_base->struct_size);
 
-	b = wayland_backend_create(compositor, use_pixman, display_name,
-				   argc, argv, config);
+	b = wayland_backend_create(compositor, &new_config, argc, argv, config);
+
 	if (!b)
 		return -1;
 
-	if (sprawl || b->parent.fshell) {
+	if (new_config.sprawl || b->parent.fshell) {
 		b->sprawl_across_outputs = 1;
 		wl_display_roundtrip(b->parent.wl_display);
 
@@ -2361,9 +2313,13 @@ backend_init(struct weston_compositor *compositor, int *argc, char *argv[],
 		return 0;
 	}
 
-	if (fullscreen) {
-		output = wayland_output_create(b, 0, 0, width, height,
-					       NULL, 1, 0, 1);
+	if (new_config.fullscreen) {
+		if (new_config.num_outputs != 1 || !new_config.outputs)
+			goto err_outputs;
+
+		output = wayland_output_create_for_config(b,
+							  &new_config.outputs[0],
+							  1, 0, 0);
 		if (!output)
 			goto err_outputs;
 
@@ -2371,54 +2327,21 @@ backend_init(struct weston_compositor *compositor, int *argc, char *argv[],
 		return 0;
 	}
 
-	section = NULL;
 	x = 0;
-	while (weston_config_next_section(config, &section, &section_name)) {
-		if (!section_name || strcmp(section_name, "output") != 0)
-			continue;
-		weston_config_section_get_string(section, "name", &name, NULL);
-		if (name == NULL)
-			continue;
-
-		if (name[0] != 'W' || name[1] != 'L') {
-			free(name);
-			continue;
-		}
-		free(name);
-
-		output = wayland_output_create_for_config(b, section, width,
-							  height, scale, x, 0);
+	for (count = 0; count < new_config.num_outputs; ++count) {
+		output = wayland_output_create_for_config(b, &new_config.outputs[count],
+							  0, x, 0);
 		if (!output)
 			goto err_outputs;
 		if (wayland_output_set_windowed(output))
 			goto err_outputs;
 
 		x += output->base.width;
-		--count;
-	}
-
-	if (!width)
-		width = 1024;
-	if (!height)
-		height = 640;
-	if (!scale)
-		scale = 1;
-	while (count > 0) {
-		output = wayland_output_create(b, x, 0, width, height,
-					       NULL, 0, 0, scale);
-		if (!output)
-			goto err_outputs;
-		if (wayland_output_set_windowed(output))
-			goto err_outputs;
-
-		x += width;
-		--count;
 	}
 
 	weston_compositor_add_key_binding(compositor, KEY_F,
 				          MODIFIER_CTRL | MODIFIER_ALT,
 				          fullscreen_binding, b);
-
 	return 0;
 
 err_outputs:

@@ -34,7 +34,9 @@
 
 #include "shared/helpers.h"
 #include "shared/os-compatibility.h"
-#include "presentation_timing-client-protocol.h"
+#include "shared/xalloc.h"
+#include "shared/zalloc.h"
+#include "presentation-time-client-protocol.h"
 
 typedef void (*print_info_t)(void *info);
 typedef void (*destroy_info_t)(void *info);
@@ -105,7 +107,7 @@ struct seat_info {
 
 struct presentation_info {
 	struct global_info global;
-	struct presentation *presentation;
+	struct wp_presentation *presentation;
 
 	clockid_t clk_id;
 };
@@ -117,35 +119,6 @@ struct weston_info {
 	struct wl_list infos;
 	bool roundtrip_needed;
 };
-
-static void *
-fail_on_null(void *p)
-{
-	if (p == NULL) {
-		fprintf(stderr, "%s: out of memory\n", program_invocation_short_name);
-		exit(EXIT_FAILURE);
-	}
-
-	return p;
-}
-
-static void *
-xmalloc(size_t s)
-{
-	return fail_on_null(malloc(s));
-}
-
-static void *
-xzalloc(size_t s)
-{
-	return fail_on_null(calloc(1, s));
-}
-
-static char *
-xstrdup(const char *s)
-{
-	return fail_on_null(strdup(s));
-}
 
 static void
 print_global_info(void *data)
@@ -253,7 +226,7 @@ print_output_info(void *data)
 	wl_list_for_each(mode, &output->modes, link) {
 		printf("\tmode:\n");
 
-		printf("\t\twidth: %d px, height: %d px, refresh: %.f Hz,\n",
+		printf("\t\twidth: %d px, height: %d px, refresh: %.3f Hz,\n",
 		       mode->width, mode->height,
 		       (float) mode->refresh / 1000);
 
@@ -595,7 +568,7 @@ destroy_presentation_info(void *info)
 {
 	struct presentation_info *prinfo = info;
 
-	presentation_destroy(prinfo->presentation);
+	wp_presentation_destroy(prinfo->presentation);
 }
 
 static const char *
@@ -630,7 +603,7 @@ print_presentation_info(void *info)
 }
 
 static void
-presentation_handle_clock_id(void *data, struct presentation *presentation,
+presentation_handle_clock_id(void *data, struct wp_presentation *presentation,
 			     uint32_t clk_id)
 {
 	struct presentation_info *prinfo = data;
@@ -638,7 +611,7 @@ presentation_handle_clock_id(void *data, struct presentation *presentation,
 	prinfo->clk_id = clk_id;
 }
 
-static const struct presentation_listener presentation_listener = {
+static const struct wp_presentation_listener presentation_listener = {
 	presentation_handle_clock_id
 };
 
@@ -647,15 +620,16 @@ add_presentation_info(struct weston_info *info, uint32_t id, uint32_t version)
 {
 	struct presentation_info *prinfo = xzalloc(sizeof *prinfo);
 
-	init_global_info(info, &prinfo->global, id, "presentation", version);
+	init_global_info(info, &prinfo->global, id,
+			 wp_presentation_interface.name, version);
 	prinfo->global.print = print_presentation_info;
 	prinfo->global.destroy = destroy_presentation_info;
 
 	prinfo->clk_id = -1;
 	prinfo->presentation = wl_registry_bind(info->registry, id,
-						&presentation_interface, 1);
-	presentation_add_listener(prinfo->presentation, &presentation_listener,
-				  prinfo);
+						&wp_presentation_interface, 1);
+	wp_presentation_add_listener(prinfo->presentation,
+				     &presentation_listener, prinfo);
 
 	info->roundtrip_needed = true;
 }
@@ -688,7 +662,7 @@ global_handler(void *data, struct wl_registry *registry, uint32_t id,
 		add_shm_info(info, id, version);
 	else if (!strcmp(interface, "wl_output"))
 		add_output_info(info, id, version);
-	else if (!strcmp(interface, "presentation"))
+	else if (!strcmp(interface, wp_presentation_interface.name))
 		add_presentation_info(info, id, version);
 	else
 		add_global_info(info, id, interface, version);

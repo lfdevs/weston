@@ -33,24 +33,14 @@
 #include <sys/mman.h>
 #include <cairo.h>
 
-#include "zalloc.h"
 #include "shared/os-compatibility.h"
+#include "shared/xalloc.h"
+#include "shared/zalloc.h"
 #include "weston-test-client-helper.h"
 
 #define max(a, b) (((a) > (b)) ? (a) : (b))
 #define min(a, b) (((a) > (b)) ? (b) : (a))
 #define clip(x, a, b)  min(max(x, a), b)
-
-void *
-fail_on_null(void *p)
-{
-	if (p == NULL) {
-		fprintf(stderr, "out of memory\n");
-		exit(EXIT_FAILURE);
-	}
-	return p;
-}
-
 
 int
 surface_contains(struct surface *surface, int x, int y)
@@ -142,7 +132,11 @@ pointer_handle_enter(void *data, struct wl_pointer *wl_pointer,
 {
 	struct pointer *pointer = data;
 
-	pointer->focus = wl_surface_get_user_data(wl_surface);
+	if (wl_surface)
+		pointer->focus = wl_surface_get_user_data(wl_surface);
+	else
+		pointer->focus = NULL;
+
 	pointer->x = wl_fixed_to_int(x);
 	pointer->y = wl_fixed_to_int(y);
 
@@ -159,7 +153,7 @@ pointer_handle_leave(void *data, struct wl_pointer *wl_pointer,
 	pointer->focus = NULL;
 
 	fprintf(stderr, "test-client: got pointer leave, surface %p\n",
-		wl_surface_get_user_data(wl_surface));
+		wl_surface ? wl_surface_get_user_data(wl_surface) : NULL);
 }
 
 static void
@@ -253,7 +247,10 @@ keyboard_handle_enter(void *data, struct wl_keyboard *wl_keyboard,
 {
 	struct keyboard *keyboard = data;
 
-	keyboard->focus = wl_surface_get_user_data(wl_surface);
+	if (wl_surface)
+		keyboard->focus = wl_surface_get_user_data(wl_surface);
+	else
+		keyboard->focus = NULL;
 
 	fprintf(stderr, "test-client: got keyboard enter, surface %p\n",
 		keyboard->focus);
@@ -268,7 +265,7 @@ keyboard_handle_leave(void *data, struct wl_keyboard *wl_keyboard,
 	keyboard->focus = NULL;
 
 	fprintf(stderr, "test-client: got keyboard leave, surface %p\n",
-		wl_surface_get_user_data(wl_surface));
+		wl_surface ? wl_surface_get_user_data(wl_surface) : NULL);
 }
 
 static void

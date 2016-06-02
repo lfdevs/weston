@@ -5,15 +5,12 @@ To make a release of Weston and/or Wayland, follow these steps.
 
       $ make check
 
-  1.  Verify that the wayland-protocols version dependency is correct,
-      and that wayland-protocols has had a release with any needed
-      protocol updates.
+  1.  For Weston, verify that the wayland and wayland-protocols version
+      dependencies are correct, and that wayland-protocols has had a
+      release with any needed protocol updates.
 
   2.  Update the first three lines of configure.ac to the intended
-      version, commit.  Also note that Weston includes versioned
-      dependencies on 'wayland-server' and 'wayland-client' in
-      configure.ac which occasionally need updated as well.  Then commit
-      your changes:
+      version, commit.  Then commit your changes:
 
       $ export RELEASE_NUMBER="x.y.z"
       $ export RELEASE_NAME="[alpha|beta|RC1|RC2|official|point]"
@@ -69,9 +66,9 @@ To make a release of Weston and/or Wayland, follow these steps.
   7.  Update releases.html in wayland-web with links to tarballs and
       the release email URL.
 
-      The register_release script in wayland-web will generate an HTML
+      The wl_register_release script in wayland-web will generate an HTML
       snippet that can be pasted into releases.html (or e.g. in emacs
-      insert it via "C-u M-! scripts/register_release x.y.z") and
+      insert it via "C-u M-! scripts/wl_register_release x.y.z") and
       customized.
 
       Once satisfied:

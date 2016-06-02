@@ -65,13 +65,19 @@ weston_LDFLAGS = -export-dynamic
 weston_CPPFLAGS = $(AM_CPPFLAGS) -DIN_WESTON
 weston_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS) $(LIBUNWIND_CFLAGS)
 weston_LDADD = $(COMPOSITOR_LIBS) $(LIBUNWIND_LIBS) \
-	$(DLOPEN_LIBS) -lm -lrt libshared.la
+	$(DLOPEN_LIBS) -lm $(CLOCK_GETTIME_LIBS) libshared.la
 
 weston_SOURCES =					\
 	src/git-version.h				\
 	src/log.c					\
 	src/compositor.c				\
 	src/compositor.h				\
+	src/compositor-drm.h				\
+	src/compositor-fbdev.h				\
+	src/compositor-headless.h			\
+	src/compositor-rdp.h				\
+	src/compositor-wayland.h			\
+	src/compositor-x11.h				\
 	src/input.c					\
 	src/data-device.c				\
 	src/screenshooter.c				\
@@ -102,7 +108,8 @@ module_LTLIBRARIES += systemd-notify.la
 systemd_notify_la_LDFLAGS = -module -avoid-version
 systemd_notify_la_LIBADD = $(SYSTEMD_DAEMON_LIBS)
 systemd_notify_la_CFLAGS =			\
-	$(SYSTEMD_DAEMON_LIBS)			\
+	$(COMPOSITOR_CFLAGS)			\
+	$(SYSTEMD_DAEMON_CFLAGS)		\
 	$(PIXMAN_CFLAGS)			\
 	$(AM_CFLAGS)
 systemd_notify_la_SOURCES =			\
@@ -121,8 +128,8 @@ nodist_weston_SOURCES =					\
 	protocol/text-input-unstable-v1-server-protocol.h		\
 	protocol/input-method-unstable-v1-protocol.c			\
 	protocol/input-method-unstable-v1-server-protocol.h		\
-	protocol/presentation_timing-protocol.c		\
-	protocol/presentation_timing-server-protocol.h	\
+	protocol/presentation-time-protocol.c		\
+	protocol/presentation-time-server-protocol.h	\
 	protocol/scaler-protocol.c			\
 	protocol/scaler-server-protocol.h		\
 	protocol/linux-dmabuf-unstable-v1-protocol.c	\
@@ -207,6 +214,12 @@ westonincludedir = $(includedir)/weston
 westoninclude_HEADERS =				\
 	src/version.h				\
 	src/compositor.h			\
+	src/compositor-drm.h			\
+	src/compositor-fbdev.h			\
+	src/compositor-headless.h		\
+	src/compositor-rdp.h			\
+	src/compositor-wayland.h		\
+	src/compositor-x11.h			\
 	src/timeline-object.h			\
 	shared/matrix.h				\
 	shared/config-parser.h			\
@@ -249,6 +262,7 @@ x11_backend_la_CFLAGS =				\
 	$(AM_CFLAGS)
 x11_backend_la_SOURCES = 			\
 	src/compositor-x11.c			\
+	src/compositor-x11.h			\
 	shared/helpers.h
 endif
 
@@ -267,7 +281,8 @@ drm_backend_la_LIBADD =				\
 	$(COMPOSITOR_LIBS)			\
 	$(DRM_COMPOSITOR_LIBS)			\
 	$(INPUT_BACKEND_LIBS)			\
-	libshared.la -lrt			\
+	libshared.la				\
+	$(CLOCK_GETTIME_LIBS)			\
 	libsession-helper.la
 drm_backend_la_CFLAGS =				\
 	$(COMPOSITOR_CFLAGS)			\
@@ -276,6 +291,7 @@ drm_backend_la_CFLAGS =				\
 	$(AM_CFLAGS)
 drm_backend_la_SOURCES =			\
 	src/compositor-drm.c			\
+	src/compositor-drm.h            \
 	$(INPUT_BACKEND_SOURCES)		\
 	shared/helpers.h			\
 	shared/timespec-util.h			\
@@ -305,6 +321,7 @@ wayland_backend_la_CFLAGS =			\
 	$(AM_CFLAGS)
 wayland_backend_la_SOURCES = 			\
 	src/compositor-wayland.c		\
+	src/compositor-wayland.h		\
 	shared/helpers.h
 nodist_wayland_backend_la_SOURCES =			\
 	protocol/fullscreen-shell-unstable-v1-protocol.c		\
@@ -352,6 +369,7 @@ headless_backend_la_LIBADD = $(COMPOSITOR_LIBS) libshared.la
 headless_backend_la_CFLAGS = $(COMPOSITOR_CFLAGS) $(AM_CFLAGS)
 headless_backend_la_SOURCES = 			\
 	src/compositor-headless.c		\
+	src/compositor-headless.h		\
 	shared/helpers.h
 endif
 
@@ -372,6 +390,7 @@ fbdev_backend_la_CFLAGS =			\
 	$(AM_CFLAGS)
 fbdev_backend_la_SOURCES =			\
 	src/compositor-fbdev.c			\
+	src/compositor-fbdev.h			\
 	shared/helpers.h			\
 	$(INPUT_BACKEND_SOURCES)
 endif
@@ -388,6 +407,7 @@ rdp_backend_la_CFLAGS =				\
 	$(AM_CFLAGS)
 rdp_backend_la_SOURCES = 			\
 	src/compositor-rdp.c			\
+	src/compositor-rdp.h			\
 	shared/helpers.h
 endif
 
@@ -501,14 +521,14 @@ weston_presentation_shm_SOURCES = 			\
 	clients/presentation-shm.c			\
 	shared/helpers.h
 nodist_weston_presentation_shm_SOURCES =		\
-	protocol/presentation_timing-protocol.c		\
-	protocol/presentation_timing-client-protocol.h
+	protocol/presentation-time-protocol.c		\
+	protocol/presentation-time-client-protocol.h
 weston_presentation_shm_CFLAGS = $(AM_CFLAGS) $(SIMPLE_CLIENT_CFLAGS)
-weston_presentation_shm_LDADD = $(SIMPLE_CLIENT_LIBS) libshared.la -lm -lrt
+weston_presentation_shm_LDADD = $(SIMPLE_CLIENT_LIBS) libshared.la -lm $(CLOCK_GETTIME_LIBS)
 
 weston_multi_resource_SOURCES = clients/multi-resource.c
 weston_multi_resource_CFLAGS = $(AM_CFLAGS) $(SIMPLE_CLIENT_CFLAGS)
-weston_multi_resource_LDADD = $(SIMPLE_CLIENT_LIBS) libshared.la -lrt -lm
+weston_multi_resource_LDADD = $(SIMPLE_CLIENT_LIBS) libshared.la $(CLOCK_GETTIME_LIBS) -lm
 endif
 
 if BUILD_SIMPLE_EGL_CLIENTS
@@ -565,8 +585,6 @@ nodist_libtoytoolkit_la_SOURCES =			\
 	protocol/text-cursor-position-client-protocol.h	\
 	protocol/scaler-protocol.c			\
 	protocol/scaler-client-protocol.h		\
-	protocol/presentation_timing-protocol.c		\
-	protocol/presentation_timing-client-protocol.h	\
 	protocol/xdg-shell-unstable-v5-protocol.c			\
 	protocol/xdg-shell-unstable-v5-client-protocol.h		\
 	protocol/ivi-application-protocol.c		\
@@ -578,7 +596,7 @@ BUILT_SOURCES += $(nodist_libtoytoolkit_la_SOURCES)
 libtoytoolkit_la_LIBADD =			\
 	$(CLIENT_LIBS)				\
 	$(CAIRO_EGL_LIBS)			\
-	libshared-cairo.la -lrt -lm
+	libshared-cairo.la $(CLOCK_GETTIME_LIBS) -lm
 libtoytoolkit_la_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS) $(CAIRO_EGL_CFLAGS)
 
 weston_flower_SOURCES = clients/flower.c
@@ -723,8 +741,8 @@ weston_info_SOURCES = 					\
 	clients/weston-info.c				\
 	shared/helpers.h
 nodist_weston_info_SOURCES =				\
-	protocol/presentation_timing-protocol.c		\
-	protocol/presentation_timing-client-protocol.h
+	protocol/presentation-time-protocol.c		\
+	protocol/presentation-time-client-protocol.h
 weston_info_LDADD = $(WESTON_INFO_LIBS) libshared.la
 weston_info_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
@@ -772,6 +790,8 @@ BUILT_SOURCES +=					\
 	protocol/weston-desktop-shell-protocol.c			\
 	protocol/scaler-client-protocol.h		\
 	protocol/scaler-protocol.c			\
+	protocol/presentation-time-protocol.c				\
+	protocol/presentation-time-client-protocol.h			\
 	protocol/fullscreen-shell-unstable-v1-protocol.c		\
 	protocol/fullscreen-shell-unstable-v1-client-protocol.h	\
 	protocol/xdg-shell-unstable-v5-protocol.c			\
@@ -788,6 +808,9 @@ dist_westondata_DATA =				\
 	data/pattern.png			\
 	data/terminal.png			\
 	data/border.png				\
+	data/icon_editor.png			\
+	data/icon_flower.png			\
+	data/icon_terminal.png			\
 	data/icon_window.png			\
 	data/sign_close.png			\
 	data/sign_maximize.png			\
@@ -893,6 +916,7 @@ ivi_shell_la_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS)
 ivi_shell_la_SOURCES =				\
 	ivi-shell/ivi-layout-export.h		\
 	ivi-shell/ivi-layout-private.h		\
+	ivi-shell/ivi-layout-shell.h		\
 	ivi-shell/ivi-layout.c			\
 	ivi-shell/ivi-layout-transition.c	\
 	ivi-shell/ivi-shell.h			\
@@ -998,7 +1022,9 @@ libshared_la_SOURCES =				\
 	shared/file-util.h			\
 	shared/helpers.h			\
 	shared/os-compatibility.c		\
-	shared/os-compatibility.h
+	shared/os-compatibility.h		\
+	shared/xalloc.c			\
+	shared/xalloc.h
 
 libshared_cairo_la_CFLAGS =			\
 	-DDATADIR='"$(datadir)"'		\
@@ -1046,7 +1072,8 @@ libzunitc_la_CFLAGS = \
 	-I$(top_srcdir)/tools/zunitc/inc
 
 libzunitc_la_LIBADD = \
-	libshared.la
+	libshared.la \
+	$(CLOCK_GETTIME_LIBS)
 
 if ENABLE_JUNIT_XML
 libzunitc_la_CFLAGS += \
@@ -1174,7 +1201,7 @@ vertex_clip_test_SOURCES =			\
 	shared/helpers.h			\
 	src/vertex-clipping.c			\
 	src/vertex-clipping.h
-vertex_clip_test_LDADD = libtest-runner.la -lm -lrt
+vertex_clip_test_LDADD = libtest-runner.la -lm $(CLOCK_GETTIME_LIBS)
 
 libtest_client_la_SOURCES =			\
 	tests/weston-test-client-helper.c	\
@@ -1234,8 +1261,8 @@ presentation_weston_SOURCES = 			\
 	tests/presentation-test.c		\
 	shared/helpers.h
 nodist_presentation_weston_SOURCES =		\
-	protocol/presentation_timing-protocol.c	\
-	protocol/presentation_timing-client-protocol.h
+	protocol/presentation-time-protocol.c	\
+	protocol/presentation-time-client-protocol.h
 presentation_weston_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
 presentation_weston_LDADD = libtest-client.la
 
@@ -1262,7 +1289,7 @@ matrix_test_SOURCES =				\
 	shared/matrix.c				\
 	shared/matrix.h
 matrix_test_CPPFLAGS = -DUNIT_TEST
-matrix_test_LDADD = -lm -lrt
+matrix_test_LDADD = -lm $(CLOCK_GETTIME_LIBS)
 
 if ENABLE_IVI_SHELL
 module_tests += 				\
@@ -1353,7 +1380,6 @@ EXTRA_DIST +=					\
 	protocol/weston-screenshooter.xml	\
 	protocol/text-cursor-position.xml	\
 	protocol/weston-test.xml		\
-	protocol/presentation_timing.xml	\
 	protocol/scaler.xml			\
 	protocol/ivi-application.xml		\
 	protocol/ivi-hmi-controller.xml
@@ -1423,7 +1449,7 @@ doc: $(DOXYGEN_INDICES)
 .SECONDEXPANSION:
 
 define protostability
-$(shell echo $1 | sed 's/.*\(\<unstable\>\|\<stable\>\).*/\1/')
+$(if $(findstring unstable,$1),unstable,stable)
 endef
 
 define protoname

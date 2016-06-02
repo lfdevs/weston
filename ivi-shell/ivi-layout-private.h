@@ -42,7 +42,6 @@ struct ivi_layout_surface {
 	struct weston_transform transform;
 
 	struct ivi_layout_surface_properties prop;
-	uint32_t event_mask;
 
 	struct {
 		struct ivi_layout_surface_properties prop;
@@ -53,13 +52,6 @@ struct ivi_layout_surface {
 		struct wl_list link;
 		struct wl_list layer_list;
 	} order;
-
-	struct {
-		ivi_controller_surface_content_callback callback;
-		void *userdata;
-	} content_observer;
-
-	struct wl_signal configured;
 };
 
 struct ivi_layout_layer {
@@ -71,7 +63,6 @@ struct ivi_layout_layer {
 	struct ivi_layout_screen *on_screen;
 
 	struct ivi_layout_layer_properties prop;
-	uint32_t event_mask;
 
 	struct {
 		struct ivi_layout_layer_properties prop;
@@ -158,25 +149,9 @@ ivi_layout_transition_fade_layer(struct ivi_layout_layer *layer,
 int32_t
 is_surface_transition(struct ivi_layout_surface *surface);
 
-/**
- * methods of interaction between ivi-shell with ivi-layout
- */
-struct weston_view *
-ivi_layout_get_weston_view(struct ivi_layout_surface *surface);
 void
-ivi_layout_surface_configure(struct ivi_layout_surface *ivisurf,
-			     int32_t width, int32_t height);
-struct ivi_layout_surface*
-ivi_layout_surface_create(struct weston_surface *wl_surface,
-			  uint32_t id_surface);
-void
-ivi_layout_init_with_compositor(struct weston_compositor *ec);
-int32_t
-ivi_layout_surface_get_dimension(struct ivi_layout_surface *ivisurf,
-				 int32_t *dest_width, int32_t *dest_height);
-void
-ivi_layout_surface_add_configured_listener(struct ivi_layout_surface* ivisurf,
-					   struct wl_listener* listener);
+ivi_layout_remove_all_surface_transitions(struct ivi_layout_surface *surface);
+
 /**
  * methods of interaction between transition animation with ivi-layout
  */
@@ -191,38 +166,26 @@ ivi_layout_surface_set_destination_rectangle(struct ivi_layout_surface *ivisurf,
 int32_t
 ivi_layout_surface_set_opacity(struct ivi_layout_surface *ivisurf,
 			       wl_fixed_t opacity);
-wl_fixed_t
-ivi_layout_surface_get_opacity(struct ivi_layout_surface *ivisurf);
 int32_t
 ivi_layout_surface_set_visibility(struct ivi_layout_surface *ivisurf,
 				  bool newVisibility);
-bool
-ivi_layout_surface_get_visibility(struct ivi_layout_surface *ivisurf);
 struct ivi_layout_surface *
 ivi_layout_get_surface_from_id(uint32_t id_surface);
 int32_t
 ivi_layout_layer_set_opacity(struct ivi_layout_layer *ivilayer,
 			     wl_fixed_t opacity);
-wl_fixed_t
-ivi_layout_layer_get_opacity(struct ivi_layout_layer *ivilayer);
 int32_t
 ivi_layout_layer_set_visibility(struct ivi_layout_layer *ivilayer,
 				bool newVisibility);
 int32_t
-ivi_layout_layer_set_position(struct ivi_layout_layer *ivilayer,
-			      int32_t dest_x, int32_t dest_y);
-int32_t
-ivi_layout_layer_get_position(struct ivi_layout_layer *ivilayer,
-			      int32_t *dest_x, int32_t *dest_y);
+ivi_layout_layer_set_destination_rectangle(struct ivi_layout_layer *ivilayer,
+					   int32_t x, int32_t y,
+					   int32_t width, int32_t height);
 int32_t
 ivi_layout_layer_set_render_order(struct ivi_layout_layer *ivilayer,
 				  struct ivi_layout_surface **pSurface,
 				  int32_t number);
 void
 ivi_layout_transition_move_layer_cancel(struct ivi_layout_layer *layer);
-int
-load_controller_modules(struct weston_compositor *compositor, const char *modules,
-			int *argc, char *argv[]);
-void
-ivi_layout_surface_destroy(struct ivi_layout_surface *ivisurf);
+
 #endif

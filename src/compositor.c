@@ -55,7 +55,7 @@
 
 #include "compositor.h"
 #include "scaler-server-protocol.h"
-#include "presentation_timing-server-protocol.h"
+#include "presentation-time-server-protocol.h"
 #include "shared/helpers.h"
 #include "shared/os-compatibility.h"
 #include "shared/timespec-util.h"
@@ -443,7 +443,7 @@ static void
 weston_presentation_feedback_discard(
 		struct weston_presentation_feedback *feedback)
 {
-	presentation_feedback_send_discarded(feedback->resource);
+	wp_presentation_feedback_send_discarded(feedback->resource);
 	wl_resource_destroy(feedback->resource);
 }
 
@@ -473,16 +473,16 @@ weston_presentation_feedback_present(
 		if (wl_resource_get_client(o) != client)
 			continue;
 
-		presentation_feedback_send_sync_output(feedback->resource, o);
+		wp_presentation_feedback_send_sync_output(feedback->resource, o);
 	}
 
 	secs = ts->tv_sec;
-	presentation_feedback_send_presented(feedback->resource,
-					     secs >> 32, secs & 0xffffffff,
-					     ts->tv_nsec,
-					     refresh_nsec,
-					     seq >> 32, seq & 0xffffffff,
-					     flags | feedback->psf_flags);
+	wp_presentation_feedback_send_presented(feedback->resource,
+						secs >> 32, secs & 0xffffffff,
+						ts->tv_nsec,
+						refresh_nsec,
+						seq >> 32, seq & 0xffffffff,
+						flags | feedback->psf_flags);
 	wl_resource_destroy(feedback->resource);
 }
 
@@ -496,7 +496,7 @@ weston_presentation_feedback_present_list(struct wl_list *list,
 {
 	struct weston_presentation_feedback *feedback, *tmp;
 
-	assert(!(flags & PRESENTATION_FEEDBACK_INVALID) ||
+	assert(!(flags & WP_PRESENTATION_FEEDBACK_INVALID) ||
 	       wl_list_empty(list));
 
 	wl_list_for_each_safe(feedback, tmp, list, link)
@@ -1082,16 +1082,15 @@ weston_surface_update_output_mask(struct weston_surface *es, uint32_t mask)
 	}
 }
 
-
 /** Recalculate which output(s) the surface has views displayed on
  *
  * \param es  The surface to remap to outputs
  *
  * Finds the output that is showing the largest amount of one
  * of the surface's various views.  This output becomes the
- * surface's primary output for vsync and frame event purposes.
+ * surface's primary output for vsync and frame callback purposes.
  *
- * Also notes the primary outputs of all of the surface's views
+ * Also notes all outputs of all of the surface's views
  * in the output_mask for the surface.
  */
 static void
@@ -1136,8 +1135,7 @@ weston_surface_assign_output(struct weston_surface *es)
  *
  * Identifies the set of outputs that the view is visible on,
  * noting them into the output_mask.  The output that the view
- * is most visible on is set as the view's primary output for
- * vsync and frame event purposes.
+ * is most visible on is set as the view's primary output.
  *
  * Also does the same for the view's surface.  See
  * weston_surface_assign_output().
@@ -1605,7 +1603,7 @@ weston_view_set_transform_parent(struct weston_view *view,
  * motion or touch-downs. Everything inside the rectangle will behave
  * normally. Clients are unaware of clipping.
  *
- * The rectangle is set in the surface local coordinates. Setting a clip
+ * The rectangle is set in surface-local coordinates. Setting a clip
  * mask rectangle does not affect the view position, the view is positioned
  * as it would be without a clip. The clip also does not change
  * weston_surface::width,height.
@@ -1725,10 +1723,37 @@ fixed_round_up_to_int(wl_fixed_t f)
 }
 
 static void
+convert_size_by_transform_scale(int32_t *width_out, int32_t *height_out,
+				int32_t width, int32_t height,
+				uint32_t transform,
+				int32_t scale)
+{
+	assert(scale > 0);
+
+	switch (transform) {
+	case WL_OUTPUT_TRANSFORM_NORMAL:
+	case WL_OUTPUT_TRANSFORM_180:
+	case WL_OUTPUT_TRANSFORM_FLIPPED:
+	case WL_OUTPUT_TRANSFORM_FLIPPED_180:
+		*width_out = width / scale;
+		*height_out = height / scale;
+		break;
+	case WL_OUTPUT_TRANSFORM_90:
+	case WL_OUTPUT_TRANSFORM_270:
+	case WL_OUTPUT_TRANSFORM_FLIPPED_90:
+	case WL_OUTPUT_TRANSFORM_FLIPPED_270:
+		*width_out = height / scale;
+		*height_out = width / scale;
+		break;
+	default:
+		assert(0 && "invalid transform");
+	}
+}
+
+static void
 weston_surface_calculate_size_from_buffer(struct weston_surface *surface)
 {
 	struct weston_buffer_viewport *vp = &surface->buffer_viewport;
-	int32_t width, height;
 
 	if (!surface->buffer_ref.buffer) {
 		surface->width_from_buffer = 0;
@@ -1736,22 +1761,12 @@ weston_surface_calculate_size_from_buffer(struct weston_surface *surface)
 		return;
 	}
 
-	switch (vp->buffer.transform) {
-	case WL_OUTPUT_TRANSFORM_90:
-	case WL_OUTPUT_TRANSFORM_270:
-	case WL_OUTPUT_TRANSFORM_FLIPPED_90:
-	case WL_OUTPUT_TRANSFORM_FLIPPED_270:
-		width = surface->buffer_ref.buffer->height / vp->buffer.scale;
-		height = surface->buffer_ref.buffer->width / vp->buffer.scale;
-		break;
-	default:
-		width = surface->buffer_ref.buffer->width / vp->buffer.scale;
-		height = surface->buffer_ref.buffer->height / vp->buffer.scale;
-		break;
-	}
-
-	surface->width_from_buffer = width;
-	surface->height_from_buffer = height;
+	convert_size_by_transform_scale(&surface->width_from_buffer,
+					&surface->height_from_buffer,
+					surface->buffer_ref.buffer->width,
+					surface->buffer_ref.buffer->height,
+					vp->buffer.transform,
+					vp->buffer.scale);
 }
 
 static void
@@ -2383,7 +2398,6 @@ weston_output_repaint(struct weston_output *output)
 	output->repaint_needed = 0;
 
 	weston_compositor_repick(ec);
-	wl_event_loop_dispatch(ec->input_loop, 0);
 
 	wl_list_for_each_safe(cb, cnext, &frame_callback_list, link) {
 		wl_callback_send_done(cb->resource, output->frame_time);
@@ -2400,34 +2414,11 @@ weston_output_repaint(struct weston_output *output)
 	return r;
 }
 
-static int
-weston_compositor_read_input(int fd, uint32_t mask, void *data)
-{
-	struct weston_compositor *compositor = data;
-
-	wl_event_loop_dispatch(compositor->input_loop, 0);
-
-	return 1;
-}
-
 static void
 weston_output_schedule_repaint_reset(struct weston_output *output)
 {
-	struct weston_compositor *compositor = output->compositor;
-	struct wl_event_loop *loop;
-	int fd;
-
 	output->repaint_scheduled = 0;
 	TL_POINT("core_repaint_exit_loop", TLP_OUTPUT(output), TLP_END);
-
-	if (compositor->input_loop_source)
-		return;
-
-	loop = wl_display_get_event_loop(compositor->wl_display);
-	fd = wl_event_loop_get_fd(compositor->input_loop);
-	compositor->input_loop_source =
-		wl_event_loop_add_fd(loop, fd, WL_EVENT_READABLE,
-				     weston_compositor_read_input, compositor);
 }
 
 static int
@@ -2489,7 +2480,7 @@ weston_output_finish_frame(struct weston_output *output,
 	 * the deadline given by repaint_msec? In that case we delay until
 	 * the deadline of the next frame, to give clients a more predictable
 	 * timing of the repaint cycle to lock on. */
-	if (presented_flags == PRESENTATION_FEEDBACK_INVALID && msec < 0)
+	if (presented_flags == WP_PRESENTATION_FEEDBACK_INVALID && msec < 0)
 		msec += refresh_nsec / 1000000;
 
 	if (msec < 1)
@@ -2576,12 +2567,6 @@ weston_output_schedule_repaint(struct weston_output *output)
 	wl_event_loop_add_idle(loop, idle_repaint, output);
 	output->repaint_scheduled = 1;
 	TL_POINT("core_repaint_enter_loop", TLP_OUTPUT(output), TLP_END);
-
-
-	if (compositor->input_loop_source) {
-		wl_event_source_remove(compositor->input_loop_source);
-		compositor->input_loop_source = NULL;
-	}
 }
 
 WL_EXPORT void
@@ -2738,10 +2723,10 @@ weston_surface_commit_subsurface_order(struct weston_surface *surface)
 }
 
 static void
-weston_surface_build_buffer_matrix(struct weston_surface *surface,
+weston_surface_build_buffer_matrix(const struct weston_surface *surface,
 				   struct weston_matrix *matrix)
 {
-	struct weston_buffer_viewport *vp = &surface->buffer_viewport;
+	const struct weston_buffer_viewport *vp = &surface->buffer_viewport;
 	double src_width, src_height, dest_width, dest_height;
 
 	weston_matrix_init(matrix);
@@ -4198,30 +4183,13 @@ static void
 weston_output_transform_scale_init(struct weston_output *output, uint32_t transform, uint32_t scale)
 {
 	output->transform = transform;
+	output->native_scale = scale;
+	output->current_scale = scale;
 
-	switch (transform) {
-	case WL_OUTPUT_TRANSFORM_90:
-	case WL_OUTPUT_TRANSFORM_270:
-	case WL_OUTPUT_TRANSFORM_FLIPPED_90:
-	case WL_OUTPUT_TRANSFORM_FLIPPED_270:
-		/* Swap width and height */
-		output->width = output->current_mode->height;
-		output->height = output->current_mode->width;
-		break;
-	case WL_OUTPUT_TRANSFORM_NORMAL:
-	case WL_OUTPUT_TRANSFORM_180:
-	case WL_OUTPUT_TRANSFORM_FLIPPED:
-	case WL_OUTPUT_TRANSFORM_FLIPPED_180:
-		output->width = output->current_mode->width;
-		output->height = output->current_mode->height;
-		break;
-	default:
-		break;
-	}
-
-	output->native_scale = output->current_scale = scale;
-	output->width /= scale;
-	output->height /= scale;
+	convert_size_by_transform_scale(&output->width, &output->height,
+					output->current_mode->width,
+					output->current_mode->height,
+					transform, scale);
 }
 
 static void
@@ -4266,7 +4234,7 @@ weston_output_move(struct weston_output *output, int x, int y)
 					output->model,
 					output->transform);
 
-		if (wl_resource_get_version(resource) >= 2)
+		if (wl_resource_get_version(resource) >= WL_OUTPUT_DONE_SINCE_VERSION)
 			wl_output_send_done(resource);
 	}
 }
@@ -4359,19 +4327,19 @@ weston_compositor_add_output(struct weston_compositor *compositor,
 
 WL_EXPORT void
 weston_output_transform_coordinate(struct weston_output *output,
-				   wl_fixed_t device_x, wl_fixed_t device_y,
-				   wl_fixed_t *x, wl_fixed_t *y)
+				   double device_x, double device_y,
+				   double *x, double *y)
 {
 	struct weston_vector p = { {
-		wl_fixed_to_double(device_x),
-		wl_fixed_to_double(device_y),
+		device_x,
+		device_y,
 		0.0,
 		1.0 } };
 
 	weston_matrix_transform(&output->inverse_matrix, &p);
 
-	*x = wl_fixed_from_double(p.f[0] / p.f[3]);
-	*y = wl_fixed_from_double(p.f[1] / p.f[3]);
+	*x = p.f[0] / p.f[3];
+	*y = p.f[1] / p.f[3];
 }
 
 static void
@@ -4605,7 +4573,7 @@ presentation_feedback(struct wl_client *client,
 		goto err_calloc;
 
 	feedback->resource = wl_resource_create(client,
-					&presentation_feedback_interface,
+					&wp_presentation_feedback_interface,
 					1, callback);
 	if (!feedback->resource)
 		goto err_create;
@@ -4624,7 +4592,7 @@ err_calloc:
 	wl_client_post_no_memory(client);
 }
 
-static const struct presentation_interface presentation_implementation = {
+static const struct wp_presentation_interface presentation_implementation = {
 	presentation_destroy,
 	presentation_feedback
 };
@@ -4636,7 +4604,7 @@ bind_presentation(struct wl_client *client,
 	struct weston_compositor *compositor = data;
 	struct wl_resource *resource;
 
-	resource = wl_resource_create(client, &presentation_interface,
+	resource = wl_resource_create(client, &wp_presentation_interface,
 				      version, id);
 	if (resource == NULL) {
 		wl_client_post_no_memory(client);
@@ -4645,7 +4613,7 @@ bind_presentation(struct wl_client *client,
 
 	wl_resource_set_implementation(resource, &presentation_implementation,
 				       compositor, NULL);
-	presentation_send_clock_id(resource, compositor->presentation_clock);
+	wp_presentation_send_clock_id(resource, compositor->presentation_clock);
 }
 
 static void
@@ -4754,7 +4722,7 @@ weston_compositor_create(struct wl_display *display, void *user_data)
 			      ec, bind_scaler))
 		goto fail;
 
-	if (!wl_global_create(ec->wl_display, &presentation_interface, 1,
+	if (!wl_global_create(ec->wl_display, &wp_presentation_interface, 1,
 			      ec, bind_presentation))
 		goto fail;
 
@@ -4780,8 +4748,6 @@ weston_compositor_create(struct wl_display *display, void *user_data)
 	loop = wl_display_get_event_loop(ec->wl_display);
 	ec->idle_source = wl_event_loop_add_timer(loop, idle_handler, ec);
 
-	ec->input_loop = wl_event_loop_create();
-
 	weston_layer_init(&ec->fade_layer, &ec->layer_list);
 	weston_layer_init(&ec->cursor_layer, &ec->fade_layer.link);
 
@@ -4801,8 +4767,6 @@ weston_compositor_shutdown(struct weston_compositor *ec)
 	struct weston_output *output, *next;
 
 	wl_event_source_remove(ec->idle_source);
-	if (ec->input_loop_source)
-		wl_event_source_remove(ec->input_loop_source);
 
 	/* Destroy all outputs associated with this compositor */
 	wl_list_for_each_safe(output, next, &ec->output_list, link)
@@ -4819,8 +4783,6 @@ weston_compositor_shutdown(struct weston_compositor *ec)
 	weston_binding_list_destroy_all(&ec->debug_binding_list);
 
 	weston_plane_release(&ec->primary_plane);
-
-	wl_event_loop_destroy(ec->input_loop);
 }
 
 WL_EXPORT void

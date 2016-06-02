@@ -35,6 +35,7 @@
 
 #include <wayland-client.h>
 #include "shared/os-compatibility.h"
+#include "shared/zalloc.h"
 #include "xdg-shell-unstable-v5-client-protocol.h"
 #include "fullscreen-shell-unstable-v1-client-protocol.h"
 
@@ -49,7 +50,7 @@ struct display {
 	struct xdg_shell *shell;
 	struct zwp_fullscreen_shell_v1 *fshell;
 	struct wl_shm *shm;
-	uint32_t formats;
+	bool has_xrgb;
 	struct ivi_application *ivi_application;
 };
 
@@ -157,7 +158,7 @@ create_window(struct display *display, int width, int height)
 {
 	struct window *window;
 
-	window = calloc(1, sizeof *window);
+	window = zalloc(sizeof *window);
 	if (!window)
 		return NULL;
 
@@ -336,7 +337,8 @@ shm_format(void *data, struct wl_shm *wl_shm, uint32_t format)
 {
 	struct display *d = data;
 
-	d->formats |= (1 << format);
+	if (format == WL_SHM_FORMAT_XRGB8888)
+		d->has_xrgb = true;
 }
 
 struct wl_shm_listener shm_listener = {
@@ -413,7 +415,7 @@ create_display(void)
 	display->display = wl_display_connect(NULL);
 	assert(display->display);
 
-	display->formats = 0;
+	display->has_xrgb = false;
 	display->registry = wl_display_get_registry(display->display);
 	wl_registry_add_listener(display->registry,
 				 &registry_listener, display);
@@ -465,7 +467,7 @@ create_display(void)
 	 * technique.
 	 */
 
-	if (!(display->formats & (1 << WL_SHM_FORMAT_XRGB8888))) {
+	if (!display->has_xrgb) {
 		fprintf(stderr, "WL_SHM_FORMAT_XRGB32 not available\n");
 		exit(1);
 	}

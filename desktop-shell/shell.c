@@ -124,9 +124,7 @@ struct shell_surface {
 	enum shell_surface_type type;
 	char *title, *class;
 	int32_t saved_x, saved_y;
-	int32_t saved_width, saved_height;
 	bool saved_position_valid;
-	bool saved_size_valid;
 	bool saved_rotation_valid;
 	int unresponsive, grabbed;
 	uint32_t resize_edges;
@@ -453,10 +451,11 @@ get_output_panel_size(struct desktop_shell *shell,
 }
 
 static void
-get_output_work_area(struct desktop_shell *shell,
+get_output_work_area(void *data,
 		     struct weston_output *output,
 		     pixman_rectangle32_t *area)
 {
+	struct desktop_shell *shell = data;
 	int32_t panel_width = 0, panel_height = 0;
 
 	area->x = output->x;
@@ -1871,7 +1870,7 @@ static const struct weston_pointer_grab_interface resize_grab_interface = {
 
 /*
  * Returns the bounding box of a surface and all its sub-surfaces,
- * in the surface coordinates system. */
+ * in surface-local coordinates. */
 static void
 surface_subsurfaces_boundingbox(struct weston_surface *surface, int32_t *x,
 				int32_t *y, int32_t *w, int32_t *h) {
@@ -2148,6 +2147,8 @@ ping_handler(struct weston_surface *surface, uint32_t serial)
 	if (!shsurf->resource)
 		return;
 	if (shsurf->surface == shsurf->shell->grab_surface)
+		return;
+	if (!shsurf->owner)
 		return;
 
 	handle_xdg_ping(shsurf, serial);
@@ -2560,6 +2561,13 @@ shell_surface_set_fullscreen(struct wl_client *client,
 	struct shell_surface *shsurf = wl_resource_get_user_data(resource);
 	struct weston_output *output;
 
+	if (shsurf->fullscreen_output == shsurf->output &&
+	    shsurf->fullscreen.type == method &&
+	    shsurf->fullscreen.framerate == framerate) {
+		send_configure_for_surface(shsurf);
+		return;
+	}
+
 	if (output_resource)
 		output = wl_resource_get_user_data(output_resource);
 	else
@@ -2702,9 +2710,6 @@ set_full_output(struct shell_surface *shsurf)
 {
 	shsurf->saved_x = shsurf->view->geometry.x;
 	shsurf->saved_y = shsurf->view->geometry.y;
-	shsurf->saved_width = shsurf->surface->width;
-	shsurf->saved_height = shsurf->surface->height;
-	shsurf->saved_size_valid = true;
 	shsurf->saved_position_valid = true;
 
 	if (!wl_list_empty(&shsurf->rotation.transform.link)) {
@@ -3703,7 +3708,6 @@ create_common_surface(struct shell_client *owner, void *shell,
 	shsurf->shell = (struct desktop_shell *) shell;
 	shsurf->unresponsive = 0;
 	shsurf->saved_position_valid = false;
-	shsurf->saved_size_valid = false;
 	shsurf->saved_rotation_valid = false;
 	shsurf->surface = surface;
 	shsurf->fullscreen.type = WL_SHELL_SURFACE_FULLSCREEN_METHOD_DEFAULT;
@@ -3778,7 +3782,8 @@ shell_get_shell_surface(struct wl_client *client,
 	wl_resource_set_implementation(shsurf->resource,
 				       &shell_surface_implementation,
 				       shsurf, shell_destroy_shell_surface);
-	wl_list_init(wl_resource_get_link(shsurf->resource));
+	wl_list_insert(&sc->surface_list,
+		       wl_resource_get_link(shsurf->resource));
 }
 
 static bool
@@ -4786,7 +4791,7 @@ surface_opacity_binding(struct weston_pointer *pointer, uint32_t time,
 	if (!shsurf)
 		return;
 
-	shsurf->view->alpha -= wl_fixed_to_double(event->value) * step;
+	shsurf->view->alpha -= event->value * step;
 
 	if (shsurf->view->alpha > 1.0)
 		shsurf->view->alpha = 1.0;
@@ -4799,7 +4804,7 @@ surface_opacity_binding(struct weston_pointer *pointer, uint32_t time,
 
 static void
 do_zoom(struct weston_seat *seat, uint32_t time, uint32_t key, uint32_t axis,
-	wl_fixed_t value)
+	double value)
 {
 	struct weston_compositor *compositor = seat->compositor;
 	struct weston_pointer *pointer = weston_seat_get_pointer(seat);
@@ -4823,7 +4828,7 @@ do_zoom(struct weston_seat *seat, uint32_t time, uint32_t key, uint32_t axis,
 			else if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL)
 				/* For every pixel zoom 20th of a step */
 				increment = output->zoom.increment *
-					    -wl_fixed_to_double(value) / 20.0;
+					    -value / 20.0;
 			else
 				increment = 0;
 
@@ -5156,6 +5161,7 @@ activate_binding(struct weston_seat *seat,
 		 struct desktop_shell *shell,
 		 struct weston_view *focus_view)
 {
+	struct focus_state *state;
 	struct weston_surface *focus;
 	struct weston_surface *main_surface;
 
@@ -5166,6 +5172,13 @@ activate_binding(struct weston_seat *seat,
 
 	main_surface = weston_surface_get_main_surface(focus);
 	if (get_shell_surface_type(main_surface) == SHELL_SURFACE_NONE)
+		return;
+
+	state = ensure_focus_state(shell, seat);
+	if (state == NULL)
+		return;
+
+	if (state->keyboard_focus == focus)
 		return;
 
 	activate(shell, focus, seat, true);
@@ -5856,6 +5869,8 @@ handle_shell_client_destroy(struct wl_listener *listener, void *data)
 {
 	struct shell_client *sc =
 		container_of(listener, struct shell_client, destroy_listener);
+	struct wl_resource *shsurf_resource;
+	struct shell_surface *shsurf;
 
 	if (sc->ping_timer)
 		wl_event_source_remove(sc->ping_timer);
@@ -5864,6 +5879,10 @@ handle_shell_client_destroy(struct wl_listener *listener, void *data)
 	 * head of the surface list so we don't use that freed list node
 	 * during surface clean up later on.
 	 */
+	wl_resource_for_each(shsurf_resource, &sc->surface_list) {
+		shsurf = wl_resource_get_user_data(shsurf_resource);
+		shsurf->owner = NULL;
+	}
 	wl_list_remove(&sc->surface_list);
 
 	free(sc);
@@ -6617,6 +6636,7 @@ module_init(struct weston_compositor *ec,
 	ec->shell_interface.set_window_geometry = set_window_geometry;
 	ec->shell_interface.set_maximized = shell_interface_set_maximized;
 	ec->shell_interface.set_pid = set_pid;
+	ec->shell_interface.get_output_work_area = get_output_work_area;
 
 	weston_layer_init(&shell->fullscreen_layer, &ec->cursor_layer.link);
 	weston_layer_init(&shell->panel_layer, &shell->fullscreen_layer.link);

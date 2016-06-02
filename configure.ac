@@ -1,5 +1,5 @@
 m4_define([weston_major_version],  [1])
-m4_define([weston_minor_version], [10])
+m4_define([weston_minor_version], [11])
 m4_define([weston_micro_version],  [0])
 m4_define([weston_version],
           [weston_major_version.weston_minor_version.weston_micro_version])
@@ -10,6 +10,8 @@ AC_INIT([weston],
         [https://bugs.freedesktop.org/enter_bug.cgi?product=Wayland&component=weston&version=weston_version],
         [weston],
         [http://wayland.freedesktop.org])
+
+WAYLAND_PREREQ_VERSION="1.10.0"
 
 AC_SUBST([WESTON_VERSION_MAJOR], [weston_major_version])
 AC_SUBST([WESTON_VERSION_MINOR], [weston_minor_version])
@@ -42,9 +44,10 @@ AC_ARG_VAR([WESTON_SHELL_CLIENT],
 
 PKG_PROG_PKG_CONFIG()
 
-AC_CHECK_FUNC([dlopen], [],
-              AC_CHECK_LIB([dl], [dlopen], DLOPEN_LIBS="-ldl"))
-AC_SUBST(DLOPEN_LIBS)
+WESTON_SEARCH_LIBS([DLOPEN], [dl], [dlopen])
+
+# In old glibc versions (< 2.17) clock_gettime() is in librt
+WESTON_SEARCH_LIBS([CLOCK_GETTIME], [rt], [clock_gettime])
 
 AC_CHECK_DECL(SFD_CLOEXEC,[],
 	      [AC_MSG_ERROR("SFD_CLOEXEC is needed to compile weston")],
@@ -59,7 +62,7 @@ AC_CHECK_HEADERS([execinfo.h])
 
 AC_CHECK_FUNCS([mkostemp strchrnul initgroups posix_fallocate])
 
-COMPOSITOR_MODULES="wayland-server >= 1.10.0 pixman-1 >= 0.25.2"
+COMPOSITOR_MODULES="wayland-server >= $WAYLAND_PREREQ_VERSION pixman-1 >= 0.25.2"
 
 AC_CONFIG_FILES([doc/doxygen/tools.doxygen doc/doxygen/tooldev.doxygen])
 
@@ -181,7 +184,7 @@ fi
 PKG_CHECK_MODULES(LIBINPUT_BACKEND, [libinput >= 0.8.0])
 PKG_CHECK_MODULES(COMPOSITOR, [$COMPOSITOR_MODULES])
 
-PKG_CHECK_MODULES(WAYLAND_PROTOCOLS, [wayland-protocols >= 1.0],
+PKG_CHECK_MODULES(WAYLAND_PROTOCOLS, [wayland-protocols >= 1.2],
 		  [ac_wayland_protocols_pkgdatadir=`$PKG_CONFIG --variable=pkgdatadir wayland-protocols`])
 AC_SUBST(WAYLAND_PROTOCOLS_DATADIR, $ac_wayland_protocols_pkgdatadir)
 
@@ -192,7 +195,7 @@ AM_CONDITIONAL(ENABLE_WAYLAND_COMPOSITOR,
 if test x$enable_wayland_compositor = xyes -a x$enable_egl = xyes; then
   AC_DEFINE([BUILD_WAYLAND_COMPOSITOR], [1],
 	    [Build the Wayland (nested) compositor])
-  PKG_CHECK_MODULES(WAYLAND_COMPOSITOR, [wayland-client >= 1.5.91 wayland-egl wayland-cursor])
+  PKG_CHECK_MODULES(WAYLAND_COMPOSITOR, [wayland-client >= $WAYLAND_PREREQ_VERSION wayland-egl wayland-cursor])
 fi
 
 
@@ -237,7 +240,10 @@ AM_CONDITIONAL([ENABLE_RDP_COMPOSITOR],
                [test x$enable_rdp_compositor = xyes])
 if test x$enable_rdp_compositor = xyes; then
   AC_DEFINE([BUILD_RDP_COMPOSITOR], [1], [Build the RDP compositor])
-  PKG_CHECK_MODULES(RDP_COMPOSITOR, [freerdp >= 1.1.0])
+  PKG_CHECK_MODULES(RDP_COMPOSITOR, [freerdp2 >= 2.0.0],
+    [],
+    [PKG_CHECK_MODULES(RDP_COMPOSITOR, [freerdp >= 1.1.0],[])]
+  )
 
   SAVED_CPPFLAGS="$CPPFLAGS"
   CPPFLAGS="$CPPFLAGS $RDP_COMPOSITOR_CFLAGS"
@@ -293,9 +299,28 @@ fi
 
 PKG_CHECK_MODULES(PIXMAN, [pixman-1])
 PKG_CHECK_MODULES(PNG, [libpng])
-PKG_CHECK_MODULES(WEBP, [libwebp], [have_webp=yes], [have_webp=no])
+
+AC_ARG_WITH([jpeg],
+            AS_HELP_STRING([--without-jpeg],
+                           [Use jpeglib for JPEG decoding support [default=auto]]))
+AS_IF([test "x$with_jpeg" != "xno"],
+      [WESTON_SEARCH_LIBS([JPEG], [jpeg], [jpeg_CreateDecompress], [have_jpeglib=yes], [have_jpeglib=no])],
+      [have_jpeglib=no])
+AS_IF([test "x$have_jpeglib" = "xyes"],
+      [AC_DEFINE([HAVE_JPEG], [1], [Have jpeglib])],
+      [AS_IF([test "x$with_jpeg" = "xyes"],
+             [AC_MSG_ERROR([JPEG support explicitly requested, but jpeglib couldn't be found])])])
+
+AC_ARG_WITH([webp],
+            AS_HELP_STRING([--without-webp],
+                           [Use libwebp for WebP decoding support [default=auto]]))
+AS_IF([test "x$with_webp" != "xno"],
+      [PKG_CHECK_MODULES(WEBP, [libwebp], [have_webp=yes], [have_webp=no])],
+      [have_webp=no])
 AS_IF([test "x$have_webp" = "xyes"],
-      [AC_DEFINE([HAVE_WEBP], [1], [Have webp])])
+      [AC_DEFINE([HAVE_WEBP], [1], [Have webp])],
+      [AS_IF([test "x$with_webp" = "xyes"],
+             [AC_MSG_ERROR([WebP support explicitly requested, but libwebp couldn't be found])])])
 
 AC_ARG_ENABLE(vaapi-recorder, [  --enable-vaapi-recorder],,
 	      enable_vaapi_recorder=auto)
@@ -310,18 +335,9 @@ if test x$enable_vaapi_recorder != xno; then
 fi
 AM_CONDITIONAL(ENABLE_VAAPI_RECORDER, test "x$have_libva" = xyes)
 
-
-AC_CHECK_LIB([jpeg], [jpeg_CreateDecompress], have_jpeglib=yes)
-if test x$have_jpeglib = xyes; then
-  JPEG_LIBS="-ljpeg"
-else
-  AC_ERROR([libjpeg not found])
-fi
-AC_SUBST(JPEG_LIBS)
-
 PKG_CHECK_MODULES(CAIRO, [cairo])
 
-PKG_CHECK_MODULES(TEST_CLIENT, [wayland-client >= 1.10.0])
+PKG_CHECK_MODULES(TEST_CLIENT, [wayland-client >= $WAYLAND_PREREQ_VERSION])
 
 AC_ARG_ENABLE(simple-clients,
               AS_HELP_STRING([--disable-simple-clients],
@@ -375,9 +391,9 @@ AM_CONDITIONAL(BUILD_CLIENTS, test x$enable_clients = xyes)
 if test x$enable_clients = xyes; then
   AC_DEFINE([BUILD_CLIENTS], [1], [Build the Wayland clients])
 
-  PKG_CHECK_MODULES(CLIENT, [wayland-client >= 1.5.91 cairo >= 1.10.0 xkbcommon wayland-cursor])
+  PKG_CHECK_MODULES(CLIENT, [wayland-client >= $WAYLAND_PREREQ_VERSION cairo >= 1.10.0 xkbcommon wayland-cursor])
   PKG_CHECK_MODULES(SERVER, [wayland-server])
-  PKG_CHECK_MODULES(WESTON_INFO, [wayland-client >= 1.5.91])
+  PKG_CHECK_MODULES(WESTON_INFO, [wayland-client >= $WAYLAND_PREREQ_VERSION])
 
   # Only check for cairo-egl if a GL or GLES renderer requested
   AS_IF([test "x$cairo_modules" = "xcairo-gl" -o "x$cairo_modules" = "xcairo-glesv2"], [
@@ -398,47 +414,13 @@ AC_ARG_ENABLE(resize-optimization,
 AS_IF([test "x$enable_resize_optimization" = "xyes"],
       [AC_DEFINE([USE_RESIZE_POOL], [1], [Use resize memory pool as a performance optimization])])
 
-AC_ARG_ENABLE(systemd-login,
-              AS_HELP_STRING([--enable-systemd-login],
-                             [Enable logind support]),,
-              enable_systemd_login=auto)
-if test x$enable_systemd_login != xno; then
-  PKG_CHECK_MODULES(SYSTEMD_LOGIN,
-                    [libsystemd >= 209],
-                    [have_systemd_login_209=yes;have_systemd_login=yes],
-                    [have_systemd_login_209=no;have_systemd_login=no])
-
-  # Older versions of systemd package systemd-login separately. Fall back on that
-  AS_IF([test x$have_systemd_login != xyes],[
-        PKG_CHECK_MODULES(SYSTEMD_LOGIN,
-                          [libsystemd-login >= 198],
-                          [have_systemd_login=yes],
-                          [have_systemd_login=no])
-        ])
-else
-  have_systemd_login=no
-fi
-
-if test "x$have_systemd_login" = "xno" -a "x$enable_systemd_login" = "xyes"; then
-  AC_MSG_ERROR([systemd-login support explicitly enabled, but can't find libsystemd>=209 or libsystemd-login])
-fi
-
-AS_IF([test "x$have_systemd_login" = "xyes"],
-      [AC_DEFINE([HAVE_SYSTEMD_LOGIN], [1], [Have systemd-login])])
-AM_CONDITIONAL(HAVE_SYSTEMD_LOGIN, test "x$have_systemd_login" = "xyes")
-
-AS_IF([test "x$have_systemd_login_209" = "xyes"],
-      [AC_DEFINE([HAVE_SYSTEMD_LOGIN_209], [1], [Have systemd-login >= 209])])
-
 AC_ARG_ENABLE(weston-launch, [  --enable-weston-launch],, enable_weston_launch=yes)
 AM_CONDITIONAL(BUILD_WESTON_LAUNCH, test x$enable_weston_launch == xyes)
 if test x$enable_weston_launch == xyes; then
-  AC_CHECK_LIB([pam], [pam_open_session], [have_pam=yes], [have_pam=no])
+  WESTON_SEARCH_LIBS([PAM], [pam], [pam_open_session], [have_pam=yes], [have_pam=no])
   if test x$have_pam == xno; then
     AC_ERROR([weston-launch requires pam])
   fi
-  PAM_LIBS=-lpam
-  AC_SUBST(PAM_LIBS)
 fi
 
 AM_CONDITIONAL(HAVE_PANGO, test "x$have_pango" = "xyes")
@@ -501,6 +483,40 @@ if test "x$enable_dbus" != "xno"; then
         fi
 fi
 AM_CONDITIONAL(ENABLE_DBUS, test "x$enable_dbus" = "xyes")
+
+# systemd-login support
+AC_ARG_ENABLE(systemd-login,
+              AS_HELP_STRING([--enable-systemd-login],
+                             [Enable logind support]),,
+              enable_systemd_login=auto)
+if test x$enable_systemd_login != xno -a x$have_dbus != xno; then
+  PKG_CHECK_MODULES(SYSTEMD_LOGIN,
+                    [libsystemd >= 209],
+                    [have_systemd_login_209=yes;have_systemd_login=yes],
+                    [have_systemd_login_209=no;have_systemd_login=no])
+
+  # Older versions of systemd package systemd-login separately. Fall back on that
+  AS_IF([test x$have_systemd_login != xyes],[
+        PKG_CHECK_MODULES(SYSTEMD_LOGIN,
+                          [libsystemd-login >= 198],
+                          [have_systemd_login=yes],
+                          [have_systemd_login=no])
+        ])
+else
+  have_systemd_login=no
+fi
+
+if test "x$have_systemd_login" = "xno" -a "x$enable_systemd_login" = "xyes"; then
+  AC_MSG_ERROR([systemd-login support explicitly enabled, but can't find libsystemd>=209, libsystemd-login or dbus])
+fi
+
+AS_IF([test "x$have_systemd_login" = "xyes"],
+      [AC_DEFINE([HAVE_SYSTEMD_LOGIN], [1], [Have systemd-login])])
+AM_CONDITIONAL(HAVE_SYSTEMD_LOGIN, test "x$have_systemd_login" = "xyes")
+
+AS_IF([test "x$have_systemd_login_209" = "xyes"],
+      [AC_DEFINE([HAVE_SYSTEMD_LOGIN_209], [1], [Have systemd-login >= 209])])
+
 
 # Note that other features might want libxml2, or this feature might use
 # alternative xml libraries at some point. Therefore the feature and
@@ -620,7 +636,10 @@ AC_ARG_ENABLE(systemd_notify,
               AS_HELP_STRING([--enable-systemd-notify],
                              [Enables systemd notifications to
                               notify systemd about weston state
-                              and update watchdog.]),,
+                              and update watchdog.
+                              Also sockets provided by systemd
+                              in case of socket-base activation
+                              are added to wayland display]),,
               enable_systemd_notify=no)
 AM_CONDITIONAL(SYSTEMD_NOTIFY_SUPPORT, test x$enable_systemd_notify = xyes)
 if test "x$enable_systemd_notify" = "xyes"; then
@@ -676,6 +695,7 @@ AC_MSG_RESULT([
 
 	Colord Support			${have_colord}
 	LCMS2 Support			${have_lcms}
+	libjpeg Support			${have_jpeglib}
 	libwebp Support			${have_webp}
 	libunwind Support		${have_libunwind}
 	VA H.264 encoding Support	${have_libva}

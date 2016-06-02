@@ -116,6 +116,7 @@ struct weston_shell_interface {
 				    int32_t width, int32_t height);
 	void (*set_maximized)(struct shell_surface *shsurf);
 	void (*set_pid)(struct shell_surface *shsurf, pid_t pid);
+	void (*get_output_work_area)(void *shell, struct weston_output *output, pixman_rectangle32_t *area);
 };
 
 struct weston_animation {
@@ -253,7 +254,7 @@ struct weston_pointer_motion_event {
 
 struct weston_pointer_axis_event {
 	uint32_t axis;
-	wl_fixed_t value;
+	double value;
 	bool has_discrete;
 	int32_t discrete;
 };
@@ -684,21 +685,39 @@ struct weston_backend_output_config {
  * passed to the backend's init entry point. The backend will
  * likely want to subclass this in order to handle backend specific
  * data.
+ *
+ * NOTE: Alternate designs were proposed (Feb 2016) for using opaque
+ * structures[1] and for section+key/value getter/setters[2].  The rationale
+ * for selecting the transparent structure design is based on several
+ * assumptions[3] which may require re-evaluating the design choice if they
+ * fail to hold.
+ *
+ * 1: https://lists.freedesktop.org/archives/wayland-devel/2016-February/026989.html
+ * 2: https://lists.freedesktop.org/archives/wayland-devel/2016-February/026929.html
+ * 3: https://lists.freedesktop.org/archives/wayland-devel/2016-February/027228.html
  */
 struct weston_backend_config {
+   /** Major version for the backend-specific config struct
+    *
+    * This version must match exactly what the backend expects, otherwise
+    * the struct is incompatible.
+    */
+   uint32_t struct_version;
+
+   /** Minor version of the backend-specific config struct
+    *
+    * This must be set to sizeof(struct backend-specific config).
+    * If the value here is smaller than what the backend expects, the
+    * extra config members will assume their default values.
+    *
+    * A value greater than what the backend expects is incompatible.
+    */
+   size_t struct_size;
 };
 
 struct weston_backend {
 	void (*destroy)(struct weston_compositor *compositor);
 	void (*restore)(struct weston_compositor *compositor);
-	/* vfunc to create a new output with a given name and config.
-	 * backends not supporting the functionality will set this
-	 * to NULL.
-	 */
-	struct weston_output *
-		(*create_output)(struct weston_compositor *compositor,
-				 const char *name,
-				 struct weston_backend_output_config *config);
 };
 
 struct weston_compositor {
@@ -726,9 +745,6 @@ struct weston_compositor {
 	struct wl_signal output_destroyed_signal;
 	struct wl_signal output_moved_signal;
 
-	struct wl_event_loop *input_loop;
-	struct wl_event_source *input_loop_source;
-
 	struct wl_signal session_signal;
 	int session_active;
 
@@ -738,7 +754,7 @@ struct weston_compositor {
 	struct wl_list output_list;
 	struct wl_list seat_list;
 	struct wl_list layer_list;
-	struct wl_list view_list;
+	struct wl_list view_list;	/* struct weston_view::link */
 	struct wl_list plane_list;
 	struct wl_list key_binding_list;
 	struct wl_list modifier_binding_list;
@@ -874,7 +890,7 @@ struct weston_view {
 	struct wl_list surface_link;
 	struct wl_signal destroy_signal;
 
-	struct wl_list link;
+	struct wl_list link;             /* weston_compositor::view_list */
 	struct weston_layer_entry layer_link; /* part of geometry */
 	struct weston_plane *plane;
 
@@ -933,9 +949,9 @@ struct weston_view {
 	} transform;
 
 	/*
-	 * Which output to vsync this surface to.
-	 * Used to determine, whether to send or queue frame events.
-	 * Must be NULL, if 'link' is not in weston_compositor::surface_list.
+	 * The primary output for this view.
+	 * Used for picking the output for driving internal animations on the
+	 * view, inheriting the primary output for related views in shells, etc.
 	 */
 	struct weston_output *output;
 
@@ -1004,8 +1020,9 @@ struct weston_surface {
 
 	/*
 	 * Which output to vsync this surface to.
-	 * Used to determine, whether to send or queue frame events.
-	 * Must be NULL, if 'link' is not in weston_compositor::surface_list.
+	 * Used to determine whether to send or queue frame events, and for
+	 * other client-visible syncing/throttling tied to the output
+	 * repaint cycle.
 	 */
 	struct weston_output *output;
 
@@ -1155,7 +1172,7 @@ notify_motion(struct weston_seat *seat, uint32_t time,
 	      struct weston_pointer_motion_event *event);
 void
 notify_motion_absolute(struct weston_seat *seat, uint32_t time,
-		       wl_fixed_t x, wl_fixed_t y);
+		       double x, double y);
 void
 notify_button(struct weston_seat *seat, uint32_t time, int32_t button,
 	      enum wl_pointer_button_state state);
@@ -1177,7 +1194,7 @@ notify_modifiers(struct weston_seat *seat, uint32_t serial);
 
 void
 notify_pointer_focus(struct weston_seat *seat, struct weston_output *output,
-		     wl_fixed_t x, wl_fixed_t y);
+		     double x, double y);
 
 void
 notify_keyboard_focus_in(struct weston_seat *seat, struct wl_array *keys,
@@ -1187,7 +1204,7 @@ notify_keyboard_focus_out(struct weston_seat *seat);
 
 void
 notify_touch(struct weston_seat *seat, uint32_t time, int touch_id,
-	     wl_fixed_t x, wl_fixed_t y, int touch_type);
+	     double x, double y, int touch_type);
 void
 notify_touch_frame(struct weston_seat *seat);
 
@@ -1221,7 +1238,7 @@ weston_compositor_stack_plane(struct weston_compositor *ec,
 			      struct weston_plane *above);
 
 /* An invalid flag in presented_flags to catch logic errors. */
-#define PRESENTATION_FEEDBACK_INVALID (1U << 31)
+#define WP_PRESENTATION_FEEDBACK_INVALID (1U << 31)
 
 void
 weston_output_finish_frame(struct weston_output *output,
@@ -1494,8 +1511,8 @@ void
 weston_output_destroy(struct weston_output *output);
 void
 weston_output_transform_coordinate(struct weston_output *output,
-				   wl_fixed_t device_x, wl_fixed_t device_y,
-				   wl_fixed_t *x, wl_fixed_t *y);
+				   double device_x, double device_y,
+				   double *x, double *y);
 
 void
 weston_seat_init(struct weston_seat *seat, struct weston_compositor *ec,
