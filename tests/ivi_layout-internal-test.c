@@ -30,8 +30,9 @@
 #include <signal.h>
 #include <string.h>
 #include <stdbool.h>
+#include <stdint.h>
 
-#include "src/compositor.h"
+#include "compositor.h"
 #include "ivi-shell/ivi-layout-export.h"
 #include "ivi-shell/ivi-layout-private.h"
 #include "ivi-test.h"

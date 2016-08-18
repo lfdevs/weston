@@ -30,8 +30,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
+#include <errno.h>
 
 #include "config-parser.h"
+#include "string-helpers.h"
 
 static int
 handle_option(const struct weston_option *option, char *value)
@@ -40,11 +42,15 @@ handle_option(const struct weston_option *option, char *value)
 
 	switch (option->type) {
 	case WESTON_OPTION_INTEGER:
-		* (int32_t *) option->data = strtol(value, &p, 0);
-		return *value && !*p;
+		if (!safe_strtoint(value, option->data))
+			return 0;
+		return 1;
 	case WESTON_OPTION_UNSIGNED_INTEGER:
-		* (uint32_t *) option->data = strtoul(value, &p, 0);
-		return *value && !*p;
+		errno = 0;
+		* (uint32_t *) option->data = strtoul(value, &p, 10);
+		if (errno != 0 || p == value || *p != '\0')
+			return 0;
+		return 1;
 	case WESTON_OPTION_STRING:
 		* (char **) option->data = strdup(value);
 		return 1;

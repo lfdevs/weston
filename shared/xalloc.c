@@ -26,6 +26,7 @@
 #include "config.h"
 
 #include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -47,8 +48,3 @@ fail_on_null(void *p, size_t size, char *file, int32_t line)
 
 	return p;
 }
-
-
-#ifdef  __cplusplus
-}
-#endif

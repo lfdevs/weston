@@ -26,6 +26,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <linux/input.h>
@@ -1143,7 +1144,7 @@ hmi_homescreen_setting_create(void)
 	weston_config_section_get_uint(
 		shellSection, "home-id", &setting->home.id, 1007);
 
-	weston_config_section_get_uint(
+	weston_config_section_get_color(
 		shellSection, "workspace-background-color",
 		&setting->workspace_background.color, 0x99000000);
 

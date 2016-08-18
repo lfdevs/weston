@@ -22,8 +22,9 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#include <config.h>
+#include "config.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -434,12 +435,13 @@ create_device(struct display *display, const char *time_desc, int type)
 
 	errno = 0;
 	start_time = strtoul(time_desc, &tail, 10);
-	if (errno)
+	if (errno || tail == time_desc)
 		goto error;
 
 	if (*tail == ':') {
-		end_time = strtoul(tail + 1, &tail, 10);
-		if (errno || *tail != '\0')
+		time_desc = tail + 1;
+		end_time = strtoul(time_desc, &tail, 10);
+		if (errno || tail == time_desc || *tail != '\0')
 			goto error;
 	} else if (*tail != '\0') {
 		goto error;

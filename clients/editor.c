@@ -25,6 +25,7 @@
 #include "config.h"
 
 #include <assert.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -575,6 +576,8 @@ data_source_send(void *data,
 
 	if (write(fd, editor->selected_text, strlen(editor->selected_text) + 1) < 0)
 		fprintf(stderr, "write failed: %m\n");
+
+	close(fd);
 }
 
 static void

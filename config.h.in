@@ -15,9 +15,6 @@
 /* Build the RDP compositor */
 #undef BUILD_RDP_COMPOSITOR
 
-/* Build the compositor for Raspberry Pi */
-#undef BUILD_RPI_COMPOSITOR
-
 /* Build the vaapi recorder */
 #undef BUILD_VAAPI_RECORDER
 
@@ -41,9 +38,6 @@
 
 /* Build Weston with libxkbcommon support */
 #undef ENABLE_XKBCOMMON
-
-/* have Raspberry Pi BCM headers */
-#undef HAVE_BCM_HOST
 
 /* Have cairo-egl */
 #undef HAVE_CAIRO_EGL

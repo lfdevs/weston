@@ -1,3 +1,9 @@
+weston (1.11.91-1) experimental; urgency=medium
+
+  * New upstream pre-release.
+
+ -- Héctor Orón Martínez <zumbi@debian.org>  Thu, 18 Aug 2016 16:36:44 +0200
+
 weston (1.11.0-1) unstable; urgency=medium
 
   * New upstream release

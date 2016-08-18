@@ -1,8 +1,11 @@
 m4_define([weston_major_version],  [1])
 m4_define([weston_minor_version], [11])
-m4_define([weston_micro_version],  [0])
+m4_define([weston_micro_version], [91])
 m4_define([weston_version],
           [weston_major_version.weston_minor_version.weston_micro_version])
+m4_define([libweston_major_version], [1])
+m4_define([libweston_minor_version], [11])
+m4_define([libweston_patch_version], [91])
 
 AC_PREREQ([2.64])
 AC_INIT([weston],
@@ -11,12 +14,19 @@ AC_INIT([weston],
         [weston],
         [http://wayland.freedesktop.org])
 
-WAYLAND_PREREQ_VERSION="1.10.0"
+WAYLAND_PREREQ_VERSION="1.11.91"
 
 AC_SUBST([WESTON_VERSION_MAJOR], [weston_major_version])
 AC_SUBST([WESTON_VERSION_MINOR], [weston_minor_version])
 AC_SUBST([WESTON_VERSION_MICRO], [weston_micro_version])
 AC_SUBST([WESTON_VERSION], [weston_version])
+AC_SUBST([LIBWESTON_MAJOR], [libweston_major_version])
+# We use minor as current and age since on ABI/API break/removal we bump major
+# so minor will be reset to 0.
+m4_define([lt_current], [libweston_minor_version])
+m4_define([lt_revision], [libweston_patch_version])
+m4_define([lt_age], [libweston_minor_version])
+AC_SUBST([LT_VERSION_INFO], [lt_current:lt_revision:lt_age])
 
 AC_CONFIG_AUX_DIR([build-aux])
 AC_CONFIG_HEADERS([config.h])
@@ -28,6 +38,38 @@ AC_SYS_LARGEFILE
 AM_INIT_AUTOMAKE([1.11 parallel-tests foreign no-dist-gzip dist-xz color-tests subdir-objects])
 
 AM_SILENT_RULES([yes])
+
+# Check Weston and libweston version consistency
+m4_if(m4_cmp(weston_micro_version, [90]), [-1],
+      [
+	dnl micro < 90
+	dnl A final or stable release, not a pre-release:
+	dnl Weston and libweston versions must match.
+	m4_if(weston_version, libweston_major_version[.]libweston_minor_version[.]libweston_patch_version,
+	      [],
+	      [AC_MSG_ERROR([Weston and libweston version mismatch for a final release])])
+      ],
+      [
+	dnl A pre-release:
+	dnl libweston must be equal or greater than weston.
+	m4_case(m4_list_cmp([weston_major_version, weston_minor_version, weston_micro_version],
+			     [libweston_major_version, libweston_minor_version, libweston_patch_version]),
+		 [-1], [
+			dnl weston < libweston
+			dnl libweston must be weston_major+1.0.0
+			m4_if(m4_eval(weston_major_version+1)[.0.0],
+			      libweston_major_version[.]libweston_minor_version[.]libweston_patch_version,
+			      [],
+			      [AC_MSG_ERROR([libweston version is greater but not (weston_major+1).0.0])])
+		 ],
+		 [0], [
+			dnl weston == libweston, all ok
+		 ],
+		 [1], [
+			dnl weston > libweston, wrong
+			AC_MSG_ERROR([Weston version is greater than libweston.])
+		 ])
+       ])
 
 # Check for programs
 AC_PROG_CC
@@ -184,7 +226,7 @@ fi
 PKG_CHECK_MODULES(LIBINPUT_BACKEND, [libinput >= 0.8.0])
 PKG_CHECK_MODULES(COMPOSITOR, [$COMPOSITOR_MODULES])
 
-PKG_CHECK_MODULES(WAYLAND_PROTOCOLS, [wayland-protocols >= 1.2],
+PKG_CHECK_MODULES(WAYLAND_PROTOCOLS, [wayland-protocols >= 1.7],
 		  [ac_wayland_protocols_pkgdatadir=`$PKG_CONFIG --variable=pkgdatadir wayland-protocols`])
 AC_SUBST(WAYLAND_PROTOCOLS_DATADIR, $ac_wayland_protocols_pkgdatadir)
 
@@ -206,23 +248,6 @@ AM_CONDITIONAL(ENABLE_HEADLESS_COMPOSITOR,
 if test x$enable_headless_compositor = xyes; then
   AC_DEFINE([BUILD_HEADLESS_COMPOSITOR], [1], [Build the headless compositor])
 fi
-
-
-AC_ARG_ENABLE(rpi-compositor,
-	      AS_HELP_STRING([--disable-rpi-compositor],
-	                     [do not build the Raspberry Pi backend]),,
-	      enable_rpi_compositor=yes)
-AM_CONDITIONAL(ENABLE_RPI_COMPOSITOR, test "x$enable_rpi_compositor" = "xyes")
-have_bcm_host="no"
-if test "x$enable_rpi_compositor" = "xyes"; then
-  AC_DEFINE([BUILD_RPI_COMPOSITOR], [1], [Build the compositor for Raspberry Pi])
-  PKG_CHECK_MODULES(RPI_COMPOSITOR, [libudev >= 136 mtdev >= 1.1.0])
-  PKG_CHECK_MODULES(RPI_BCM_HOST, [bcm_host],
-                    [have_bcm_host="yes"
-                     AC_DEFINE([HAVE_BCM_HOST], [1], [have Raspberry Pi BCM headers])],
-                    [AC_MSG_WARN([Raspberry Pi BCM host libraries not found, will use stubs instead.])])
-fi
-AM_CONDITIONAL(INSTALL_RPI_COMPOSITOR, test "x$have_bcm_host" = "xyes")
 
 
 AC_ARG_ENABLE([fbdev-compositor], [  --enable-fbdev-compositor],,
@@ -337,7 +362,7 @@ AM_CONDITIONAL(ENABLE_VAAPI_RECORDER, test "x$have_libva" = xyes)
 
 PKG_CHECK_MODULES(CAIRO, [cairo])
 
-PKG_CHECK_MODULES(TEST_CLIENT, [wayland-client >= $WAYLAND_PREREQ_VERSION])
+PKG_CHECK_MODULES(TEST_CLIENT, [wayland-client >= $WAYLAND_PREREQ_VERSION pixman-1])
 
 AC_ARG_ENABLE(simple-clients,
               AS_HELP_STRING([--disable-simple-clients],
@@ -562,7 +587,8 @@ AM_CONDITIONAL(BUILD_SETBACKLIGHT, test "x$enable_setbacklight" = "xyes")
 
 if test "x$GCC" = "xyes"; then
 	GCC_CFLAGS="-Wall -Wextra -Wno-unused-parameter \
-		-Wno-missing-field-initializers -g -fvisibility=hidden \
+		-Wno-shift-negative-value -Wno-missing-field-initializers \
+		-g -fvisibility=hidden \
 		-Wstrict-prototypes -Wmissing-prototypes -Wsign-compare"
 fi
 AC_SUBST(GCC_CFLAGS)
@@ -647,7 +673,12 @@ if test "x$enable_systemd_notify" = "xyes"; then
   PKG_CHECK_MODULES(SYSTEMD_DAEMON, [libsystemd])
 fi
 
-AC_CONFIG_FILES([Makefile src/version.h src/weston.pc])
+AC_CONFIG_FILES([Makefile libweston/version.h compositor/weston.pc])
+
+# AC_CONFIG_FILES needs the full name when running autoconf, so we need to use
+# libweston_abi_version here, and outside [] because of m4 quoting rules
+AC_CONFIG_FILES([libweston/libweston-]libweston_major_version[.pc:libweston/libweston.pc.in])
+AC_CONFIG_FILES([libweston-desktop/libweston-desktop-]libweston_major_version[.pc:libweston-desktop/libweston-desktop.pc.in])
 
 AM_CONDITIONAL([HAVE_GIT_REPO], [test -f $srcdir/.git/logs/HEAD])
 
@@ -678,13 +709,10 @@ AC_MSG_RESULT([
 	X11 Compositor			${enable_x11_compositor}
 	Wayland Compositor		${enable_wayland_compositor}
 	Headless Compositor		${enable_headless_compositor}
-	RPI Compositor			${enable_rpi_compositor}
 	FBDEV Compositor		${enable_fbdev_compositor}
 	RDP Compositor			${enable_rdp_compositor}
 	Screen Sharing			${enable_screen_sharing}
 	JUnit XML output		${enable_junit_xml}
-
-	Raspberry Pi BCM headers	${have_bcm_host}
 
 	Build Clients			${enable_clients}
 	Build EGL Clients		${have_cairo_egl}
