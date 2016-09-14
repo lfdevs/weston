@@ -51,6 +51,7 @@
 #endif
 
 struct focus_state {
+	struct desktop_shell *shell;
 	struct weston_seat *seat;
 	struct workspace *ws;
 	struct weston_surface *keyboard_focus;
@@ -128,6 +129,8 @@ struct shell_surface {
 	struct weston_output *output;
 
 	struct surface_state {
+		bool fullscreen;
+		bool maximized;
 		bool lowered;
 	} state;
 
@@ -332,11 +335,10 @@ get_output_panel_size(struct desktop_shell *shell,
 }
 
 static void
-get_output_work_area(void *data,
+get_output_work_area(struct desktop_shell *shell,
 		     struct weston_output *output,
 		     pixman_rectangle32_t *area)
 {
-	struct desktop_shell *shell = data;
 	int32_t panel_width = 0, panel_height = 0;
 
 	area->x = output->x;
@@ -633,7 +635,6 @@ focus_state_surface_destroy(struct wl_listener *listener, void *data)
 	struct focus_state *state = container_of(listener,
 						 struct focus_state,
 						 surface_destroy_listener);
-	struct desktop_shell *shell;
 	struct weston_surface *main_surface;
 	struct weston_view *next;
 	struct weston_view *view;
@@ -658,13 +659,12 @@ focus_state_surface_destroy(struct wl_listener *listener, void *data)
 	if (main_surface != state->keyboard_focus)
 		next = get_default_view(main_surface);
 
-	shell = state->seat->compositor->shell_interface.shell;
 	if (next) {
 		state->keyboard_focus = NULL;
-		activate(shell, next, state->seat,
+		activate(state->shell, next, state->seat,
 			 WESTON_ACTIVATE_FLAG_CONFIGURE);
 	} else {
-		if (shell->focus_animation_type == ANIMATION_DIM_LAYER) {
+		if (state->shell->focus_animation_type == ANIMATION_DIM_LAYER) {
 			if (state->ws->focus_animation)
 				weston_view_animation_destroy(state->ws->focus_animation);
 
@@ -680,7 +680,8 @@ focus_state_surface_destroy(struct wl_listener *listener, void *data)
 }
 
 static struct focus_state *
-focus_state_create(struct weston_seat *seat, struct workspace *ws)
+focus_state_create(struct desktop_shell *shell, struct weston_seat *seat,
+		   struct workspace *ws)
 {
 	struct focus_state *state;
 
@@ -688,6 +689,7 @@ focus_state_create(struct weston_seat *seat, struct workspace *ws)
 	if (state == NULL)
 		return NULL;
 
+	state->shell = shell;
 	state->keyboard_focus = NULL;
 	state->ws = ws;
 	state->seat = seat;
@@ -713,7 +715,7 @@ ensure_focus_state(struct desktop_shell *shell, struct weston_seat *seat)
 			break;
 
 	if (&state->link == &ws->focus_list)
-		state = focus_state_create(seat, ws);
+		state = focus_state_create(shell, seat, ws);
 
 	return state;
 }
@@ -1948,14 +1950,13 @@ unset_fullscreen(struct shell_surface *shsurf)
 					 shsurf->saved_x, shsurf->saved_y);
 	else
 		weston_view_set_initial_position(shsurf->view, shsurf->shell);
+	shsurf->saved_position_valid = false;
 
 	if (shsurf->saved_rotation_valid) {
 		wl_list_insert(&shsurf->view->geometry.transformation_list,
 		               &shsurf->rotation.transform.link);
 		shsurf->saved_rotation_valid = false;
 	}
-
-	/* Layer is updated in set_surface_type(). */
 }
 
 static void
@@ -1972,14 +1973,13 @@ unset_maximized(struct shell_surface *shsurf)
 					 shsurf->saved_x, shsurf->saved_y);
 	else
 		weston_view_set_initial_position(shsurf->view, shsurf->shell);
+	shsurf->saved_position_valid = false;
 
 	if (shsurf->saved_rotation_valid) {
 		wl_list_insert(&shsurf->view->geometry.transformation_list,
 			       &shsurf->rotation.transform.link);
 		shsurf->saved_rotation_valid = false;
 	}
-
-	/* Layer is updated in set_surface_type(). */
 }
 
 static void
@@ -2404,10 +2404,10 @@ map(struct desktop_shell *shell, struct shell_surface *shsurf,
 	struct weston_seat *seat;
 
 	/* initial positioning, see also configure() */
-	if (weston_desktop_surface_get_fullscreen(shsurf->desktop_surface)) {
+	if (shsurf->state.fullscreen) {
 		center_on_output(shsurf->view, shsurf->fullscreen_output);
 		shell_map_fullscreen(shsurf);
-	} else if (weston_desktop_surface_get_maximized(shsurf->desktop_surface)) {
+	} else if (shsurf->state.maximized) {
 		set_maximized_position(shell, shsurf);
 	} else {
 		weston_view_set_initial_position(shsurf->view, shell);
@@ -2418,7 +2418,7 @@ map(struct desktop_shell *shell, struct shell_surface *shsurf,
 
 	weston_view_update_transform(shsurf->view);
 	shsurf->view->is_mapped = true;
-	if (weston_desktop_surface_get_maximized(shsurf->desktop_surface)) {
+	if (shsurf->state.maximized) {
 		surface->output = shsurf->output;
 		shsurf->view->output = shsurf->output;
 	}
@@ -2429,8 +2429,7 @@ map(struct desktop_shell *shell, struct shell_surface *shsurf,
 				 WESTON_ACTIVATE_FLAG_CONFIGURE);
 	}
 
-	if (!weston_desktop_surface_get_maximized(shsurf->desktop_surface) &&
-	    !weston_desktop_surface_get_fullscreen(shsurf->desktop_surface)) {
+	if (!shsurf->state.fullscreen && !shsurf->state.maximized) {
 		switch (shell->win_animation_type) {
 		case ANIMATION_FADE:
 			weston_fade_run(shsurf->view, 0.0, 1.0, 300.0, NULL, NULL);
@@ -2455,9 +2454,19 @@ desktop_surface_committed(struct weston_desktop_surface *desktop_surface,
 		weston_desktop_surface_get_surface(desktop_surface);
 	struct weston_view *view = shsurf->view;
 	struct desktop_shell *shell = data;
+	bool was_fullscreen;
+	bool was_maximized;
 
 	if (surface->width == 0)
 		return;
+
+	was_fullscreen = shsurf->state.fullscreen;
+	was_maximized = shsurf->state.maximized;
+
+	shsurf->state.fullscreen =
+		weston_desktop_surface_get_fullscreen(desktop_surface);
+	shsurf->state.maximized =
+		weston_desktop_surface_get_maximized(desktop_surface);
 
 	if (!weston_surface_is_mapped(surface)) {
 		map(shell, shsurf, sx, sy);
@@ -2469,12 +2478,33 @@ desktop_surface_committed(struct weston_desktop_surface *desktop_surface,
 
 	if (sx == 0 && sy == 0 &&
 	    shsurf->last_width == surface->width &&
-	    shsurf->last_height == surface->height)
+	    shsurf->last_height == surface->height &&
+	    was_fullscreen == shsurf->state.fullscreen &&
+	    was_maximized == shsurf->state.maximized)
 	    return;
 
-	if (weston_desktop_surface_get_fullscreen(desktop_surface))
+	if (was_fullscreen)
+		unset_fullscreen(shsurf);
+	if (was_maximized)
+		unset_maximized(shsurf);
+
+	if ((shsurf->state.fullscreen || shsurf->state.maximized) &&
+	    !shsurf->saved_position_valid) {
+		shsurf->saved_x = shsurf->view->geometry.x;
+		shsurf->saved_y = shsurf->view->geometry.y;
+		shsurf->saved_position_valid = true;
+
+		if (!wl_list_empty(&shsurf->rotation.transform.link)) {
+			wl_list_remove(&shsurf->rotation.transform.link);
+			wl_list_init(&shsurf->rotation.transform.link);
+			weston_view_geometry_dirty(shsurf->view);
+			shsurf->saved_rotation_valid = true;
+		}
+	}
+
+	if (shsurf->state.fullscreen) {
 		shell_configure_fullscreen(shsurf);
-	else if (weston_desktop_surface_get_maximized(desktop_surface)) {
+	} else if (shsurf->state.maximized) {
 		set_maximized_position(shell, shsurf);
 		surface->output = shsurf->output;
 	} else {
@@ -2531,8 +2561,6 @@ set_fullscreen(struct shell_surface *shsurf, bool fullscreen,
 
 		width = shsurf->output->width;
 		height = shsurf->output->height;
-	} else {
-		unset_fullscreen(shsurf);
 	}
 	weston_desktop_surface_set_fullscreen(desktop_surface, fullscreen);
 	weston_desktop_surface_set_size(desktop_surface, width, height);
@@ -2632,8 +2660,6 @@ set_maximized(struct shell_surface *shsurf, bool maximized)
 
 		width = area.width;
 		height = area.height;
-	} else {
-		unset_maximized(shsurf);
 	}
 	weston_desktop_surface_set_maximized(desktop_surface, maximized);
 	weston_desktop_surface_set_size(desktop_surface, width, height);
@@ -4588,6 +4614,8 @@ handle_output_destroy(struct wl_listener *listener, void *data)
 
 	shell_for_each_layer(shell, shell_output_destroy_move_layer, output);
 
+	wl_list_remove(&output_listener->panel_surface_listener.link);
+	wl_list_remove(&output_listener->background_surface_listener.link);
 	wl_list_remove(&output_listener->destroy_listener.link);
 	wl_list_remove(&output_listener->link);
 	free(output_listener);
@@ -4864,9 +4892,6 @@ module_init(struct weston_compositor *ec,
 	wl_signal_add(&ec->wake_signal, &shell->wake_listener);
 	shell->transform_listener.notify = transform_handler;
 	wl_signal_add(&ec->transform_signal, &shell->transform_listener);
-
-	ec->shell_interface.shell = shell;
-	ec->shell_interface.get_output_work_area = get_output_work_area;
 
 	weston_layer_init(&shell->fullscreen_layer, &ec->cursor_layer.link);
 	weston_layer_init(&shell->panel_layer, &shell->fullscreen_layer.link);

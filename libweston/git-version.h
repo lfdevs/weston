@@ -1,1 +1,1 @@
-#define BUILD_ID "1.11.0-211-geb07f36 configure.ac: bump to version 1.11.91 for the alpha release (2016-08-16 11:51:53 -0700)"
+#define BUILD_ID "1.11.93-7-g870f384 configure.ac: bump to version 1.11.94 for the RC2 release (2016-09-13 12:18:23 -0700)"

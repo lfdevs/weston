@@ -28,8 +28,8 @@
 
 #define WESTON_VERSION_MAJOR 1
 #define WESTON_VERSION_MINOR 11
-#define WESTON_VERSION_MICRO 91
-#define WESTON_VERSION "1.11.91"
+#define WESTON_VERSION_MICRO 94
+#define WESTON_VERSION "1.11.94"
 
 /* This macro may not do what you expect.  Weston doesn't guarantee
  * a stable API between 1.X and 1.Y, and thus this macro will return

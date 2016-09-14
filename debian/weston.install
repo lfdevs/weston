@@ -11,11 +11,9 @@ usr/lib/weston/weston-ivi-shell-user-interface
 usr/lib/weston/weston-screenshooter
 usr/lib/weston/weston-simple-im
 usr/lib/*/libweston-1.so
-usr/lib/*/libweston-1.so.0.11.91
-usr/lib/*/libweston-1.so.0
-usr/lib/*/libweston-desktop-1.so.0
+usr/lib/*/libweston-1.so.*
+usr/lib/*/libweston-desktop-1.so.*
 usr/lib/*/libweston-desktop-1.so
-usr/lib/*/libweston-desktop-1.so.0.11.91
 usr/lib/*/libweston-1/x11-backend.so
 usr/lib/*/libweston-1/xwayland.so
 usr/lib/*/libweston-1/headless-backend.so
