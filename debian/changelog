@@ -1,3 +1,15 @@
+weston (1.12.0-1) unstable; urgency=medium
+
+  * New upstream release. Closes: #841735.
+  * Ship the shared libraries in libweston-1-0 and libweston-1-dev.
+  * Bump debhelper compat to 10.
+    + debhelper now calls dh-autoreconf automatically.
+  * No need to pass --destdir=debian/tmp to dh_auto_install now that we
+    have multiple binary packages.
+  * Update copyright.
+
+ -- Emilio Pozuelo Monfort <pochu@debian.org>  Wed, 07 Dec 2016 19:17:42 +0100
+
 weston (1.11.94-1) experimental; urgency=medium
 
   * New upstream release.

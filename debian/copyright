@@ -1,43 +1,6 @@
 Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Source: http://wayland.freedesktop.org/
 
-Files: clients/*
-Copyright: © 2008-2011 Kristian Høgsberg
-           © 2009 Chris Wilson
-           © 2010-2012 Intel Corporation
-           © 2011 Benjamin Franzke
-           © 2011 Collabora, Ltd.
-           © 2011 Tim Wiederhake
-License:
- Permission to use, copy, modify, distribute, and sell this software and its
- documentation for any purpose is hereby granted without fee, provided that
- the above copyright notice appear in all copies and that both that copyright
- notice and this permission notice appear in supporting documentation, and
- that the name of the copyright holders not be used in advertising or
- publicity pertaining to distribution of the software without specific,
- written prior permission.  The copyright holders make no representations
- about the suitability of this software for any purpose.  It is provided "as
- is" without express or implied warranty.
- .
- THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS SOFTWARE,
- INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS, IN NO
- EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY SPECIAL, INDIRECT OR
- CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,
- DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
- TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE
- OF THIS SOFTWARE.
-
-Files: clients/glmatrix.c
-Copyright: © 2003, 2004 Jamie Zawinski <jwz@jwz.org>
-License:
- Permission to use, copy, modify, distribute, and sell this software and its
- documentation for any purpose is hereby granted without fee, provided that
- the above copyright notice appear in all copies and that both that
- copyright notice and this permission notice appear in supporting
- documentation.  No representations are made about the suitability of this
- software for any purpose.  It is provided "as is" without express or
- implied warranty.
-
 Files: data/*
 Copyright: © 2007-2010 Novell, Inc.
 License: CC-BY-SA-3.0
@@ -45,52 +8,6 @@ License: CC-BY-SA-3.0
 Files: data/terminal.png
 Copyright: @ 2002-2008 GNOME Project
 License: CC-BY-SA-3.0
-
-Files: shared/*
-Copyright: © 2011 Intel Corporation
-           © 2008 Kristian Høgsberg
-License:
- Permission to use, copy, modify, distribute, and sell this software and its
- documentation for any purpose is hereby granted without fee, provided that
- the above copyright notice appear in all copies and that both that copyright
- notice and this permission notice appear in supporting documentation, and
- that the name of the copyright holders not be used in advertising or
- publicity pertaining to distribution of the software without specific,
- written prior permission.  The copyright holders make no representations
- about the suitability of this software for any purpose.  It is provided "as
- is" without express or implied warranty.
- .
- THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS SOFTWARE,
- INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS, IN NO
- EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY SPECIAL, INDIRECT OR
- CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,
- DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
- TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE
- OF THIS SOFTWARE.
-
-Files: src/*
-Copyright:© 2008-2011 Kristian Høgsberg
-          © 2009-2011 Intel Corporation
-          © 2010-2011 Benjamin Franzke
-          © 2011 Collabora, Ltd.
-License:
- Permission to use, copy, modify, distribute, and sell this software and
- its documentation for any purpose is hereby granted without fee, provided
- that the above copyright notice appear in all copies and that both that
- copyright notice and this permission notice appear in supporting
- documentation, and that the name of the copyright holders not be used in
- advertising or publicity pertaining to distribution of the software
- without specific, written prior permission.  The copyright holders make
- no representations about the suitability of this software for any
- purpose.  It is provided "as is" without express or implied warranty.
- .
- THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS
- SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
- FITNESS, IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
- SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER
- RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
- CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 Files: src/hash.*
 Copyright: © 2009 Intel Corporation
@@ -124,6 +41,32 @@ License:
  Authors:
     Eric Anholt <eric@anholt.net>
     Keith Packard <keithp@keithp.com>
+
+Files: *
+Copyright: © 2008-2011 Kristian Høgsberg
+           © 2009 Chris Wilson
+           © 2010-2012 Intel Corporation
+           © 2011 Benjamin Franzke
+           © 2011 Collabora, Ltd.
+           © 2011 Tim Wiederhake
+License:
+ Permission to use, copy, modify, distribute, and sell this software and
+ its documentation for any purpose is hereby granted without fee, provided
+ that the above copyright notice appear in all copies and that both that
+ copyright notice and this permission notice appear in supporting
+ documentation, and that the name of the copyright holders not be used in
+ advertising or publicity pertaining to distribution of the software
+ without specific, written prior permission.  The copyright holders make
+ no representations about the suitability of this software for any
+ purpose.  It is provided "as is" without express or implied warranty.
+ .
+ THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS
+ SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ FITNESS, IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
+ SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER
+ RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
+ CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 
 

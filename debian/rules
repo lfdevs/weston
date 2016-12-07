@@ -8,20 +8,17 @@ override_dh_auto_test:
 	# the test suite does not 100% pass in headless mode
 	dh_auto_test || true
 
-override_dh_auto_install:
-	dh_auto_install --destdir=debian/tmp
-
 override_dh_install:
 	dh_install --fail-missing -X.la
 
 override_dh_makeshlibs:
-	# No-op: libraries are private, not shared.
+	dh_makeshlibs -Xlibweston-1/ -- -c4
 
 override_dh_fixperms:
 	dh_fixperms -Xusr/bin/weston-launch
 
 %:
-	dh $@ --with quilt,autoreconf
+	dh $@ --with quilt
 
 # For maintainer use only, generate a tarball:
 gentarball: SOURCE=$(shell dpkg-parsechangelog|awk '/^Source:/ {print $$2}')
