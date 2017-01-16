@@ -38,6 +38,7 @@ Build-Depends:
  libvpx-dev,
  libsystemd-dev,
  libinput-dev (>= 0.8.0),
+ freerdp2-dev,
  wayland-protocols (>= 1.7),
 Standards-Version: 3.9.8
 Homepage: http://wayland.freedesktop.org/
