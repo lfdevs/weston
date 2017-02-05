@@ -2,8 +2,7 @@
 
 override_dh_auto_configure:
 	dh_auto_configure -- --disable-libunwind --libexec=/usr/lib/weston \
-		--with-cairo=image --enable-libinput-backend \
-		--enable-rdp-compositor --enable-screen-sharing
+		--with-cairo=image --enable-screen-sharing
 
 override_dh_auto_test:
 	# the test suite does not 100% pass in headless mode

@@ -1,3 +1,13 @@
+weston (1.12.0-3) unstable; urgency=medium
+
+  * Remove useless dependency on libegl1-mesa-drivers.
+  * Disable the freerdp backend for stretch. freerdp2 doesn't build
+    everywhere and is not in testing, and the backend fails to build
+    against our snapshot of freerdp 1.
+  * Drop obsolete --enable-libinput-backend configure switch.
+
+ -- Emilio Pozuelo Monfort <pochu@debian.org>  Sun, 05 Feb 2017 10:57:54 +0100
+
 weston (1.12.0-2) unstable; urgency=medium
 
   * Enable RDP compositor and screen sharing. Closes: #775855, #850658.
