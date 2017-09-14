@@ -35,7 +35,7 @@
 #include <unistd.h>
 #include <linux/input.h>
 
-static struct launcher_interface *ifaces[] = {
+static const struct launcher_interface *ifaces[] = {
 #ifdef HAVE_SYSTEMD_LOGIN
 	&launcher_logind_iface,
 #endif
@@ -48,10 +48,10 @@ WL_EXPORT struct weston_launcher *
 weston_launcher_connect(struct weston_compositor *compositor, int tty,
 			const char *seat_id, bool sync_drm)
 {
-	struct launcher_interface **it;
+	const struct launcher_interface **it;
 
 	for (it = ifaces; *it != NULL; it++) {
-		struct launcher_interface *iface = *it;
+		const struct launcher_interface *iface = *it;
 		struct weston_launcher *launcher;
 
 		if (iface->connect(&launcher, compositor, tty, seat_id, sync_drm) == 0)
@@ -98,8 +98,13 @@ switch_vt_binding(struct weston_keyboard *keyboard,
 		  uint32_t time, uint32_t key, void *data)
 {
 	struct weston_compositor *compositor = data;
+	struct weston_launcher *launcher = compositor->launcher;
+	int vt = key - KEY_F1 + 1;
 
-	weston_launcher_activate_vt(compositor->launcher, key - KEY_F1 + 1);
+	if (vt == launcher->iface->get_vt(launcher))
+		return;
+
+	weston_launcher_activate_vt(launcher, vt);
 }
 
 WL_EXPORT void

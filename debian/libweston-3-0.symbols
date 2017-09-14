@@ -1,5 +1,5 @@
-libweston-1.so.0 libweston-1-0 #MINVER#
-* Build-Depends-Package: libweston-1-dev
+libweston-3.so.0 libweston-3-0 #MINVER#
+* Build-Depends-Package: libweston-3-dev
  linux_dmabuf_buffer_get@Base 1.12.0
  linux_dmabuf_buffer_get_user_data@Base 1.12.0
  linux_dmabuf_buffer_send_server_error@Base 1.12.0
@@ -20,6 +20,12 @@ libweston-1.so.0 libweston-1-0 #MINVER#
  notify_touch@Base 1.12.0
  notify_touch_cancel@Base 1.12.0
  notify_touch_frame@Base 1.12.0
+ pixel_format_get_info@Base 3.0.0
+ pixel_format_get_opaque_substitute@Base 3.0.0
+ pixel_format_get_plane_count@Base 3.0.0
+ pixel_format_height_for_plane@Base 3.0.0
+ pixel_format_is_opaque@Base 3.0.0
+ pixel_format_width_for_plane@Base 3.0.0
  pixman_renderer_init@Base 1.12.0
  pixman_renderer_output_create@Base 1.12.0
  pixman_renderer_output_destroy@Base 1.12.0
@@ -33,7 +39,7 @@ libweston-1.so.0 libweston-1-0 #MINVER#
  weston_compositor_add_debug_binding@Base 1.12.0
  weston_compositor_add_key_binding@Base 1.12.0
  weston_compositor_add_modifier_binding@Base 1.12.0
- weston_compositor_add_output@Base 1.12.0
+ weston_compositor_add_pending_output@Base 3.0.0
  weston_compositor_add_touch_binding@Base 1.12.0
  weston_compositor_create@Base 1.12.0
  weston_compositor_damage_all@Base 1.12.0
@@ -59,6 +65,7 @@ libweston-1.so.0 libweston-1-0 #MINVER#
  weston_compositor_wake@Base 1.12.0
  weston_config_get_libexec_dir@Base 1.12.0
  weston_config_get_section@Base 1.12.0
+ weston_config_next_section@Base 3.0.0
  weston_config_section_get_bool@Base 1.12.0
  weston_config_section_get_color@Base 1.12.0
  weston_config_section_get_double@Base 1.12.0
@@ -83,6 +90,8 @@ libweston-1.so.0 libweston-1-0 #MINVER#
  weston_layer_init@Base 1.12.0
  weston_layer_set_mask@Base 1.12.0
  weston_layer_set_mask_infinite@Base 1.12.0
+ weston_layer_set_position@Base 3.0.0
+ weston_layer_unset_position@Base 3.0.0
  weston_load_module@Base 1.12.0
  weston_log@Base 1.12.0
  weston_log_continue@Base 1.12.0
@@ -95,11 +104,15 @@ libweston-1.so.0 libweston-1-0 #MINVER#
  weston_matrix_transform@Base 1.12.0
  weston_matrix_transform_region@Base 1.12.0
  weston_matrix_translate@Base 1.12.0
+ weston_move_run@Base 3.0.0
  weston_move_scale_run@Base 1.12.0
  weston_output_activate_zoom@Base 1.12.0
  weston_output_damage@Base 1.12.0
  weston_output_destroy@Base 1.12.0
+ weston_output_disable@Base 3.0.0
+ weston_output_enable@Base 3.0.0
  weston_output_finish_frame@Base 1.12.0
+ weston_output_from_resource@Base 3.0.0
  weston_output_init@Base 1.12.0
  weston_output_init_zoom@Base 1.12.0
  weston_output_mode_set_native@Base 1.12.0
@@ -107,9 +120,11 @@ libweston-1.so.0 libweston-1-0 #MINVER#
  weston_output_mode_switch_to_temporary@Base 1.12.0
  weston_output_move@Base 1.12.0
  weston_output_schedule_repaint@Base 1.12.0
+ weston_output_set_scale@Base 3.0.0
+ weston_output_set_transform@Base 3.0.0
  weston_output_transform_coordinate@Base 1.12.0
- weston_output_update_matrix@Base 1.12.0
  weston_output_update_zoom@Base 1.12.0
+ weston_pending_output_coldplug@Base 3.0.0
  weston_plane_init@Base 1.12.0
  weston_plane_release@Base 1.12.0
  weston_plugin_api_get@Base 1.12.0
@@ -232,8 +247,8 @@ libweston-1.so.0 libweston-1-0 #MINVER#
  zwp_relative_pointer_v1_interface@Base 1.12.0
  zwp_text_input_manager_v1_interface@Base 1.12.0
  zwp_text_input_v1_interface@Base 1.12.0
-libweston-desktop-1.so.0 libweston-1-0 #MINVER#
-* Build-Depends-Package: libweston-1-dev
+libweston-desktop-3.so.0 libweston-3-0 #MINVER#
+* Build-Depends-Package: libweston-3-dev
  weston_desktop_client_for_each_surface@Base 1.12.0
  weston_desktop_client_get_client@Base 1.12.0
  weston_desktop_client_ping@Base 1.12.0

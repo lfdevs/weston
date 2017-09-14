@@ -43,12 +43,41 @@ License:
     Keith Packard <keithp@keithp.com>
 
 Files: *
-Copyright: © 2008-2011 Kristian Høgsberg
+Copyright: © 2016 Armin Krezović
+           © 2010-2012 Benjamin Franzke
+           © 2016 Benoit Gschwind
+           © 2013 BMW Car IT GmbH
            © 2009 Chris Wilson
-           © 2010-2012 Intel Corporation
-           © 2011 Benjamin Franzke
-           © 2011 Collabora, Ltd.
+           © 2011-2016 Collabora, Ltd.
+           © 2013 David Herrmann
+           © 2013-2016 DENSO CORPORATION
+           © 2015 General Electric Company
+           © 2015-2016 Giulio Camuffo
+           © 2013 Hardening
+           © 2009-2013 Intel Corporation
+           © 2013-2014 Jason Ekstrand
+           © 2015 Jasper St. Pierre
+           © 2012 John Kåre Alsaker
+           © 2012-2013 Jonas Ådahl
+           © 1988-2004 Keith Packard and Bart Massey.
+           © 2008-2012 Kristian Høgsberg
+           © 2012 Martin Minarik
+           © 2016 NVIDIA Corporation
+           © 2012 Openismus GmbH
+           © 2014 Pekka Paalanen
+           © 2012 Philipp Brüschweiler
+           © 2013 Philip Withnall
+           © 2016 Quentin "Sardem FF7" Glidic
+           © 2012-2013 Raspberry Pi Foundation
+           © 2010-2015 Red Hat, Inc.
+           © 2013 Richard Hughes
+           © 2012 Rob Clark
+           © 2013 Sam Spilsbury
+           © 2015-2016 Samsung Electronics Co., Ltd
+           © 2012 Scott Moreau
            © 2011 Tim Wiederhake
+           © 2008 Tungsten Graphics, Inc
+           © 2013 Vasily Khoruzhick
 License:
  Permission to use, copy, modify, distribute, and sell this software and
  its documentation for any purpose is hereby granted without fee, provided

@@ -116,8 +116,8 @@ show_input_panels(struct wl_listener *listener, void *data)
 	shell->showing_input_panels = true;
 
 	if (!shell->locked)
-		wl_list_insert(&shell->compositor->cursor_layer.link,
-			       &shell->input_panel_layer.link);
+		weston_layer_set_position(&shell->input_panel_layer,
+					  WESTON_LAYER_POSITION_TOP_UI);
 
 	wl_list_for_each_safe(ipsurf, next,
 			      &shell->input_panel.surfaces, link) {
@@ -142,7 +142,7 @@ hide_input_panels(struct wl_listener *listener, void *data)
 	shell->showing_input_panels = false;
 
 	if (!shell->locked)
-		wl_list_remove(&shell->input_panel_layer.link);
+		weston_layer_unset_position(&shell->input_panel_layer);
 
 	wl_list_for_each_safe(view, next,
 			      &shell->input_panel_layer.view_list.link,
@@ -275,7 +275,7 @@ input_panel_surface_set_toplevel(struct wl_client *client,
 	wl_list_insert(&shell->input_panel.surfaces,
 		       &input_panel_surface->link);
 
-	input_panel_surface->output = wl_resource_get_user_data(output_resource);
+	input_panel_surface->output = weston_output_from_resource(output_resource);
 	input_panel_surface->panel = 0;
 }
 

@@ -42,6 +42,7 @@
 #include <sys/wait.h>
 #include <sys/socket.h>
 #include <sys/signalfd.h>
+#include <sys/sysmacros.h>
 #include <signal.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -72,7 +73,7 @@
 
 #define MAX_ARGV_SIZE 256
 
-#ifdef HAVE_LIBDRM
+#ifdef BUILD_DRM_COMPOSITOR
 
 #include <xf86drm.h>
 

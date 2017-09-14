@@ -45,9 +45,10 @@
 #include "xdg-shell-unstable-v6-client-protocol.h"
 #include <sys/types.h>
 #include <unistd.h>
-#include "protocol/ivi-application-client-protocol.h"
+#include "ivi-application-client-protocol.h"
 #define IVI_SURFACE_ID 9000
 
+#include "shared/helpers.h"
 #include "shared/platform.h"
 #include "weston-egl-ext.h"
 
@@ -99,7 +100,7 @@ struct window {
 	struct ivi_surface *ivi_surface;
 	EGLSurface egl_surface;
 	struct wl_callback *callback;
-	int fullscreen, opaque, buffer_size, frame_sync;
+	int fullscreen, opaque, buffer_size, frame_sync, delay;
 	bool wait_for_configure;
 };
 
@@ -125,6 +126,19 @@ static int running = 1;
 static void
 init_egl(struct display *display, struct window *window)
 {
+	static const struct {
+		char *extension, *entrypoint;
+	} swap_damage_ext_to_entrypoint[] = {
+		{
+			.extension = "EGL_EXT_swap_buffers_with_damage",
+			.entrypoint = "eglSwapBuffersWithDamageEXT",
+		},
+		{
+			.extension = "EGL_KHR_swap_buffers_with_damage",
+			.entrypoint = "eglSwapBuffersWithDamageKHR",
+		},
+	};
+
 	static const EGLint context_attribs[] = {
 		EGL_CONTEXT_CLIENT_VERSION, 2,
 		EGL_NONE
@@ -191,14 +205,21 @@ init_egl(struct display *display, struct window *window)
 	display->swap_buffers_with_damage = NULL;
 	extensions = eglQueryString(display->egl.dpy, EGL_EXTENSIONS);
 	if (extensions &&
-	    weston_check_egl_extension(extensions, "EGL_EXT_swap_buffers_with_damage") &&
-	    weston_check_egl_extension(extensions, "EGL_EXT_buffer_age"))
-		display->swap_buffers_with_damage =
-			(PFNEGLSWAPBUFFERSWITHDAMAGEEXTPROC)
-			eglGetProcAddress("eglSwapBuffersWithDamageEXT");
+	    weston_check_egl_extension(extensions, "EGL_EXT_buffer_age")) {
+		for (i = 0; i < (int) ARRAY_LENGTH(swap_damage_ext_to_entrypoint); i++) {
+			if (weston_check_egl_extension(extensions,
+						       swap_damage_ext_to_entrypoint[i].extension)) {
+				/* The EXTPROC is identical to the KHR one */
+				display->swap_buffers_with_damage =
+					(PFNEGLSWAPBUFFERSWITHDAMAGEEXTPROC)
+					eglGetProcAddress(swap_damage_ext_to_entrypoint[i].entrypoint);
+				break;
+			}
+		}
+	}
 
 	if (display->swap_buffers_with_damage)
-		printf("has EGL_EXT_buffer_age and EGL_EXT_swap_buffers_with_damage\n");
+		printf("has EGL_EXT_buffer_age and %s\n", swap_damage_ext_to_entrypoint[i].extension);
 
 }
 
@@ -436,7 +457,8 @@ destroy_surface(struct window *window)
 	eglMakeCurrent(window->display->egl.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE,
 		       EGL_NO_CONTEXT);
 
-	eglDestroySurface(window->display->egl.dpy, window->egl_surface);
+	weston_platform_destroy_egl_surface(window->display->egl.dpy,
+					    window->egl_surface);
 	wl_egl_window_destroy(window->native);
 
 	if (window->xdg_toplevel)
@@ -525,6 +547,8 @@ redraw(void *data, struct wl_callback *callback, uint32_t time)
 
 	glDisableVertexAttribArray(window->gl.pos);
 	glDisableVertexAttribArray(window->gl.col);
+
+	usleep(window->delay);
 
 	if (window->opaque || window->fullscreen) {
 		region = wl_compositor_create_region(window->display->compositor);
@@ -773,7 +797,8 @@ registry_handle_global(void *data, struct wl_registry *registry,
 	if (strcmp(interface, "wl_compositor") == 0) {
 		d->compositor =
 			wl_registry_bind(registry, name,
-					 &wl_compositor_interface, 1);
+					 &wl_compositor_interface,
+					 MIN(version, 4));
 	} else if (strcmp(interface, "zxdg_shell_v6") == 0) {
 		d->shell = wl_registry_bind(registry, name,
 					    &zxdg_shell_v6_interface, 1);
@@ -824,6 +849,7 @@ static void
 usage(int error_code)
 {
 	fprintf(stderr, "Usage: simple-egl [OPTIONS]\n\n"
+		"  -d <us>\tBuffer swap delay in microseconds\n"
 		"  -f\tRun in fullscreen mode\n"
 		"  -o\tCreate an opaque surface\n"
 		"  -s\tUse a 16 bpp EGL config\n"
@@ -848,9 +874,12 @@ main(int argc, char **argv)
 	window.window_size = window.geometry;
 	window.buffer_size = 32;
 	window.frame_sync = 1;
+	window.delay = 0;
 
 	for (i = 1; i < argc; i++) {
-		if (strcmp("-f", argv[i]) == 0)
+		if (strcmp("-d", argv[i]) == 0 && i+1 < argc)
+			window.delay = atoi(argv[++i]);
+		else if (strcmp("-f", argv[i]) == 0)
 			window.fullscreen = 1;
 		else if (strcmp("-o", argv[i]) == 0)
 			window.opaque = 1;

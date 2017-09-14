@@ -134,6 +134,8 @@ udev_input_disable(struct udev_input *input)
 	if (input->suspended)
 		return;
 
+	wl_event_source_remove(input->libinput_source);
+	input->libinput_source = NULL;
 	libinput_suspend(input->libinput);
 	process_events(input);
 	input->suspended = 1;
@@ -259,6 +261,12 @@ udev_input_enable(struct udev_input *input)
 			devices_found = 1;
 	}
 
+	if (devices_found == 0 && !c->require_input) {
+		weston_log("warning: no input devices found, but none required "
+			   "as per configuration.\n");
+		return 0;
+	}
+
 	if (devices_found == 0) {
 		weston_log(
 			"warning: no input devices on entering Weston. "
@@ -331,7 +339,8 @@ udev_input_destroy(struct udev_input *input)
 {
 	struct udev_seat *seat, *next;
 
-	wl_event_source_remove(input->libinput_source);
+	if (input->libinput_source)
+		wl_event_source_remove(input->libinput_source);
 	wl_list_for_each_safe(seat, next, &input->compositor->seat_list, base.link)
 		udev_seat_destroy(seat);
 	libinput_unref(input->libinput);

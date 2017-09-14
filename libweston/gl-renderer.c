@@ -1,6 +1,7 @@
 /*
  * Copyright © 2012 Intel Corporation
  * Copyright © 2015 Collabora, Ltd.
+ * Copyright © 2016 NVIDIA Corporation
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -147,7 +148,7 @@ struct gl_surface_state {
 	/* These are only used by SHM surfaces to detect when we need
 	 * to do a full upload to specify a new internal texture
 	 * format */
-	GLenum gl_format;
+	GLenum gl_format[3];
 	GLenum gl_pixel_type;
 
 	struct egl_image* images[3];
@@ -159,6 +160,11 @@ struct gl_surface_state {
 	int pitch; /* in pixels */
 	int height; /* in pixels */
 	int y_inverted;
+
+	/* Extension needed for SHM YUV texture */
+	int offset[3]; /* offset per plane */
+	int hsub[3];  /* horizontal subsampling per plane */
+	int vsub[3];  /* vertical subsampling per plane */
 
 	struct weston_surface *surface;
 
@@ -206,6 +212,8 @@ struct gl_renderer {
 	int has_dmabuf_import;
 	struct wl_list dmabuf_images;
 
+	int has_gl_texture_rg;
+
 	struct gl_shader texture_shader_rgba;
 	struct gl_shader texture_shader_rgbx;
 	struct gl_shader texture_shader_egl_external;
@@ -219,6 +227,10 @@ struct gl_renderer {
 	struct wl_signal destroy_signal;
 
 	struct wl_listener output_destroy_listener;
+
+	int has_dmabuf_import_modifiers;
+	PFNEGLQUERYDMABUFFORMATSEXTPROC query_dmabuf_formats;
+	PFNEGLQUERYDMABUFMODIFIERSEXTPROC query_dmabuf_modifiers;
 };
 
 static PFNEGLGETPLATFORMDISPLAYEXTPROC get_platform_display = NULL;
@@ -1229,8 +1241,8 @@ gl_renderer_flush_damage(struct weston_surface *surface)
 	struct weston_view *view;
 	bool texture_used;
 	pixman_box32_t *rectangles;
-	void *data;
-	int i, n;
+	uint8_t *data;
+	int i, j, n;
 
 	pixman_region32_union(&gs->texture_damage,
 			      &gs->texture_damage, &surface->damage);
@@ -1257,29 +1269,43 @@ gl_renderer_flush_damage(struct weston_surface *surface)
 	    !gs->needs_full_upload)
 		goto done;
 
-	glBindTexture(GL_TEXTURE_2D, gs->textures[0]);
+	data = wl_shm_buffer_get_data(buffer->shm_buffer);
 
 	if (!gr->has_unpack_subimage) {
 		wl_shm_buffer_begin_access(buffer->shm_buffer);
-		glTexImage2D(GL_TEXTURE_2D, 0, gs->gl_format,
-			     gs->pitch, buffer->height, 0,
-			     gs->gl_format, gs->gl_pixel_type,
-			     wl_shm_buffer_get_data(buffer->shm_buffer));
+		for (j = 0; j < gs->num_textures; j++) {
+			glBindTexture(GL_TEXTURE_2D, gs->textures[j]);
+			glTexImage2D(GL_TEXTURE_2D, 0,
+				     gs->gl_format[j],
+				     gs->pitch / gs->hsub[j],
+				     buffer->height / gs->vsub[j],
+				     0,
+				     gs->gl_format[j],
+				     gs->gl_pixel_type,
+				     data + gs->offset[j]);
+		}
 		wl_shm_buffer_end_access(buffer->shm_buffer);
 
 		goto done;
 	}
 
 	glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT, gs->pitch);
-	data = wl_shm_buffer_get_data(buffer->shm_buffer);
 
 	if (gs->needs_full_upload) {
 		glPixelStorei(GL_UNPACK_SKIP_PIXELS_EXT, 0);
 		glPixelStorei(GL_UNPACK_SKIP_ROWS_EXT, 0);
 		wl_shm_buffer_begin_access(buffer->shm_buffer);
-		glTexImage2D(GL_TEXTURE_2D, 0, gs->gl_format,
-			     gs->pitch, buffer->height, 0,
-			     gs->gl_format, gs->gl_pixel_type, data);
+		for (j = 0; j < gs->num_textures; j++) {
+			glBindTexture(GL_TEXTURE_2D, gs->textures[j]);
+			glTexImage2D(GL_TEXTURE_2D, 0,
+				     gs->gl_format[j],
+				     gs->pitch / gs->hsub[j],
+				     buffer->height / gs->vsub[j],
+				     0,
+				     gs->gl_format[j],
+				     gs->gl_pixel_type,
+				     data + gs->offset[j]);
+		}
 		wl_shm_buffer_end_access(buffer->shm_buffer);
 		goto done;
 	}
@@ -1293,9 +1319,17 @@ gl_renderer_flush_damage(struct weston_surface *surface)
 
 		glPixelStorei(GL_UNPACK_SKIP_PIXELS_EXT, r.x1);
 		glPixelStorei(GL_UNPACK_SKIP_ROWS_EXT, r.y1);
-		glTexSubImage2D(GL_TEXTURE_2D, 0, r.x1, r.y1,
-				r.x2 - r.x1, r.y2 - r.y1,
-				gs->gl_format, gs->gl_pixel_type, data);
+		for (j = 0; j < gs->num_textures; j++) {
+			glBindTexture(GL_TEXTURE_2D, gs->textures[j]);
+			glTexSubImage2D(GL_TEXTURE_2D, 0,
+					r.x1 / gs->hsub[j],
+					r.y1 / gs->vsub[j],
+					(r.x2 - r.x1) / gs->hsub[j],
+					(r.y2 - r.y1) / gs->vsub[j],
+					gs->gl_format[j],
+					gs->gl_pixel_type,
+					data + gs->offset[j]);
+		}
 	}
 	wl_shm_buffer_end_access(buffer->shm_buffer);
 
@@ -1334,31 +1368,91 @@ gl_renderer_attach_shm(struct weston_surface *es, struct weston_buffer *buffer,
 	struct weston_compositor *ec = es->compositor;
 	struct gl_renderer *gr = get_renderer(ec);
 	struct gl_surface_state *gs = get_surface_state(es);
-	GLenum gl_format, gl_pixel_type;
+	GLenum gl_format[3] = {0, 0, 0};
+	GLenum gl_pixel_type;
 	int pitch;
+	int num_planes;
 
 	buffer->shm_buffer = shm_buffer;
 	buffer->width = wl_shm_buffer_get_width(shm_buffer);
 	buffer->height = wl_shm_buffer_get_height(shm_buffer);
 
+	num_planes = 1;
+	gs->offset[0] = 0;
+	gs->hsub[0] = 1;
+	gs->vsub[0] = 1;
+
 	switch (wl_shm_buffer_get_format(shm_buffer)) {
 	case WL_SHM_FORMAT_XRGB8888:
 		gs->shader = &gr->texture_shader_rgbx;
 		pitch = wl_shm_buffer_get_stride(shm_buffer) / 4;
-		gl_format = GL_BGRA_EXT;
+		gl_format[0] = GL_BGRA_EXT;
 		gl_pixel_type = GL_UNSIGNED_BYTE;
 		break;
 	case WL_SHM_FORMAT_ARGB8888:
 		gs->shader = &gr->texture_shader_rgba;
 		pitch = wl_shm_buffer_get_stride(shm_buffer) / 4;
-		gl_format = GL_BGRA_EXT;
+		gl_format[0] = GL_BGRA_EXT;
 		gl_pixel_type = GL_UNSIGNED_BYTE;
 		break;
 	case WL_SHM_FORMAT_RGB565:
 		gs->shader = &gr->texture_shader_rgbx;
 		pitch = wl_shm_buffer_get_stride(shm_buffer) / 2;
-		gl_format = GL_RGB;
+		gl_format[0] = GL_RGB;
 		gl_pixel_type = GL_UNSIGNED_SHORT_5_6_5;
+		break;
+	case WL_SHM_FORMAT_YUV420:
+		gs->shader = &gr->texture_shader_y_u_v;
+		pitch = wl_shm_buffer_get_stride(shm_buffer);
+		gl_pixel_type = GL_UNSIGNED_BYTE;
+		num_planes = 3;
+		gs->offset[1] = gs->offset[0] + (pitch / gs->hsub[0]) *
+				(buffer->height / gs->vsub[0]);
+		gs->hsub[1] = 2;
+		gs->vsub[1] = 2;
+		gs->offset[2] = gs->offset[1] + (pitch / gs->hsub[1]) *
+				(buffer->height / gs->vsub[1]);
+		gs->hsub[2] = 2;
+		gs->vsub[2] = 2;
+		if (gr->has_gl_texture_rg) {
+			gl_format[0] = GL_R8_EXT;
+			gl_format[1] = GL_R8_EXT;
+			gl_format[2] = GL_R8_EXT;
+		} else {
+			gl_format[0] = GL_LUMINANCE;
+			gl_format[1] = GL_LUMINANCE;
+			gl_format[2] = GL_LUMINANCE;
+		}
+		break;
+	case WL_SHM_FORMAT_NV12:
+		gs->shader = &gr->texture_shader_y_xuxv;
+		pitch = wl_shm_buffer_get_stride(shm_buffer);
+		gl_pixel_type = GL_UNSIGNED_BYTE;
+		num_planes = 2;
+		gs->offset[1] = gs->offset[0] + (pitch / gs->hsub[0]) *
+				(buffer->height / gs->vsub[0]);
+		gs->hsub[1] = 2;
+		gs->vsub[1] = 2;
+		if (gr->has_gl_texture_rg) {
+			gl_format[0] = GL_R8_EXT;
+			gl_format[1] = GL_RG8_EXT;
+		} else {
+			gl_format[0] = GL_LUMINANCE;
+			gl_format[1] = GL_LUMINANCE_ALPHA;
+		}
+		break;
+	case WL_SHM_FORMAT_YUYV:
+		gs->shader = &gr->texture_shader_y_xuxv;
+		pitch = wl_shm_buffer_get_stride(shm_buffer) / 2;
+		gl_pixel_type = GL_UNSIGNED_BYTE;
+		num_planes = 2;
+		gs->hsub[1] = 2;
+		gs->vsub[1] = 1;
+		if (gr->has_gl_texture_rg)
+			gl_format[0] = GL_RG8_EXT;
+		else
+			gl_format[0] = GL_LUMINANCE_ALPHA;
+		gl_format[1] = GL_BGRA_EXT;
 		break;
 	default:
 		weston_log("warning: unknown shm buffer format: %08x\n",
@@ -1371,13 +1465,17 @@ gl_renderer_attach_shm(struct weston_surface *es, struct weston_buffer *buffer,
 	 * happening, we need to allocate a new texture buffer. */
 	if (pitch != gs->pitch ||
 	    buffer->height != gs->height ||
-	    gl_format != gs->gl_format ||
+	    gl_format[0] != gs->gl_format[0] ||
+	    gl_format[1] != gs->gl_format[1] ||
+	    gl_format[2] != gs->gl_format[2] ||
 	    gl_pixel_type != gs->gl_pixel_type ||
 	    gs->buffer_type != BUFFER_TYPE_SHM) {
 		gs->pitch = pitch;
 		gs->height = buffer->height;
 		gs->target = GL_TEXTURE_2D;
-		gs->gl_format = gl_format;
+		gs->gl_format[0] = gl_format[0];
+		gs->gl_format[1] = gl_format[1];
+		gs->gl_format[2] = gl_format[2];
 		gs->gl_pixel_type = gl_pixel_type;
 		gs->buffer_type = BUFFER_TYPE_SHM;
 		gs->needs_full_upload = true;
@@ -1385,7 +1483,7 @@ gl_renderer_attach_shm(struct weston_surface *es, struct weston_buffer *buffer,
 
 		gs->surface = es;
 
-		ensure_textures(gs, 1);
+		ensure_textures(gs, num_planes);
 	}
 }
 
@@ -1479,7 +1577,7 @@ import_simple_dmabuf(struct gl_renderer *gr,
                      struct dmabuf_attributes *attributes)
 {
 	struct egl_image *image;
-	EGLint attribs[30];
+	EGLint attribs[50];
 	int atti = 0;
 
 	/* This requires the Mesa commit in
@@ -1496,7 +1594,6 @@ import_simple_dmabuf(struct gl_renderer *gr,
 	attribs[atti++] = attributes->height;
 	attribs[atti++] = EGL_LINUX_DRM_FOURCC_EXT;
 	attribs[atti++] = attributes->format;
-	/* XXX: Add modifier here when supported */
 
 	if (attributes->n_planes > 0) {
 		attribs[atti++] = EGL_DMA_BUF_PLANE0_FD_EXT;
@@ -1505,6 +1602,12 @@ import_simple_dmabuf(struct gl_renderer *gr,
 		attribs[atti++] = attributes->offset[0];
 		attribs[atti++] = EGL_DMA_BUF_PLANE0_PITCH_EXT;
 		attribs[atti++] = attributes->stride[0];
+		if (gr->has_dmabuf_import_modifiers) {
+			attribs[atti++] = EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT;
+			attribs[atti++] = attributes->modifier[0] & 0xFFFFFFFF;
+			attribs[atti++] = EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT;
+			attribs[atti++] = attributes->modifier[0] >> 32;
+		}
 	}
 
 	if (attributes->n_planes > 1) {
@@ -1514,6 +1617,12 @@ import_simple_dmabuf(struct gl_renderer *gr,
 		attribs[atti++] = attributes->offset[1];
 		attribs[atti++] = EGL_DMA_BUF_PLANE1_PITCH_EXT;
 		attribs[atti++] = attributes->stride[1];
+		if (gr->has_dmabuf_import_modifiers) {
+			attribs[atti++] = EGL_DMA_BUF_PLANE1_MODIFIER_LO_EXT;
+			attribs[atti++] = attributes->modifier[1] & 0xFFFFFFFF;
+			attribs[atti++] = EGL_DMA_BUF_PLANE1_MODIFIER_HI_EXT;
+			attribs[atti++] = attributes->modifier[1] >> 32;
+		}
 	}
 
 	if (attributes->n_planes > 2) {
@@ -1523,6 +1632,27 @@ import_simple_dmabuf(struct gl_renderer *gr,
 		attribs[atti++] = attributes->offset[2];
 		attribs[atti++] = EGL_DMA_BUF_PLANE2_PITCH_EXT;
 		attribs[atti++] = attributes->stride[2];
+		if (gr->has_dmabuf_import_modifiers) {
+			attribs[atti++] = EGL_DMA_BUF_PLANE2_MODIFIER_LO_EXT;
+			attribs[atti++] = attributes->modifier[2] & 0xFFFFFFFF;
+			attribs[atti++] = EGL_DMA_BUF_PLANE2_MODIFIER_HI_EXT;
+			attribs[atti++] = attributes->modifier[2] >> 32;
+		}
+	}
+
+	if (gr->has_dmabuf_import_modifiers) {
+		if (attributes->n_planes > 3) {
+			attribs[atti++] = EGL_DMA_BUF_PLANE3_FD_EXT;
+			attribs[atti++] = attributes->fd[3];
+			attribs[atti++] = EGL_DMA_BUF_PLANE3_OFFSET_EXT;
+			attribs[atti++] = attributes->offset[3];
+			attribs[atti++] = EGL_DMA_BUF_PLANE3_PITCH_EXT;
+			attribs[atti++] = attributes->stride[3];
+			attribs[atti++] = EGL_DMA_BUF_PLANE3_MODIFIER_LO_EXT;
+			attribs[atti++] = attributes->modifier[3] & 0xFFFFFFFF;
+			attribs[atti++] = EGL_DMA_BUF_PLANE3_MODIFIER_HI_EXT;
+			attribs[atti++] = attributes->modifier[3] >> 32;
+		}
 	}
 
 	attribs[atti++] = EGL_NONE;
@@ -1599,6 +1729,27 @@ struct yuv_format_descriptor yuv_formats[] = {
 			.format = DRM_FORMAT_R8,
 			.plane_index = 2
 		}}
+	}, {
+		.format = DRM_FORMAT_YUV444,
+		.input_planes = 3,
+		.output_planes = 3,
+		.texture_type = EGL_TEXTURE_Y_U_V_WL,
+		{{
+			.width_divisor = 1,
+			.height_divisor = 1,
+			.format = DRM_FORMAT_R8,
+			.plane_index = 0
+		}, {
+			.width_divisor = 1,
+			.height_divisor = 1,
+			.format = DRM_FORMAT_R8,
+			.plane_index = 1
+		}, {
+			.width_divisor = 1,
+			.height_divisor = 1,
+			.format = DRM_FORMAT_R8,
+			.plane_index = 2
+		}}
 	}
 };
 
@@ -1651,13 +1802,13 @@ import_yuv_dmabuf(struct gl_renderer *gr,
 
 	if (!format) {
 		weston_log("Error during import, and no known conversion for format "
-		           "%.4s in the renderer",
+		           "%.4s in the renderer\n",
 		           dump_format(attributes->format, fmt));
 		return false;
 	}
 
 	if (attributes->n_planes != format->input_planes) {
-		weston_log("%.4s dmabuf must contain %d plane%s (%d provided)",
+		weston_log("%.4s dmabuf must contain %d plane%s (%d provided)\n",
 		           dump_format(format->format, fmt),
 		           format->input_planes,
 		           (format->input_planes > 1) ? "s" : "",
@@ -1751,6 +1902,70 @@ import_dmabuf(struct gl_renderer *gr,
 }
 
 static bool
+gl_renderer_query_dmabuf_formats(struct weston_compositor *wc,
+				int **formats, int *num_formats)
+{
+	struct gl_renderer *gr = get_renderer(wc);
+	EGLint num;
+
+	assert(gr->has_dmabuf_import);
+
+	if (!gr->has_dmabuf_import_modifiers ||
+	    !gr->query_dmabuf_formats(gr->egl_display, 0, NULL, &num)) {
+		*num_formats = 0;
+		return false;
+	}
+
+	*formats = calloc(num, sizeof(int));
+	if (*formats == NULL) {
+		*num_formats = 0;
+		return false;
+	}
+	if (!gr->query_dmabuf_formats(gr->egl_display, num, *formats,
+			(EGLint*) &num)) {
+		*num_formats = 0;
+		free(*formats);
+		return false;
+	}
+
+	*num_formats = num;
+	return true;
+}
+
+static bool
+gl_renderer_query_dmabuf_modifiers(struct weston_compositor *wc, int format,
+					uint64_t **modifiers,
+					int *num_modifiers)
+{
+	struct gl_renderer *gr = get_renderer(wc);
+	int num;
+
+	assert(gr->has_dmabuf_import);
+
+	if (!gr->has_dmabuf_import_modifiers ||
+		!gr->query_dmabuf_modifiers(gr->egl_display, format, 0, NULL,
+					    NULL, &num)) {
+		*num_modifiers = 0;
+		return false;
+	}
+
+	*modifiers = calloc(num, sizeof(uint64_t));
+	if (*modifiers == NULL) {
+		*num_modifiers = 0;
+		return false;
+	}
+	if (!gr->query_dmabuf_modifiers(gr->egl_display, format,
+				num, *modifiers, NULL, &num)) {
+		*num_modifiers = 0;
+		free(*modifiers);
+		return false;
+	}
+
+	*num_modifiers = num;
+	return true;
+}
+
+static bool
 gl_renderer_import_dmabuf(struct weston_compositor *ec,
 			  struct linux_dmabuf_buffer *dmabuf)
 {
@@ -1761,8 +1976,14 @@ gl_renderer_import_dmabuf(struct weston_compositor *ec,
 	assert(gr->has_dmabuf_import);
 
 	for (i = 0; i < dmabuf->attributes.n_planes; i++) {
-		/* EGL import does not have modifiers */
+		/* return if EGL doesn't support import modifiers */
 		if (dmabuf->attributes.modifier[i] != 0)
+			if (!gr->has_dmabuf_import_modifiers)
+				return false;
+
+		/* return if modifiers passed are unequal */
+		if (dmabuf->attributes.modifier[i] !=
+		    dmabuf->attributes.modifier[0])
 			return false;
 	}
 
@@ -1909,7 +2130,8 @@ gl_renderer_attach(struct weston_surface *es, struct weston_buffer *buffer)
 
 	if (shm_buffer)
 		gl_renderer_attach_shm(es, buffer, shm_buffer);
-	else if (gr->query_buffer(gr->egl_display, (void *) buffer->resource,
+	else if (gr->has_bind_display &&
+		 gr->query_buffer(gr->egl_display, (void *)buffer->resource,
 				  EGL_TEXTURE_FORMAT, &format))
 		gl_renderer_attach_egl(es, buffer, format);
 	else if ((dmabuf = linux_dmabuf_buffer_get(buffer->resource)))
@@ -2490,7 +2712,7 @@ egl_choose_config(struct gl_renderer *gr, const EGLint *attribs,
 		goto out;
 	}
 
-	if (!visual_id)
+	if (!visual_id || n_ids == 0)
 		config_index = 0;
 
 	for (i = 0; config_index == -1 && i < n_ids; i++)
@@ -2543,65 +2765,95 @@ gl_renderer_output_set_border(struct weston_output *output,
 static int
 gl_renderer_setup(struct weston_compositor *ec, EGLSurface egl_surface);
 
-static int
-gl_renderer_output_create(struct weston_output *output,
-			  EGLNativeWindowType window_for_legacy,
-			  void *window_for_platform,
-			  const EGLint *attribs,
-			  const EGLint *visual_id,
-			  int n_ids)
+static EGLSurface
+gl_renderer_create_window_surface(struct gl_renderer *gr,
+				  EGLNativeWindowType window_for_legacy,
+				  void *window_for_platform,
+				  const EGLint *config_attribs,
+				  const EGLint *visual_id,
+				  int n_ids)
 {
-	struct weston_compositor *ec = output->compositor;
-	struct gl_renderer *gr = get_renderer(ec);
-	struct gl_output_state *go;
+	EGLSurface egl_surface = EGL_NO_SURFACE;
 	EGLConfig egl_config;
-	int i;
 
-	if (egl_choose_config(gr, attribs, visual_id,
+	if (egl_choose_config(gr, config_attribs, visual_id,
 			      n_ids, &egl_config) == -1) {
 		weston_log("failed to choose EGL config for output\n");
-		return -1;
+		return EGL_NO_SURFACE;
 	}
 
 	if (egl_config != gr->egl_config &&
 	    !gr->has_configless_context) {
 		weston_log("attempted to use a different EGL config for an "
-			   "output but EGL_MESA_configless_context is not "
-			   "supported\n");
-		return -1;
+			   "output but EGL_KHR_no_config_context or "
+			   "EGL_MESA_configless_context is not supported\n");
+		return EGL_NO_SURFACE;
 	}
+
+	log_egl_config_info(gr->egl_display, egl_config);
+
+	if (gr->create_platform_window)
+		egl_surface = gr->create_platform_window(gr->egl_display,
+							 egl_config,
+							 window_for_platform,
+							 NULL);
+	else
+		egl_surface = eglCreateWindowSurface(gr->egl_display,
+						     egl_config,
+						     window_for_legacy, NULL);
+
+	return egl_surface;
+}
+
+static int
+gl_renderer_output_create(struct weston_output *output,
+			  EGLSurface surface)
+{
+	struct gl_output_state *go;
+	int i;
 
 	go = zalloc(sizeof *go);
 	if (go == NULL)
 		return -1;
 
-	if (gr->create_platform_window) {
-		go->egl_surface =
-			gr->create_platform_window(gr->egl_display,
-						   egl_config,
-						   window_for_platform,
-						   NULL);
-	} else {
-		go->egl_surface =
-			eglCreateWindowSurface(gr->egl_display,
-					       egl_config,
-					       window_for_legacy, NULL);
-	}
-
-	if (go->egl_surface == EGL_NO_SURFACE) {
-		weston_log("failed to create egl surface\n");
-		free(go);
-		return -1;
-	}
+	go->egl_surface = surface;
 
 	for (i = 0; i < BUFFER_DAMAGE_COUNT; i++)
 		pixman_region32_init(&go->buffer_damage[i]);
 
 	output->renderer_state = go;
 
-	log_egl_config_info(gr->egl_display, egl_config);
-
 	return 0;
+}
+
+static int
+gl_renderer_output_window_create(struct weston_output *output,
+				 EGLNativeWindowType window_for_legacy,
+				 void *window_for_platform,
+				 const EGLint *config_attribs,
+				 const EGLint *visual_id,
+				 int n_ids)
+{
+	struct weston_compositor *ec = output->compositor;
+	struct gl_renderer *gr = get_renderer(ec);
+	EGLSurface egl_surface = EGL_NO_SURFACE;
+	int ret = 0;
+
+	egl_surface = gl_renderer_create_window_surface(gr,
+							window_for_legacy,
+							window_for_platform,
+							config_attribs,
+							visual_id, n_ids);
+	if (egl_surface == EGL_NO_SURFACE) {
+		weston_log("failed to create egl surface\n");
+		return -1;
+	}
+
+	ret = gl_renderer_output_create(output, egl_surface);
+	if (ret < 0)
+		weston_platform_destroy_egl_surface(gr->egl_display, egl_surface);
+
+	return ret;
 }
 
 static void
@@ -2614,7 +2866,11 @@ gl_renderer_output_destroy(struct weston_output *output)
 	for (i = 0; i < 2; i++)
 		pixman_region32_fini(&go->buffer_damage[i]);
 
-	eglDestroySurface(gr->egl_display, go->egl_surface);
+	eglMakeCurrent(gr->egl_display,
+		       EGL_NO_SURFACE, EGL_NO_SURFACE,
+		       EGL_NO_CONTEXT);
+
+	weston_platform_destroy_egl_surface(gr->egl_display, go->egl_surface);
 
 	free(go);
 }
@@ -2646,7 +2902,8 @@ gl_renderer_destroy(struct weston_compositor *ec)
 		dmabuf_image_destroy(image);
 
 	if (gr->dummy_surface != EGL_NO_SURFACE)
-		eglDestroySurface(gr->egl_display, gr->dummy_surface);
+		weston_platform_destroy_egl_surface(gr->egl_display,
+						    gr->dummy_surface);
 
 	eglTerminate(gr->egl_display);
 	eglReleaseThread();
@@ -2685,12 +2942,26 @@ renderer_setup_egl_client_extensions(struct gl_renderer *gr)
 static int
 gl_renderer_setup_egl_extensions(struct weston_compositor *ec)
 {
+	static const struct {
+		char *extension, *entrypoint;
+	} swap_damage_ext_to_entrypoint[] = {
+		{
+			.extension = "EGL_EXT_swap_buffers_with_damage",
+			.entrypoint = "eglSwapBuffersWithDamageEXT",
+		},
+		{
+			.extension = "EGL_KHR_swap_buffers_with_damage",
+			.entrypoint = "eglSwapBuffersWithDamageKHR",
+		},
+	};
 	struct gl_renderer *gr = get_renderer(ec);
 	const char *extensions;
 	EGLBoolean ret;
+	unsigned i;
 
 	gr->create_image = (void *) eglGetProcAddress("eglCreateImageKHR");
 	gr->destroy_image = (void *) eglGetProcAddress("eglDestroyImageKHR");
+
 	gr->bind_display =
 		(void *) eglGetProcAddress("eglBindWaylandDisplayWL");
 	gr->unbind_display =
@@ -2719,14 +2990,23 @@ gl_renderer_setup_egl_extensions(struct weston_compositor *ec)
 		weston_log("warning: EGL_EXT_buffer_age not supported. "
 			   "Performance could be affected.\n");
 
-	if (weston_check_egl_extension(extensions, "EGL_EXT_swap_buffers_with_damage"))
-		gr->swap_buffers_with_damage =
-			(void *) eglGetProcAddress("eglSwapBuffersWithDamageEXT");
-	else
-		weston_log("warning: EGL_EXT_swap_buffers_with_damage not "
-			   "supported. Performance could be affected.\n");
+	for (i = 0; i < ARRAY_LENGTH(swap_damage_ext_to_entrypoint); i++) {
+		if (weston_check_egl_extension(extensions,
+				swap_damage_ext_to_entrypoint[i].extension)) {
+			gr->swap_buffers_with_damage =
+				(void *) eglGetProcAddress(
+						swap_damage_ext_to_entrypoint[i].entrypoint);
+			break;
+		}
+	}
+	if (!gr->swap_buffers_with_damage)
+		weston_log("warning: neither %s or %s is supported. "
+			   "Performance could be affected.\n",
+			   swap_damage_ext_to_entrypoint[0].extension,
+			   swap_damage_ext_to_entrypoint[1].extension);
 
-	if (weston_check_egl_extension(extensions, "EGL_MESA_configless_context"))
+	if (weston_check_egl_extension(extensions, "EGL_KHR_no_config_context") ||
+	    weston_check_egl_extension(extensions, "EGL_MESA_configless_context"))
 		gr->has_configless_context = 1;
 
 	if (weston_check_egl_extension(extensions, "EGL_KHR_surfaceless_context"))
@@ -2734,6 +3014,18 @@ gl_renderer_setup_egl_extensions(struct weston_compositor *ec)
 
 	if (weston_check_egl_extension(extensions, "EGL_EXT_image_dma_buf_import"))
 		gr->has_dmabuf_import = 1;
+
+	if (weston_check_egl_extension(extensions,
+				"EGL_EXT_image_dma_buf_import_modifiers")) {
+		gr->query_dmabuf_formats =
+			(void *) eglGetProcAddress("eglQueryDmaBufFormatsEXT");
+		gr->query_dmabuf_modifiers =
+			(void *) eglGetProcAddress("eglQueryDmaBufModifiersEXT");
+		gr->has_dmabuf_import_modifiers = 1;
+	}
+
+	if (weston_check_egl_extension(extensions, "GL_EXT_texture_rg"))
+		gr->has_gl_texture_rg = 1;
 
 	renderer_setup_egl_client_extensions(gr);
 
@@ -2873,7 +3165,7 @@ gl_renderer_create_pbuffer_surface(struct gl_renderer *gr) {
 	};
 
 	if (egl_choose_config(gr, pbuffer_config_attribs, NULL, 0, &pbuffer_config) < 0) {
-		weston_log("failed to choose EGL config for PbufferSurface");
+		weston_log("failed to choose EGL config for PbufferSurface\n");
 		return -1;
 	}
 
@@ -2890,9 +3182,9 @@ gl_renderer_create_pbuffer_surface(struct gl_renderer *gr) {
 }
 
 static int
-gl_renderer_create(struct weston_compositor *ec, EGLenum platform,
-	void *native_window, const EGLint *attribs,
-	const EGLint *visual_id, int n_ids)
+gl_renderer_display_create(struct weston_compositor *ec, EGLenum platform,
+	void *native_window, const EGLint *platform_attribs,
+	const EGLint *config_attribs, const EGLint *visual_id, int n_ids)
 {
 	struct gl_renderer *gr;
 	EGLint major, minor;
@@ -2934,7 +3226,7 @@ gl_renderer_create(struct weston_compositor *ec, EGLenum platform,
 		if (get_platform_display && platform) {
 			gr->egl_display = get_platform_display(platform,
 							       native_window,
-							       NULL);
+							       platform_attribs);
 		}
 	}
 
@@ -2955,7 +3247,7 @@ gl_renderer_create(struct weston_compositor *ec, EGLenum platform,
 		goto fail_with_error;
 	}
 
-	if (egl_choose_config(gr, attribs, visual_id,
+	if (egl_choose_config(gr, config_attribs, visual_id,
 			      n_ids, &gr->egl_config) < 0) {
 		weston_log("failed to choose EGL config\n");
 		goto fail_terminate;
@@ -2970,8 +3262,13 @@ gl_renderer_create(struct weston_compositor *ec, EGLenum platform,
 		goto fail_with_error;
 
 	wl_list_init(&gr->dmabuf_images);
-	if (gr->has_dmabuf_import)
+	if (gr->has_dmabuf_import) {
 		gr->base.import_dmabuf = gl_renderer_import_dmabuf;
+		gr->base.query_dmabuf_formats =
+			gl_renderer_query_dmabuf_formats;
+		gr->base.query_dmabuf_modifiers =
+			gl_renderer_query_dmabuf_modifiers;
+	}
 
 	if (gr->has_surfaceless_context) {
 		weston_log("EGL_KHR_surfaceless_context available\n");
@@ -2985,12 +3282,16 @@ gl_renderer_create(struct weston_compositor *ec, EGLenum platform,
 	}
 
 	wl_display_add_shm_format(ec->wl_display, WL_SHM_FORMAT_RGB565);
+	wl_display_add_shm_format(ec->wl_display, WL_SHM_FORMAT_YUV420);
+	wl_display_add_shm_format(ec->wl_display, WL_SHM_FORMAT_NV12);
+	wl_display_add_shm_format(ec->wl_display, WL_SHM_FORMAT_YUYV);
 
 	wl_signal_init(&gr->destroy_signal);
 
 	if (gl_renderer_setup(ec, gr->dummy_surface) < 0) {
 		if (gr->dummy_surface != EGL_NO_SURFACE)
-			eglDestroySurface(gr->egl_display, gr->dummy_surface);
+			weston_platform_destroy_egl_surface(gr->egl_display,
+							    gr->dummy_surface);
 		goto fail_with_error;
 	}
 
@@ -3102,7 +3403,7 @@ gl_renderer_setup(struct weston_compositor *ec, EGLSurface egl_surface)
 	context_config = gr->egl_config;
 
 	if (gr->has_configless_context)
-		context_config = EGL_NO_CONFIG_MESA;
+		context_config = EGL_NO_CONFIG_KHR;
 
 	gr->egl_context = eglCreateContext(gr->egl_display, context_config,
 					   EGL_NO_CONTEXT, context_attribs);
@@ -3181,9 +3482,9 @@ WL_EXPORT struct gl_renderer_interface gl_renderer_interface = {
 	.opaque_attribs = gl_renderer_opaque_attribs,
 	.alpha_attribs = gl_renderer_alpha_attribs,
 
-	.create = gl_renderer_create,
+	.display_create = gl_renderer_display_create,
 	.display = gl_renderer_display,
-	.output_create = gl_renderer_output_create,
+	.output_window_create = gl_renderer_output_window_create,
 	.output_destroy = gl_renderer_output_destroy,
 	.output_surface = gl_renderer_output_surface,
 	.output_set_border = gl_renderer_output_set_border,

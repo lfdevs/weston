@@ -76,20 +76,18 @@
 struct ivi_layout;
 
 struct ivi_layout_screen {
-	struct wl_list link;
+	struct wl_list link;	/* ivi_layout::screen_list */
 
 	struct ivi_layout *layout;
 	struct weston_output *output;
 
 	struct {
-		struct wl_list layer_list;
-		struct wl_list link;
+		struct wl_list layer_list;	/* ivi_layout_layer::pending.link */
 	} pending;
 
 	struct {
 		int dirty;
-		struct wl_list layer_list;
-		struct wl_list link;
+		struct wl_list layer_list;	/* ivi_layout_layer::order.link */
 	} order;
 };
 
@@ -175,6 +173,7 @@ ivi_view_create(struct ivi_layout_layer *ivilayer,
 	ivi_view->view = weston_view_create(ivisurf->surface);
 	if (ivi_view->view == NULL) {
 		weston_log("fails to allocate memory\n");
+		free(ivi_view);
 		return NULL;
 	}
 
@@ -238,8 +237,6 @@ ivi_layout_surface_destroy(struct ivi_layout_surface *ivisurf)
 		return;
 	}
 
-	wl_list_remove(&ivisurf->pending.link);
-	wl_list_remove(&ivisurf->order.link);
 	wl_list_remove(&ivisurf->link);
 
 	wl_list_for_each_safe(ivi_view, next, &ivisurf->view_list, surf_link) {
@@ -276,10 +273,8 @@ create_screen(struct weston_compositor *ec)
 		iviscrn->output = output;
 
 		wl_list_init(&iviscrn->pending.layer_list);
-		wl_list_init(&iviscrn->pending.link);
 
 		wl_list_init(&iviscrn->order.layer_list);
-		wl_list_init(&iviscrn->order.link);
 
 		wl_list_insert(&layout->screen_list, &iviscrn->link);
 	}
@@ -327,71 +322,12 @@ update_opacity(struct ivi_layout_layer *ivilayer,
 }
 
 static void
-get_rotate_values(enum wl_output_transform orientation,
-		  float *v_sin,
-		  float *v_cos)
-{
-	switch (orientation) {
-	case WL_OUTPUT_TRANSFORM_90:
-		*v_sin = 1.0f;
-		*v_cos = 0.0f;
-		break;
-	case WL_OUTPUT_TRANSFORM_180:
-		*v_sin = 0.0f;
-		*v_cos = -1.0f;
-		break;
-	case WL_OUTPUT_TRANSFORM_270:
-		*v_sin = -1.0f;
-		*v_cos = 0.0f;
-		break;
-	case WL_OUTPUT_TRANSFORM_NORMAL:
-	default:
-		*v_sin = 0.0f;
-		*v_cos = 1.0f;
-		break;
-	}
-}
-
-static void
-get_scale(enum wl_output_transform orientation,
-	  float dest_width,
-	  float dest_height,
-	  float source_width,
-	  float source_height,
-	  float *scale_x,
-	  float *scale_y)
-{
-	switch (orientation) {
-	case WL_OUTPUT_TRANSFORM_90:
-		*scale_x = dest_width / source_height;
-		*scale_y = dest_height / source_width;
-		break;
-	case WL_OUTPUT_TRANSFORM_180:
-		*scale_x = dest_width / source_width;
-		*scale_y = dest_height / source_height;
-		break;
-	case WL_OUTPUT_TRANSFORM_270:
-		*scale_x = dest_width / source_height;
-		*scale_y = dest_height / source_width;
-		break;
-	case WL_OUTPUT_TRANSFORM_NORMAL:
-	default:
-		*scale_x = dest_width / source_width;
-		*scale_y = dest_height / source_height;
-		break;
-	}
-}
-
-static void
 calc_transformation_matrix(struct ivi_rectangle *source_rect,
 			   struct ivi_rectangle *dest_rect,
-			   enum wl_output_transform orientation,
 			   struct weston_matrix *m)
 {
 	float source_center_x;
 	float source_center_y;
-	float vsin;
-	float vcos;
 	float scale_x;
 	float scale_y;
 	float translate_x;
@@ -401,16 +337,8 @@ calc_transformation_matrix(struct ivi_rectangle *source_rect,
 	source_center_y = source_rect->y + source_rect->height * 0.5f;
 	weston_matrix_translate(m, -source_center_x, -source_center_y, 0.0f);
 
-	get_rotate_values(orientation, &vsin, &vcos);
-	weston_matrix_rotate_xy(m, vcos, vsin);
-
-	get_scale(orientation,
-		  dest_rect->width,
-		  dest_rect->height,
-		  source_rect->width,
-		  source_rect->height,
-		  &scale_x,
-		  &scale_y);
+	scale_x = (float) dest_rect->width / (float) source_rect->width;
+	scale_y = (float) dest_rect->height / (float) source_rect->height;
 	weston_matrix_scale(m, scale_x, scale_y, 1.0f);
 
 	translate_x = dest_rect->width * 0.5f + dest_rect->x;
@@ -587,13 +515,8 @@ calc_surface_to_global_matrix_and_mask_to_weston_surface(
 	 * - single screen-local coordinates to multi-screen coordinates,
 	 *   which are global coordinates.
 	 */
-	calc_transformation_matrix(&surface_source_rect,
-				   &surface_dest_rect,
-				   sp->orientation, m);
-
-	calc_transformation_matrix(&layer_source_rect,
-				   &layer_dest_rect,
-				   lp->orientation, m);
+	calc_transformation_matrix(&surface_source_rect, &surface_dest_rect, m);
+	calc_transformation_matrix(&layer_source_rect, &layer_dest_rect, m);
 
 	weston_matrix_translate(m, output->x, output->y, 0.0f);
 
@@ -618,17 +541,13 @@ calc_surface_to_global_matrix_and_mask_to_weston_surface(
 }
 
 static void
-update_prop(struct ivi_layout_screen  *iviscrn,
-	    struct ivi_layout_layer *ivilayer,
-	    struct ivi_layout_view *ivi_view)
+update_prop(struct ivi_layout_view *ivi_view)
 {
-	struct ivi_layout_surface *ivisurf;
+	struct ivi_layout_surface *ivisurf = ivi_view->ivisurf;
+	struct ivi_layout_layer *ivilayer = ivi_view->on_layer;
+	struct ivi_layout_screen *iviscrn = ivilayer->on_screen;
 	struct ivi_rectangle r;
 	bool can_calc = true;
-
-	assert(ivi_view->on_layer == ivilayer);
-
-	ivisurf = ivi_view->ivisurf;
 
 	/*In case of no prop change, this just returns*/
 	if (!ivilayer->prop.event_mask && !ivisurf->prop.event_mask)
@@ -670,30 +589,42 @@ update_prop(struct ivi_layout_screen  *iviscrn,
 static void
 commit_changes(struct ivi_layout *layout)
 {
-	struct ivi_layout_screen  *iviscrn  = NULL;
-	struct ivi_layout_layer   *ivilayer = NULL;
+	struct ivi_layout_screen *iviscrn = NULL;
+	struct ivi_layout_layer *ivilayer = NULL;
+	struct ivi_layout_surface *ivisurf = NULL;
 	struct ivi_layout_view *ivi_view  = NULL;
 
-	wl_list_for_each(iviscrn, &layout->screen_list, link) {
-		wl_list_for_each(ivilayer, &iviscrn->order.layer_list, order.link) {
+	wl_list_for_each(ivi_view, &layout->view_list, link) {
+		ivisurf = ivi_view->ivisurf;
+		ivilayer = ivi_view->on_layer;
+		iviscrn = ivilayer->on_screen;
+
+		/*
+		 * If the view is not on the currently rendered scenegraph,
+		 * we do not need to update its properties.
+		 */
+		if (wl_list_empty(&ivi_view->order_link) || !iviscrn)
+			continue;
+
+		/*
+		 * If the view's layer or surface is invisible, we do not need
+		 * to update its properties.
+		 */
+		if (!ivilayer->prop.visibility || !ivisurf->prop.visibility) {
 			/*
-			 * If ivilayer is invisible, weston_view of ivisurf doesn't
-			 * need to be modified.
-			 */
-			if (ivilayer->prop.visibility == false)
-				continue;
+			* If ivilayer or ivisurf of ivi_view is made invisible
+			* in this commit_changes call, we have to damage
+			* the weston_view below this ivi_view. Otherwise content
+			* of this ivi_view will stay visible.
+			*/
+			if ((ivilayer->prop.event_mask | ivisurf->prop.event_mask) &&
+			    IVI_NOTIFICATION_VISIBILITY)
+				weston_view_damage_below(ivi_view->view);
 
-			wl_list_for_each(ivi_view, &ivilayer->order.view_list, order_link) {
-				/*
-				 * If ivilayer is invisible, weston_view of ivisurf doesn't
-				 * need to be modified.
-				 */
-				if (ivi_view->ivisurf->prop.visibility == false)
-					continue;
-
-				update_prop(iviscrn, ivilayer, ivi_view);
-			}
+			continue;
 		}
+
+		update_prop(ivi_view);
 	}
 }
 
@@ -1362,7 +1293,7 @@ ivi_layout_layer_destroy(struct ivi_layout_layer *ivilayer)
 	struct ivi_layout_view *ivi_view, *next;
 
 	if (ivilayer == NULL) {
-		weston_log("ivi_layout_layer_remove: invalid argument\n");
+		weston_log("ivi_layout_layer_destroy: invalid argument\n");
 		return;
 	}
 
@@ -1486,28 +1417,6 @@ ivi_layout_layer_set_destination_rectangle(struct ivi_layout_layer *ivilayer,
 	return IVI_SUCCEEDED;
 }
 
-static int32_t
-ivi_layout_layer_set_orientation(struct ivi_layout_layer *ivilayer,
-				 enum wl_output_transform orientation)
-{
-	struct ivi_layout_layer_properties *prop = NULL;
-
-	if (ivilayer == NULL) {
-		weston_log("ivi_layout_layer_set_orientation: invalid argument\n");
-		return IVI_FAILED;
-	}
-
-	prop = &ivilayer->pending.prop;
-	prop->orientation = orientation;
-
-	if (ivilayer->prop.orientation != orientation)
-		prop->event_mask |= IVI_NOTIFICATION_ORIENTATION;
-	else
-		prop->event_mask &= ~IVI_NOTIFICATION_ORIENTATION;
-
-	return IVI_SUCCEEDED;
-}
-
 int32_t
 ivi_layout_layer_set_render_order(struct ivi_layout_layer *ivilayer,
 				  struct ivi_layout_surface **pSurface,
@@ -1618,28 +1527,6 @@ ivi_layout_surface_set_destination_rectangle(struct ivi_layout_surface *ivisurf,
 }
 
 static int32_t
-ivi_layout_surface_set_orientation(struct ivi_layout_surface *ivisurf,
-				   enum wl_output_transform orientation)
-{
-	struct ivi_layout_surface_properties *prop = NULL;
-
-	if (ivisurf == NULL) {
-		weston_log("ivi_layout_surface_set_orientation: invalid argument\n");
-		return IVI_FAILED;
-	}
-
-	prop = &ivisurf->pending.prop;
-	prop->orientation = orientation;
-
-	if (ivisurf->prop.orientation != orientation)
-		prop->event_mask |= IVI_NOTIFICATION_ORIENTATION;
-	else
-		prop->event_mask &= ~IVI_NOTIFICATION_ORIENTATION;
-
-	return IVI_SUCCEEDED;
-}
-
-static int32_t
 ivi_layout_screen_add_layer(struct weston_output *output,
 			    struct ivi_layout_layer *addlayer)
 {
@@ -1652,13 +1539,29 @@ ivi_layout_screen_add_layer(struct weston_output *output,
 
 	iviscrn = get_screen_from_output(output);
 
-	if (addlayer->on_screen == iviscrn) {
-		weston_log("ivi_layout_screen_add_layer: addlayer is already available\n");
-		return IVI_SUCCEEDED;
-	}
-
 	wl_list_remove(&addlayer->pending.link);
 	wl_list_insert(&iviscrn->pending.layer_list, &addlayer->pending.link);
+
+	iviscrn->order.dirty = 1;
+
+	return IVI_SUCCEEDED;
+}
+
+static int32_t
+ivi_layout_screen_remove_layer(struct weston_output *output,
+			    struct ivi_layout_layer *removelayer)
+{
+	struct ivi_layout_screen *iviscrn;
+
+	if (output == NULL || removelayer == NULL) {
+		weston_log("ivi_layout_screen_remove_layer: invalid argument\n");
+		return IVI_FAILED;
+	}
+
+	iviscrn = get_screen_from_output(output);
+
+	wl_list_remove(&removelayer->pending.link);
+	wl_list_init(&removelayer->pending.link);
 
 	iviscrn->order.dirty = 1;
 
@@ -1779,8 +1682,6 @@ ivi_layout_layer_add_surface(struct ivi_layout_layer *ivilayer,
 	ivi_view = get_ivi_view(ivilayer, addsurf);
 	if (!ivi_view)
 		ivi_view = ivi_view_create(ivilayer, addsurf);
-	else if (ivi_view_is_rendered(ivi_view))
-		return IVI_SUCCEEDED;
 
 	wl_list_remove(&ivi_view->pending_link);
 	wl_list_insert(&ivilayer->pending.view_list, &ivi_view->pending_link);
@@ -1995,10 +1896,6 @@ ivi_layout_surface_create(struct weston_surface *wl_surface,
 	init_surface_properties(&ivisurf->prop);
 
 	ivisurf->pending.prop = ivisurf->prop;
-	wl_list_init(&ivisurf->pending.link);
-
-	wl_list_init(&ivisurf->order.link);
-	wl_list_init(&ivisurf->order.layer_list);
 
 	wl_list_init(&ivisurf->view_list);
 
@@ -2029,7 +1926,9 @@ ivi_layout_init_with_compositor(struct weston_compositor *ec)
 	wl_signal_init(&layout->surface_notification.configure_changed);
 
 	/* Add layout_layer at the last of weston_compositor.layer_list */
-	weston_layer_init(&layout->layout_layer, ec->layer_list.prev);
+	weston_layer_init(&layout->layout_layer, ec);
+	weston_layer_set_position(&layout->layout_layer,
+				  WESTON_LAYER_POSITION_NORMAL);
 
 	create_screen(ec);
 
@@ -2059,7 +1958,6 @@ static struct ivi_layout_interface ivi_layout_interface = {
 	.surface_set_opacity			= ivi_layout_surface_set_opacity,
 	.surface_set_source_rectangle		= ivi_layout_surface_set_source_rectangle,
 	.surface_set_destination_rectangle	= ivi_layout_surface_set_destination_rectangle,
-	.surface_set_orientation		= ivi_layout_surface_set_orientation,
 	.surface_add_listener			= ivi_layout_surface_add_listener,
 	.surface_get_weston_surface		= ivi_layout_surface_get_weston_surface,
 	.surface_set_transition			= ivi_layout_surface_set_transition,
@@ -2082,7 +1980,6 @@ static struct ivi_layout_interface ivi_layout_interface = {
 	.layer_set_opacity			= ivi_layout_layer_set_opacity,
 	.layer_set_source_rectangle		= ivi_layout_layer_set_source_rectangle,
 	.layer_set_destination_rectangle	= ivi_layout_layer_set_destination_rectangle,
-	.layer_set_orientation			= ivi_layout_layer_set_orientation,
 	.layer_add_surface			= ivi_layout_layer_add_surface,
 	.layer_remove_surface			= ivi_layout_layer_remove_surface,
 	.layer_set_render_order			= ivi_layout_layer_set_render_order,
@@ -2094,6 +1991,7 @@ static struct ivi_layout_interface ivi_layout_interface = {
 	 */
 	.get_screens_under_layer	= ivi_layout_get_screens_under_layer,
 	.screen_add_layer		= ivi_layout_screen_add_layer,
+	.screen_remove_layer		= ivi_layout_screen_remove_layer,
 	.screen_set_render_order	= ivi_layout_screen_set_render_order,
 
 	/**
@@ -2128,7 +2026,9 @@ load_controller_modules(struct weston_compositor *compositor, const char *module
 		end = strchrnul(p, ',');
 		snprintf(buffer, sizeof buffer, "%.*s", (int)(end - p), p);
 
-		controller_module_init = wet_load_module(buffer, "controller_module_init");
+		controller_module_init =
+			wet_load_module_entrypoint(buffer,
+						   "controller_module_init");
 		if (!controller_module_init)
 			return -1;
 

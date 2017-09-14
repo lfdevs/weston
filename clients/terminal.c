@@ -38,6 +38,7 @@
 #include <sys/epoll.h>
 #include <wchar.h>
 #include <locale.h>
+#include <errno.h>
 
 #include <linux/input.h>
 
@@ -49,6 +50,7 @@
 #include "window.h"
 
 static int option_fullscreen;
+static int option_maximize;
 static char *option_font;
 static int option_font_size;
 static char *option_term;
@@ -124,6 +126,7 @@ init_state_machine(struct utf8_state_machine *machine)
 	machine->state = utf8state_start;
 	machine->len = 0;
 	machine->s.ch = 0;
+	machine->unicode = 0;
 }
 
 static enum utf8_state
@@ -479,6 +482,7 @@ struct terminal {
 	int selection_start_row, selection_start_col;
 	int selection_end_row, selection_end_col;
 	struct wl_list link;
+	int pace_pipe;
 };
 
 /* Create default tab stops, every 8 characters */
@@ -858,6 +862,10 @@ resize_handler(struct widget *widget,
 	struct terminal *terminal = data;
 	int32_t columns, rows, m;
 
+	if (terminal->pace_pipe >= 0) {
+		close(terminal->pace_pipe);
+		terminal->pace_pipe = -1;
+	}
 	m = 2 * terminal->margin;
 	columns = (width - m) / (int32_t) terminal->average_width;
 	rows = (height - m) / (int32_t) terminal->extents.height;
@@ -1296,6 +1304,8 @@ handle_osc(struct terminal *terminal)
 		window_set_title(terminal->window, p);
 		break;
 	case 7: /* shell cwd as uri */
+		break;
+	case 777: /* Desktop notifications */
 		break;
 	default:
 		fprintf(stderr, "Unknown OSC escape code %d, text %s\n",
@@ -3023,9 +3033,34 @@ terminal_run(struct terminal *terminal, const char *path)
 {
 	int master;
 	pid_t pid;
+	int pipes[2];
+
+	/* Awkwardness: There's a sticky race condition here.  If
+	 * anything prints after the forkpty() but before the window has
+	 * a size then we'll segfault.  So we make a pipe and wait on
+	 * it before actually exec()ing the terminal.  The resize
+	 * handler closes it in the parent process and the child continues
+	 * on to launch a shell.
+	 *
+	 * The reason we don't just do terminal_run() after the window
+	 * has a size is that we'd prefer to perform the fork() before
+	 * the process opens a wayland connection.
+	 */
+	if (pipe(pipes) == -1) {
+		fprintf(stderr, "Can't create pipe for pacing.\n");
+		exit(EXIT_FAILURE);
+	}
 
 	pid = forkpty(&master, NULL, NULL, NULL);
 	if (pid == 0) {
+		int ret;
+
+		close(pipes[1]);
+		do {
+			char tmp;
+			ret = read(pipes[0], &tmp, 1);
+		} while (ret == -1 && errno == EINTR);
+		close(pipes[0]);
 		setenv("TERM", option_term, 1);
 		setenv("COLORTERM", option_term, 1);
 		if (execl(path, path, NULL)) {
@@ -3037,7 +3072,9 @@ terminal_run(struct terminal *terminal, const char *path)
 		return -1;
 	}
 
+	close(pipes[0]);
 	terminal->master = master;
+	terminal->pace_pipe = pipes[1];
 	fcntl(master, F_SETFL, O_NONBLOCK);
 	terminal->io_task.run = io_handler;
 	display_watch_fd(terminal->display, terminal->master,
@@ -3045,6 +3082,8 @@ terminal_run(struct terminal *terminal, const char *path)
 
 	if (option_fullscreen)
 		window_set_fullscreen(terminal->window, 1);
+	else if (option_maximize)
+		window_set_maximized(terminal->window, 1);
 	else
 		terminal_resize(terminal, 80, 24);
 
@@ -3053,6 +3092,7 @@ terminal_run(struct terminal *terminal, const char *path)
 
 static const struct weston_option terminal_options[] = {
 	{ WESTON_OPTION_BOOLEAN, "fullscreen", 'f', &option_fullscreen },
+	{ WESTON_OPTION_BOOLEAN, "maximized", 'm', &option_maximize },
 	{ WESTON_OPTION_STRING, "font", 0, &option_font },
 	{ WESTON_OPTION_INTEGER, "font-size", 0, &option_font_size },
 	{ WESTON_OPTION_STRING, "shell", 0, &option_shell },
@@ -3086,6 +3126,7 @@ int main(int argc, char *argv[])
 			  ARRAY_LENGTH(terminal_options), &argc, argv) > 1) {
 		printf("Usage: %s [OPTIONS]\n"
 		       "  --fullscreen or -f\n"
+		       "  --maximized or -m\n"
 		       "  --font=NAME\n"
 		       "  --font-size=SIZE\n"
 		       "  --shell=NAME\n", argv[0]);

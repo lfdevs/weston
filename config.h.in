@@ -36,9 +36,6 @@
 /* Build Weston with JUnit output support */
 #undef ENABLE_JUNIT_XML
 
-/* Build Weston with libxkbcommon support */
-#undef ENABLE_XKBCOMMON
-
 /* Have cairo-egl */
 #undef HAVE_CAIRO_EGL
 
@@ -69,8 +66,11 @@
 /* Have lcms support */
 #undef HAVE_LCMS
 
-/* Define if libdrm is available */
-#undef HAVE_LIBDRM
+/* Build freedreno dmabuf client */
+#undef HAVE_LIBDRM_FREEDRENO
+
+/* Build intel dmabuf client */
+#undef HAVE_LIBDRM_INTEL
 
 /* Have libunwind support */
 #undef HAVE_LIBUNWIND
@@ -117,14 +117,13 @@
 /* Have webp */
 #undef HAVE_WEBP
 
-/* Define to 1 if you have the `xcb_poll_for_queued_event' function. */
-#undef HAVE_XCB_POLL_FOR_QUEUED_EVENT
-
 /* libxcb supports XKB protocol */
 #undef HAVE_XCB_XKB
 
-/* Define to the sub-directory in which libtool stores uninstalled libraries.
-   */
+/* Define if xkbcommon is 0.5.0 or newer */
+#undef HAVE_XKBCOMMON_COMPOSE
+
+/* Define to the sub-directory where libtool stores uninstalled libraries. */
 #undef LT_OBJDIR
 
 /* Name of package */

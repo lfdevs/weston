@@ -25,9 +25,9 @@
 
 /**
  * The ivi-layout library supports API set of controlling properties of
- * surface and layer which groups surfaces. An unique ID whose type is integer
- * is required to create surface and layer. With the unique ID, surface and
- * layer are identified to control them. The API set consists of APIs to control
+ * surface and layer which groups surfaces. A unique ID whose type is integer is
+ * required to create surface and layer. With the unique ID, surface and layer
+ * are identified to control them. The API set consists of APIs to control
  * properties of surface and layers about followings,
  * - visibility.
  * - opacity.
@@ -45,7 +45,7 @@
  * application surfaces grouped to the layer all together.
  *
  * This API and ABI follow following specifications.
- * http://projects.genivi.org/wayland-ivi-extension/layer-manager-apis
+ * https://at.projects.genivi.org/wiki/display/PROJ/Wayland+IVI+Extension+Design
  */
 
 #ifndef _IVI_LAYOUT_EXPORT_H_
@@ -276,15 +276,6 @@ struct ivi_layout_interface {
 						     int32_t width, int32_t height);
 
 	/**
-	 * \brief Sets the orientation of a ivi_surface.
-	 *
-	 * \return IVI_SUCCEEDED if the method call was successful
-	 * \return IVI_FAILED if the method call was failed
-	 */
-	int32_t (*surface_set_orientation)(struct ivi_layout_surface *ivisurf,
-					   enum wl_output_transform orientation);
-
-	/**
 	 * \brief add a listener to listen property changes of ivi_surface
 	 *
 	 * When a property of the ivi_surface is changed, the property_changed
@@ -462,15 +453,6 @@ struct ivi_layout_interface {
 						   int32_t width, int32_t height);
 
 	/**
-	 * \brief Sets the orientation of a ivi_layer.
-	 *
-	 * \return IVI_SUCCEEDED if the method call was successful
-	 * \return IVI_FAILED if the method call was failed
-	 */
-	int32_t (*layer_set_orientation)(struct ivi_layout_layer *ivilayer,
-					 enum wl_output_transform orientation);
-
-	/**
 	 * \brief Add a ivi_surface to a ivi_layer which is currently managed by the service
 	 *
 	 * \return IVI_SUCCEEDED if the method call was successful
@@ -578,6 +560,16 @@ struct ivi_layout_interface {
 	 */
 	struct ivi_layout_surface *
 		(*get_surface)(struct weston_surface *surface);
+
+	/**
+	 * \brief Remove a ivi_layer to a weston_output which is currently managed
+	 * by the service
+	 *
+	 * \return IVI_SUCCEEDED if the method call was successful
+	 * \return IVI_FAILED if the method call was failed
+	 */
+	int32_t (*screen_remove_layer)(struct weston_output *output,
+				       struct ivi_layout_layer *removelayer);
 };
 
 #ifdef __cplusplus

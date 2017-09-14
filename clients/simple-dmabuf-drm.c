@@ -3,26 +3,30 @@
  * Copyright © 2010 Intel Corporation
  * Copyright © 2014 Collabora Ltd.
  *
- * Permission to use, copy, modify, distribute, and sell this software and its
- * documentation for any purpose is hereby granted without fee, provided that
- * the above copyright notice appear in all copies and that both that copyright
- * notice and this permission notice appear in supporting documentation, and
- * that the name of the copyright holders not be used in advertising or
- * publicity pertaining to distribution of the software without specific,
- * written prior permission.  The copyright holders make no representations
- * about the suitability of this software for any purpose.  It is provided "as
- * is" without express or implied warranty.
+ * Permission is hereby granted, free of charge, to any person obtaining
+ * a copy of this software and associated documentation files (the
+ * "Software"), to deal in the Software without restriction, including
+ * without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sublicense, and/or sell copies of the Software, and to
+ * permit persons to whom the Software is furnished to do so, subject to
+ * the following conditions:
  *
- * THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS SOFTWARE,
- * INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS, IN NO
- * EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY SPECIAL, INDIRECT OR
- * CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,
- * DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
- * TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE
- * OF THIS SOFTWARE.
+ * The above copyright notice and this permission notice (including the
+ * next paragraph) shall be included in all copies or substantial
+ * portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT.  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
 
 #include "config.h"
+#include "simple-dmabuf-drm-data.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -36,15 +40,24 @@
 #include <fcntl.h>
 
 #include <xf86drm.h>
+
+#ifdef HAVE_LIBDRM_INTEL
 #include <i915_drm.h>
 #include <intel_bufmgr.h>
+#elif HAVE_LIBDRM_FREEDRENO
+#include <freedreno/freedreno_drmif.h>
+#endif
 #include <drm_fourcc.h>
 
 #include <wayland-client.h>
 #include "shared/zalloc.h"
+#include "shared/platform.h"
 #include "xdg-shell-unstable-v6-client-protocol.h"
 #include "fullscreen-shell-unstable-v1-client-protocol.h"
 #include "linux-dmabuf-unstable-v1-client-protocol.h"
+
+extern const unsigned nv12_tiled[];
+struct buffer;
 
 struct display {
 	struct wl_display *display;
@@ -54,16 +67,37 @@ struct display {
 	struct zwp_fullscreen_shell_v1 *fshell;
 	struct zwp_linux_dmabuf_v1 *dmabuf;
 	int xrgb8888_format_found;
+	int nv12_format_found;
+	int nv12_modifier_found;
+	int req_dmabuf_immediate;
+	int req_dmabuf_modifiers;
+};
+
+struct drm_device {
+	int fd;
+	char *name;
+
+	int (*alloc_bo)(struct buffer *buf);
+	void (*free_bo)(struct buffer *buf);
+	int (*export_bo_to_prime)(struct buffer *buf);
+	int (*map_bo)(struct buffer *buf);
+	void (*unmap_bo)(struct buffer *buf);
 };
 
 struct buffer {
 	struct wl_buffer *buffer;
 	int busy;
 
+	struct drm_device *dev;
 	int drm_fd;
 
+#ifdef HAVE_LIBDRM_INTEL
 	drm_intel_bufmgr *bufmgr;
 	drm_intel_bo *bo;
+#elif HAVE_LIBDRM_FREEDRENO
+	struct fd_device *fd_dev;
+	struct fd_bo *bo;
+#endif /* HAVE_LIBDRM_FREEDRENO */
 
 	uint32_t gem_handle;
 	int dmabuf_fd;
@@ -73,6 +107,7 @@ struct buffer {
 	int height;
 	int bpp;
 	unsigned long stride;
+	int format;
 };
 
 #define NUM_BUFFERS 3
@@ -107,31 +142,10 @@ static const struct wl_buffer_listener buffer_listener = {
 	buffer_release
 };
 
+
+#ifdef HAVE_LIBDRM_INTEL
 static int
-drm_connect(struct buffer *my_buf)
-{
-	/* This won't work with card0 as we need to be authenticated; instead,
-	 * boot with drm.rnodes=1 and use that. */
-	my_buf->drm_fd = open("/dev/dri/renderD128", O_RDWR);
-	if (my_buf->drm_fd < 0)
-		return 0;
-
-	my_buf->bufmgr = drm_intel_bufmgr_gem_init(my_buf->drm_fd, 32);
-	if (!my_buf->bufmgr)
-		return 0;
-
-	return 1;
-}
-
-static void
-drm_shutdown(struct buffer *my_buf)
-{
-	drm_intel_bufmgr_destroy(my_buf->bufmgr);
-	close(my_buf->drm_fd);
-}
-
-static int
-alloc_bo(struct buffer *my_buf)
+intel_alloc_bo(struct buffer *my_buf)
 {
 	/* XXX: try different tiling modes for testing FB modifiers. */
 	uint32_t tiling = I915_TILING_NONE;
@@ -156,13 +170,13 @@ alloc_bo(struct buffer *my_buf)
 }
 
 static void
-free_bo(struct buffer *my_buf)
+intel_free_bo(struct buffer *my_buf)
 {
 	drm_intel_bo_unreference(my_buf->bo);
 }
 
 static int
-map_bo(struct buffer *my_buf)
+intel_map_bo(struct buffer *my_buf)
 {
 	if (drm_intel_gem_bo_map_gtt(my_buf->bo) != 0)
 		return 0;
@@ -172,6 +186,68 @@ map_bo(struct buffer *my_buf)
 	return 1;
 }
 
+static int
+intel_bo_export_to_prime(struct buffer *buffer)
+{
+	return drm_intel_bo_gem_export_to_prime(buffer->bo, &buffer->dmabuf_fd);
+}
+
+static void
+intel_unmap_bo(struct buffer *my_buf)
+{
+	drm_intel_gem_bo_unmap_gtt(my_buf->bo);
+}
+#elif HAVE_LIBDRM_FREEDRENO
+#define ALIGN(v, a) ((v + a - 1) & ~(a - 1))
+
+static
+int fd_alloc_bo(struct buffer *buf)
+{
+	int flags = DRM_FREEDRENO_GEM_CACHE_WCOMBINE;
+	int size = buf->width * buf->height * buf->bpp / 8;
+	buf->fd_dev = fd_device_new(buf->drm_fd);
+
+	buf->bo = fd_bo_new(buf->fd_dev, size, flags);
+
+	if (!buf->bo)
+		return 0;
+	buf->stride = ALIGN(buf->width, 32) * buf->bpp / 8;
+	return 1;
+}
+
+static
+void fd_free_bo(struct buffer *buf)
+{
+	fd_bo_del(buf->bo);
+}
+
+static
+int fd_bo_export_to_prime(struct buffer *buf)
+{
+	buf->dmabuf_fd = fd_bo_dmabuf(buf->bo);
+	if (buf->dmabuf_fd > 0)
+		return 0;
+
+	return 1;
+}
+
+static
+int fd_map_bo(struct buffer *buf)
+{
+	buf->mmap = fd_bo_map(buf->bo);
+
+	if (buf->mmap != NULL)
+		return 1;
+
+	return 0;
+}
+
+static
+void fd_unmap_bo(struct buffer *buf)
+{
+}
+#endif
+
 static void
 fill_content(struct buffer *my_buf)
 {
@@ -180,20 +256,95 @@ fill_content(struct buffer *my_buf)
 
 	assert(my_buf->mmap);
 
-	for (y = 0; y < my_buf->height; y++) {
-		pix = (uint32_t *)(my_buf->mmap + y * my_buf->stride);
-		for (x = 0; x < my_buf->width; x++) {
-			*pix++ = (0xff << 24) | ((x % 256) << 16) |
-			         ((y % 256) << 8) | 0xf0;
+	if (my_buf->format == DRM_FORMAT_NV12) {
+		pix = (uint32_t *) my_buf->mmap;
+		for (y = 0; y < my_buf->height; y++)
+			memcpy(&pix[y * my_buf->width / 4],
+			       &nv12_tiled[my_buf->width * y / 4],
+			       my_buf->width);
+	}
+	else {
+		for (y = 0; y < my_buf->height; y++) {
+			pix = (uint32_t *)(my_buf->mmap + y * my_buf->stride);
+			for (x = 0; x < my_buf->width; x++)
+				*pix++ = (0xff << 24) | ((x % 256) << 16) |
+					 ((y % 256) << 8) | 0xf0;
 		}
 	}
 }
 
 static void
-unmap_bo(struct buffer *my_buf)
+drm_device_destroy(struct buffer *buf)
 {
-	drm_intel_gem_bo_unmap_gtt(my_buf->bo);
+#ifdef HAVE_LIBDRM_INTEL
+	drm_intel_bufmgr_destroy(buf->bufmgr);
+#elif HAVE_LIBDRM_FREEDRENO
+	fd_device_del(buf->fd_dev);
+#endif
+
+	close(buf->drm_fd);
 }
+
+static int
+drm_device_init(struct buffer *buf)
+{
+	struct drm_device *dev = calloc(1, sizeof(struct drm_device));
+
+	drmVersionPtr version = drmGetVersion(buf->drm_fd);
+
+	dev->fd = buf->drm_fd;
+	dev->name = strdup(version->name);
+	if (0) {
+		/* nothing */
+	}
+#ifdef HAVE_LIBDRM_INTEL
+	else if (!strcmp(dev->name, "i915")) {
+		buf->bufmgr = drm_intel_bufmgr_gem_init(buf->drm_fd, 32);
+		if (!buf->bufmgr)
+			return 0;
+		dev->alloc_bo = intel_alloc_bo;
+		dev->free_bo = intel_free_bo;
+		dev->export_bo_to_prime = intel_bo_export_to_prime;
+		dev->map_bo = intel_map_bo;
+		dev->unmap_bo = intel_unmap_bo;
+	}
+#elif HAVE_LIBDRM_FREEDRENO
+	else if (!strcmp(dev->name, "msm")) {
+		dev->alloc_bo = fd_alloc_bo;
+		dev->free_bo = fd_free_bo;
+		dev->export_bo_to_prime = fd_bo_export_to_prime;
+		dev->map_bo = fd_map_bo;
+		dev->unmap_bo = fd_unmap_bo;
+	}
+#endif
+	else {
+		fprintf(stderr, "Error: drm device %s unsupported.\n",
+			dev->name);
+		free(dev);
+		return 0;
+	}
+	buf->dev = dev;
+	return 1;
+}
+
+static int
+drm_connect(struct buffer *my_buf)
+{
+	/* This won't work with card0 as we need to be authenticated; instead,
+	 * boot with drm.rnodes=1 and use that. */
+	my_buf->drm_fd = open("/dev/dri/renderD128", O_RDWR);
+	if (my_buf->drm_fd < 0)
+		return 0;
+
+	return drm_device_init(my_buf);
+}
+
+static void
+drm_shutdown(struct buffer *my_buf)
+{
+	drm_device_destroy(my_buf);
+}
+
 
 static void
 create_succeeded(void *data,
@@ -228,35 +379,47 @@ static const struct zwp_linux_buffer_params_v1_listener params_listener = {
 
 static int
 create_dmabuf_buffer(struct display *display, struct buffer *buffer,
-		     int width, int height)
+		     int width, int height, int format)
 {
 	struct zwp_linux_buffer_params_v1 *params;
-	uint64_t modifier;
+	uint64_t modifier = 0;
 	uint32_t flags;
+	struct drm_device *drm_dev;
 
 	if (!drm_connect(buffer)) {
 		fprintf(stderr, "drm_connect failed\n");
 		goto error;
 	}
+	drm_dev = buffer->dev;
 
 	buffer->width = width;
-	buffer->height = height;
-	buffer->bpp = 32; /* hardcoded XRGB8888 format */
+	switch (format) {
+	case DRM_FORMAT_NV12:
+		/* adjust height for allocation of NV12 Y and UV planes */
+		buffer->height = height * 3 / 2;
+		buffer->bpp = 8;
+		modifier = DRM_FORMAT_MOD_SAMSUNG_64_32_TILE;
+		break;
+	default:
+		buffer->height = height;
+		buffer->bpp = 32;
+	}
+	buffer->format = format;
 
-	if (!alloc_bo(buffer)) {
+	if (!drm_dev->alloc_bo(buffer)) {
 		fprintf(stderr, "alloc_bo failed\n");
 		goto error1;
 	}
 
-	if (!map_bo(buffer)) {
+	if (!drm_dev->map_bo(buffer)) {
 		fprintf(stderr, "map_bo failed\n");
 		goto error2;
 	}
 	fill_content(buffer);
-	unmap_bo(buffer);
+	drm_dev->unmap_bo(buffer);
 
-	if (drm_intel_bo_gem_export_to_prime(buffer->bo, &buffer->dmabuf_fd) != 0) {
-		fprintf(stderr, "drm_intel_bo_gem_export_to_prime failed\n");
+	if (drm_dev->export_bo_to_prime(buffer) != 0) {
+		fprintf(stderr, "gem_export_to_prime failed\n");
 		goto error2;
 	}
 	if (buffer->dmabuf_fd < 0) {
@@ -264,10 +427,13 @@ create_dmabuf_buffer(struct display *display, struct buffer *buffer,
 		goto error2;
 	}
 
-	/* We now have a dmabuf! It should contain 2x2 tiles (i.e. each tile
-	 * is 256x256) of misc colours, and be mappable, either as ARGB8888, or
-	 * XRGB8888. */
-	modifier = 0;
+	/* We now have a dmabuf! For format XRGB8888, it should contain 2x2
+	 * tiles (i.e. each tile is 256x256) of misc colours, and be mappable,
+	 * either as ARGB8888, or XRGB8888. For format NV12, it should contain
+	 * the Y and UV components, and needs to be re-adjusted for passing the
+	 * correct height to the compositor.
+	 */
+	buffer->height = height;
 	flags = 0;
 
 	params = zwp_linux_dmabuf_v1_create_params(display->dmabuf);
@@ -278,17 +444,37 @@ create_dmabuf_buffer(struct display *display, struct buffer *buffer,
 				       buffer->stride,
 				       modifier >> 32,
 				       modifier & 0xffffffff);
+
+	if (format == DRM_FORMAT_NV12) {
+		/* add the second plane params */
+		zwp_linux_buffer_params_v1_add(params,
+					       buffer->dmabuf_fd,
+					       1,
+					       buffer->width * buffer->height,
+					       buffer->stride,
+					       modifier >> 32,
+					       modifier & 0xffffffff);
+	}
 	zwp_linux_buffer_params_v1_add_listener(params, &params_listener, buffer);
-	zwp_linux_buffer_params_v1_create(params,
+	if (display->req_dmabuf_immediate) {
+		buffer->buffer = zwp_linux_buffer_params_v1_create_immed(params,
 					  buffer->width,
 					  buffer->height,
-					  DRM_FORMAT_XRGB8888,
+					  format,
+					  flags);
+		wl_buffer_add_listener(buffer->buffer, &buffer_listener, buffer);
+	}
+	else
+		zwp_linux_buffer_params_v1_create(params,
+					  buffer->width,
+					  buffer->height,
+					  format,
 					  flags);
 
 	return 0;
 
 error2:
-	free_bo(buffer);
+	drm_dev->free_bo(buffer);
 error1:
 	drm_shutdown(buffer);
 error:
@@ -331,7 +517,7 @@ static const struct zxdg_toplevel_v6_listener xdg_toplevel_listener = {
 };
 
 static struct window *
-create_window(struct display *display, int width, int height)
+create_window(struct display *display, int width, int height, int format)
 {
 	struct window *window;
 	int i;
@@ -380,7 +566,7 @@ create_window(struct display *display, int width, int height)
 
 	for (i = 0; i < NUM_BUFFERS; ++i) {
 		ret = create_dmabuf_buffer(display, &window->buffers[i],
-		                               width, height);
+		                               width, height, format);
 
 		if (ret < 0)
 			return NULL;
@@ -392,6 +578,7 @@ create_window(struct display *display, int width, int height)
 static void
 destroy_window(struct window *window)
 {
+	struct drm_device* dev;
 	int i;
 
 	if (window->callback)
@@ -402,7 +589,8 @@ destroy_window(struct window *window)
 			continue;
 
 		wl_buffer_destroy(window->buffers[i].buffer);
-		free_bo(&window->buffers[i]);
+		dev = window->buffers[i].dev;
+		dev->free_bo(&window->buffers[i]);
 		close(window->buffers[i].dmabuf_fd);
 		drm_shutdown(&window->buffers[i]);
 	}
@@ -462,16 +650,35 @@ static const struct wl_callback_listener frame_listener = {
 };
 
 static void
-dmabuf_format(void *data, struct zwp_linux_dmabuf_v1 *zwp_linux_dmabuf, uint32_t format)
+dmabuf_modifiers(void *data, struct zwp_linux_dmabuf_v1 *zwp_linux_dmabuf,
+		 uint32_t format, uint32_t modifier_hi, uint32_t modifier_lo)
 {
 	struct display *d = data;
+	uint64_t modifier = ((uint64_t) modifier_hi << 32) | modifier_lo;
 
-	if (format == DRM_FORMAT_XRGB8888)
+	switch (format) {
+	case DRM_FORMAT_XRGB8888:
 		d->xrgb8888_format_found = 1;
+		break;
+	case DRM_FORMAT_NV12:
+		d->nv12_format_found = 1;
+		if (modifier == DRM_FORMAT_MOD_SAMSUNG_64_32_TILE)
+			d->nv12_modifier_found = 1;
+		break;
+	default:
+		break;
+	}
+}
+
+static void
+dmabuf_format(void *data, struct zwp_linux_dmabuf_v1 *zwp_linux_dmabuf, uint32_t format)
+{
+	/* XXX: deprecated */
 }
 
 static const struct zwp_linux_dmabuf_v1_listener dmabuf_listener = {
-	dmabuf_format
+	dmabuf_format,
+	dmabuf_modifiers
 };
 
 static void
@@ -502,8 +709,16 @@ registry_handle_global(void *data, struct wl_registry *registry,
 		d->fshell = wl_registry_bind(registry,
 					     id, &zwp_fullscreen_shell_v1_interface, 1);
 	} else if (strcmp(interface, "zwp_linux_dmabuf_v1") == 0) {
+		int ver;
+		if (d->req_dmabuf_modifiers)
+			ver = 3;
+		else if (d->req_dmabuf_immediate)
+			ver = 2;
+		else
+			ver = 1;
 		d->dmabuf = wl_registry_bind(registry,
-					     id, &zwp_linux_dmabuf_v1_interface, 1);
+					     id, &zwp_linux_dmabuf_v1_interface,
+					     ver);
 		zwp_linux_dmabuf_v1_add_listener(d->dmabuf, &dmabuf_listener, d);
 	}
 }
@@ -520,9 +735,10 @@ static const struct wl_registry_listener registry_listener = {
 };
 
 static struct display *
-create_display(void)
+create_display(int is_immediate, int format)
 {
 	struct display *display;
+	const char *extensions;
 
 	display = malloc(sizeof *display);
 	if (display == NULL) {
@@ -532,8 +748,17 @@ create_display(void)
 	display->display = wl_display_connect(NULL);
 	assert(display->display);
 
-	/* XXX: fake, because the compositor does not yet advertise anything */
-	display->xrgb8888_format_found = 1;
+	display->req_dmabuf_immediate = is_immediate;
+	display->req_dmabuf_modifiers = (format == DRM_FORMAT_NV12);
+
+	/*
+	 * hard code format if the platform egl doesn't support format
+	 * querying / advertising.
+	 */
+	extensions = eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS);
+	if (extensions && !weston_check_egl_extension(extensions,
+				"EGL_EXT_image_dma_buf_import_modifiers"))
+		display->xrgb8888_format_found = 1;
 
 	display->registry = wl_display_get_registry(display->display);
 	wl_registry_add_listener(display->registry,
@@ -546,8 +771,10 @@ create_display(void)
 
 	wl_display_roundtrip(display->display);
 
-	if (!display->xrgb8888_format_found) {
-		fprintf(stderr, "DRM_FORMAT_XRGB8888 not available\n");
+	if ((format == DRM_FORMAT_XRGB8888 && !display->xrgb8888_format_found) ||
+		(format == DRM_FORMAT_NV12 && (!display->nv12_format_found ||
+			!display->nv12_modifier_found))) {
+		fprintf(stderr, "requested format is not available\n");
 		exit(1);
 	}
 
@@ -581,16 +808,74 @@ signal_int(int signum)
 	running = 0;
 }
 
+static void
+print_usage_and_exit(void)
+{
+	printf("usage flags:\n"
+		"\t'--import-immediate=<>'\n\t\t0 to import dmabuf via roundtrip,"
+		"\n\t\t1 to enable import without roundtrip\n"
+		"\t'--import-format=<>'\n\t\tXRGB to import dmabuf as XRGB8888,"
+		"\n\t\tNV12 to import as multi plane NV12 with tiling modifier\n");
+	exit(0);
+}
+
+static int
+is_import_mode_immediate(const char* c)
+{
+	if (!strcmp(c, "1"))
+		return 1;
+	else if (!strcmp(c, "0"))
+		return 0;
+	else
+		print_usage_and_exit();
+
+	return 0;
+}
+
+static int
+parse_import_format(const char* c)
+{
+	if (!strcmp(c, "NV12"))
+		return DRM_FORMAT_NV12;
+	else if (!strcmp(c, "XRGB"))
+		return DRM_FORMAT_XRGB8888;
+	else
+		print_usage_and_exit();
+
+	return 0;
+}
+
 int
 main(int argc, char **argv)
 {
 	struct sigaction sigint;
 	struct display *display;
 	struct window *window;
-	int ret = 0;
+	int is_immediate = 0;
+	int import_format = DRM_FORMAT_XRGB8888;
+	int ret = 0, i = 0;
 
-	display = create_display();
-	window = create_window(display, 250, 250);
+	if (argc > 1) {
+		static const char import_mode[] = "--import-immediate=";
+		static const char format[] = "--import-format=";
+		for (i = 1; i < argc; i++) {
+			if (!strncmp(argv[i], import_mode,
+				     sizeof(import_mode) - 1)) {
+				is_immediate = is_import_mode_immediate(argv[i]
+							+ sizeof(import_mode) - 1);
+			}
+			else if (!strncmp(argv[i], format, sizeof(format) - 1)) {
+				import_format = parse_import_format(argv[i]
+							+ sizeof(format) - 1);
+			}
+			else {
+				print_usage_and_exit();
+			}
+		}
+	}
+
+	display = create_display(is_immediate, import_format);
+	window = create_window(display, 256, 256, import_format);
 	if (!window)
 		return 1;
 
@@ -599,7 +884,8 @@ main(int argc, char **argv)
 	sigint.sa_flags = SA_RESETHAND;
 	sigaction(SIGINT, &sigint, NULL);
 
-	/* Here we retrieve the linux-dmabuf objects, or error */
+	/* Here we retrieve the linux-dmabuf objects if executed without immed,
+	 * or error */
 	wl_display_roundtrip(display->display);
 
 	if (!running)

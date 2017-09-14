@@ -35,6 +35,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <systemd/sd-login.h>
 #include <unistd.h>
 
@@ -215,6 +216,7 @@ launcher_logind_close(struct weston_launcher *launcher, int fd)
 	int r;
 
 	r = fstat(fd, &st);
+	close(fd);
 	if (r < 0) {
 		weston_log("logind: cannot fstat fd: %m\n");
 		return;
@@ -830,11 +832,19 @@ launcher_logind_destroy(struct weston_launcher *launcher)
 	free(wl);
 }
 
-struct launcher_interface launcher_logind_iface = {
-	launcher_logind_connect,
-	launcher_logind_destroy,
-	launcher_logind_open,
-	launcher_logind_close,
-	launcher_logind_activate_vt,
-	launcher_logind_restore,
+static int
+launcher_logind_get_vt(struct weston_launcher *launcher)
+{
+	struct launcher_logind *wl = wl_container_of(launcher, wl, base);
+	return wl->vtnr;
+}
+
+const struct launcher_interface launcher_logind_iface = {
+	.connect = launcher_logind_connect,
+	.destroy = launcher_logind_destroy,
+	.open = launcher_logind_open,
+	.close = launcher_logind_close,
+	.activate_vt = launcher_logind_activate_vt,
+	.restore = launcher_logind_restore,
+	.get_vt = launcher_logind_get_vt,
 };

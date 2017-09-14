@@ -67,6 +67,9 @@
 #define DEFAULT_REPAINT_WINDOW 7 /* milliseconds */
 
 static void
+weston_output_update_matrix(struct weston_output *output);
+
+static void
 weston_output_transform_scale_init(struct weston_output *output,
 				   uint32_t transform, uint32_t scale);
 
@@ -269,6 +272,7 @@ weston_view_create(struct weston_surface *surface)
 		return NULL;
 
 	view->surface = surface;
+	view->plane = &surface->compositor->primary_plane;
 
 	/* Assign to surface */
 	wl_list_insert(&surface->views, &view->surface_link);
@@ -1190,6 +1194,15 @@ weston_view_update_transform_enable(struct weston_view *view)
 		weston_log("error: weston_view %p"
 			" transformation not invertible.\n", view);
 		return -1;
+	}
+
+	if (view->alpha == 1.0 &&
+	    matrix->type == WESTON_MATRIX_TRANSFORM_TRANSLATE) {
+		pixman_region32_copy(&view->transform.opaque,
+				     &view->surface->opaque);
+		pixman_region32_translate(&view->transform.opaque,
+					  matrix->d[12],
+					  matrix->d[13]);
 	}
 
 	pixman_region32_init_rect(&surfregion, 0, 0,
@@ -2169,6 +2182,12 @@ view_list_add_subsurface_view(struct weston_compositor *compositor,
 	}
 }
 
+/* This recursively adds the sub-surfaces for a view, relying on the
+ * sub-surface order. Thus, if a client restacks the sub-surfaces, that
+ * change first happens to the sub-surface list, and then automatically
+ * propagates here. See weston_surface_damage_subsurfaces() for how the
+ * sub-surfaces receive damage when the client changes the state.
+ */
 static void
 view_list_add(struct weston_compositor *compositor,
 	      struct weston_view *view)
@@ -2238,7 +2257,7 @@ weston_output_take_feedback_list(struct weston_output *output,
 }
 
 static int
-weston_output_repaint(struct weston_output *output)
+weston_output_repaint(struct weston_output *output, void *repaint_data)
 {
 	struct weston_compositor *ec = output->compositor;
 	struct weston_view *ev;
@@ -2257,7 +2276,7 @@ weston_output_repaint(struct weston_output *output)
 	weston_compositor_build_view_list(ec);
 
 	if (output->assign_planes && !output->disable_planes) {
-		output->assign_planes(output);
+		output->assign_planes(output, repaint_data);
 	} else {
 		wl_list_for_each(ev, &ec->view_list, link) {
 			weston_view_move_to_plane(ev, &ec->primary_plane);
@@ -2290,11 +2309,13 @@ weston_output_repaint(struct weston_output *output)
 	if (output->dirty)
 		weston_output_update_matrix(output);
 
-	r = output->repaint(output, &output_damage);
+	r = output->repaint(output, &output_damage, repaint_data);
 
 	pixman_region32_fini(&output_damage);
 
-	output->repaint_needed = 0;
+	output->repaint_needed = false;
+	if (r == 0)
+		output->repaint_status = REPAINT_AWAITING_COMPLETION;
 
 	weston_compositor_repick(ec);
 
@@ -2316,23 +2337,124 @@ weston_output_repaint(struct weston_output *output)
 static void
 weston_output_schedule_repaint_reset(struct weston_output *output)
 {
-	output->repaint_scheduled = 0;
+	output->repaint_status = REPAINT_NOT_SCHEDULED;
 	TL_POINT("core_repaint_exit_loop", TLP_OUTPUT(output), TLP_END);
+}
+
+static int
+weston_output_maybe_repaint(struct weston_output *output, struct timespec *now,
+			    void *repaint_data)
+{
+	struct weston_compositor *compositor = output->compositor;
+	int ret = 0;
+	int64_t msec_to_repaint;
+
+	/* We're not ready yet; come back to make a decision later. */
+	if (output->repaint_status != REPAINT_SCHEDULED)
+		return ret;
+
+	msec_to_repaint = timespec_sub_to_msec(&output->next_repaint, now);
+	if (msec_to_repaint > 1)
+		return ret;
+
+	/* If we're sleeping, drop the repaint machinery entirely; we will
+	 * explicitly repaint all outputs when we come back. */
+	if (compositor->state == WESTON_COMPOSITOR_SLEEPING ||
+	    compositor->state == WESTON_COMPOSITOR_OFFSCREEN)
+		goto err;
+
+	/* We don't actually need to repaint this output; drop it from
+	 * repaint until something causes damage. */
+	if (!output->repaint_needed)
+		goto err;
+
+	/* If repaint fails, we aren't going to get weston_output_finish_frame
+	 * to trigger a new repaint, so drop it from repaint and hope
+	 * something schedules a successful repaint later. As repainting may
+	 * take some time, re-read our clock as a courtesy to the next
+	 * output. */
+	ret = weston_output_repaint(output, repaint_data);
+	weston_compositor_read_presentation_clock(compositor, now);
+	if (ret != 0)
+		goto err;
+
+	return ret;
+
+err:
+	weston_output_schedule_repaint_reset(output);
+	return ret;
+}
+
+static void
+output_repaint_timer_arm(struct weston_compositor *compositor)
+{
+	struct weston_output *output;
+	bool any_should_repaint = false;
+	struct timespec now;
+	int64_t msec_to_next = INT64_MAX;
+
+	weston_compositor_read_presentation_clock(compositor, &now);
+
+	wl_list_for_each(output, &compositor->output_list, link) {
+		int64_t msec_to_this;
+
+		if (output->repaint_status != REPAINT_SCHEDULED)
+			continue;
+
+		msec_to_this = timespec_sub_to_msec(&output->next_repaint,
+						    &now);
+		if (!any_should_repaint || msec_to_this < msec_to_next)
+			msec_to_next = msec_to_this;
+
+		any_should_repaint = true;
+	}
+
+	if (!any_should_repaint)
+		return;
+
+	/* Even if we should repaint immediately, add the minimum 1 ms delay.
+	 * This is a workaround to allow coalescing multiple output repaints
+	 * particularly from weston_output_finish_frame()
+	 * into the same call, which would not happen if we called
+	 * output_repaint_timer_handler() directly.
+	 */
+	if (msec_to_next < 1)
+		msec_to_next = 1;
+
+	wl_event_source_timer_update(compositor->repaint_timer, msec_to_next);
 }
 
 static int
 output_repaint_timer_handler(void *data)
 {
-	struct weston_output *output = data;
-	struct weston_compositor *compositor = output->compositor;
+	struct weston_compositor *compositor = data;
+	struct weston_output *output;
+	struct timespec now;
+	void *repaint_data = NULL;
+	int ret;
 
-	if (output->repaint_needed &&
-	    compositor->state != WESTON_COMPOSITOR_SLEEPING &&
-	    compositor->state != WESTON_COMPOSITOR_OFFSCREEN &&
-	    weston_output_repaint(output) == 0)
-		return 0;
+	weston_compositor_read_presentation_clock(compositor, &now);
 
-	weston_output_schedule_repaint_reset(output);
+	if (compositor->backend->repaint_begin)
+		repaint_data = compositor->backend->repaint_begin(compositor);
+
+	wl_list_for_each(output, &compositor->output_list, link) {
+		ret = weston_output_maybe_repaint(output, &now, repaint_data);
+		if (ret)
+			break;
+	}
+
+	if (ret == 0) {
+	    if (compositor->backend->repaint_flush)
+		    compositor->backend->repaint_flush(compositor,
+						       repaint_data);
+	} else {
+	    if (compositor->backend->repaint_cancel)
+		    compositor->backend->repaint_cancel(compositor,
+						        repaint_data);
+	}
+
+	output_repaint_timer_arm(compositor);
 
 	return 0;
 }
@@ -2345,11 +2467,23 @@ weston_output_finish_frame(struct weston_output *output,
 	struct weston_compositor *compositor = output->compositor;
 	int32_t refresh_nsec;
 	struct timespec now;
-	struct timespec gone;
-	int msec;
+	int64_t msec_rel;
 
 	TL_POINT("core_repaint_finished", TLP_OUTPUT(output),
 		 TLP_VBLANK(stamp), TLP_END);
+
+	assert(output->repaint_status == REPAINT_AWAITING_COMPLETION);
+	assert(stamp || (presented_flags & WP_PRESENTATION_FEEDBACK_INVALID));
+
+	weston_compositor_read_presentation_clock(compositor, &now);
+
+	/* If we haven't been supplied any timestamp at all, we don't have a
+	 * timebase to work against, so any delay just wastes time. Push a
+	 * repaint as soon as possible so we can get on with it. */
+	if (!stamp) {
+		output->next_repaint = now;
+		goto out;
+	}
 
 	refresh_nsec = millihz_to_nsec(output->current_mode->refresh);
 	weston_presentation_feedback_present_list(&output->feedback_list,
@@ -2357,35 +2491,40 @@ weston_output_finish_frame(struct weston_output *output,
 						  output->msc,
 						  presented_flags);
 
-	output->frame_time = stamp->tv_sec * 1000 + stamp->tv_nsec / 1000000;
+	output->frame_time = timespec_to_msec(stamp);
 
-	weston_compositor_read_presentation_clock(compositor, &now);
-	timespec_sub(&gone, &now, stamp);
-	msec = (refresh_nsec - timespec_to_nsec(&gone)) / 1000000; /* floor */
-	msec -= compositor->repaint_msec;
+	timespec_add_nsec(&output->next_repaint, stamp, refresh_nsec);
+	timespec_add_msec(&output->next_repaint, &output->next_repaint,
+			  -compositor->repaint_msec);
+	msec_rel = timespec_sub_to_msec(&output->next_repaint, &now);
 
-	if (msec < -1000 || msec > 1000) {
+	if (msec_rel < -1000 || msec_rel > 1000) {
 		static bool warned;
 
 		if (!warned)
 			weston_log("Warning: computed repaint delay is "
-				   "insane: %d msec\n", msec);
+				   "insane: %lld msec\n", (long long) msec_rel);
 		warned = true;
 
-		msec = 0;
+		output->next_repaint = now;
 	}
 
 	/* Called from restart_repaint_loop and restart happens already after
 	 * the deadline given by repaint_msec? In that case we delay until
 	 * the deadline of the next frame, to give clients a more predictable
 	 * timing of the repaint cycle to lock on. */
-	if (presented_flags == WP_PRESENTATION_FEEDBACK_INVALID && msec < 0)
-		msec += refresh_nsec / 1000000;
+	if (presented_flags == WP_PRESENTATION_FEEDBACK_INVALID &&
+	    msec_rel < 0) {
+		while (timespec_sub_to_nsec(&output->next_repaint, &now) < 0) {
+			timespec_add_nsec(&output->next_repaint,
+					  &output->next_repaint,
+					  refresh_nsec);
+		}
+	}
 
-	if (msec < 1)
-		output_repaint_timer_handler(output);
-	else
-		wl_event_source_timer_update(output->repaint_timer, msec);
+out:
+	output->repaint_status = REPAINT_SCHEDULED;
+	output_repaint_timer_arm(compositor);
 }
 
 static void
@@ -2393,6 +2532,8 @@ idle_repaint(void *data)
 {
 	struct weston_output *output = data;
 
+	assert(output->repaint_status == REPAINT_BEGIN_FROM_IDLE);
+	output->repaint_status = REPAINT_AWAITING_COMPLETION;
 	output->start_repaint_loop(output);
 }
 
@@ -2412,14 +2553,62 @@ weston_layer_entry_remove(struct weston_layer_entry *entry)
 	entry->layer = NULL;
 }
 
+
+/** Initialize the weston_layer struct.
+ *
+ * \param compositor The compositor instance
+ * \param layer The layer to initialize
+ */
 WL_EXPORT void
-weston_layer_init(struct weston_layer *layer, struct wl_list *below)
+weston_layer_init(struct weston_layer *layer,
+		  struct weston_compositor *compositor)
 {
+	layer->compositor = compositor;
+	wl_list_init(&layer->link);
 	wl_list_init(&layer->view_list.link);
 	layer->view_list.layer = layer;
 	weston_layer_set_mask_infinite(layer);
-	if (below != NULL)
-		wl_list_insert(below, &layer->link);
+}
+
+/** Sets the position of the layer in the layer list. The layer will be placed
+ * below any layer with the same position value, if any.
+ * This function is safe to call if the layer is already on the list, but the
+ * layer may be moved below other layers at the same position, if any.
+ *
+ * \param layer The layer to modify
+ * \param position The position the layer will be placed at
+ */
+WL_EXPORT void
+weston_layer_set_position(struct weston_layer *layer,
+			  enum weston_layer_position position)
+{
+	struct weston_layer *below;
+
+	wl_list_remove(&layer->link);
+
+	/* layer_list is ordered from top to bottom, the last layer being the
+	 * background with the smallest position value */
+
+	layer->position = position;
+	wl_list_for_each_reverse(below, &layer->compositor->layer_list, link) {
+		if (below->position >= layer->position) {
+			wl_list_insert(&below->link, &layer->link);
+			return;
+		}
+	}
+	wl_list_insert(&layer->compositor->layer_list, &layer->link);
+}
+
+/** Hide a layer by taking it off the layer list.
+ * This function is safe to call if the layer is not on the list.
+ *
+ * \param layer The layer to hide
+ */
+WL_EXPORT void
+weston_layer_unset_position(struct weston_layer *layer)
+{
+	wl_list_remove(&layer->link);
+	wl_list_init(&layer->link);
 }
 
 WL_EXPORT void
@@ -2459,12 +2648,17 @@ weston_output_schedule_repaint(struct weston_output *output)
 		TL_POINT("core_repaint_req", TLP_OUTPUT(output), TLP_END);
 
 	loop = wl_display_get_event_loop(compositor->wl_display);
-	output->repaint_needed = 1;
-	if (output->repaint_scheduled)
+	output->repaint_needed = true;
+
+	/* If we already have a repaint scheduled for our idle handler,
+	 * no need to set it again. If the repaint has been called but
+	 * not finished, then weston_output_finish_frame() will notice
+	 * that a repaint is needed and schedule one. */
+	if (output->repaint_status != REPAINT_NOT_SCHEDULED)
 		return;
 
+	output->repaint_status = REPAINT_BEGIN_FROM_IDLE;
 	wl_event_loop_add_idle(loop, idle_repaint, output);
-	output->repaint_scheduled = 1;
 	TL_POINT("core_repaint_enter_loop", TLP_OUTPUT(output), TLP_END);
 }
 
@@ -2609,6 +2803,24 @@ surface_set_input_region(struct wl_client *client,
 	}
 }
 
+/* Cause damage to this sub-surface and all its children.
+ *
+ * This is useful when there are state changes that need an implicit
+ * damage, e.g. a z-order change.
+ */
+static void
+weston_surface_damage_subsurfaces(struct weston_subsurface *sub)
+{
+	struct weston_subsurface *child;
+
+	weston_surface_damage(sub->surface);
+	sub->reordered = false;
+
+	wl_list_for_each(child, &sub->surface->subsurface_list, parent_link)
+		if (child != sub)
+			weston_surface_damage_subsurfaces(child);
+}
+
 static void
 weston_surface_commit_subsurface_order(struct weston_surface *surface)
 {
@@ -2618,6 +2830,9 @@ weston_surface_commit_subsurface_order(struct weston_surface *surface)
 				 parent_link_pending) {
 		wl_list_remove(&sub->parent_link);
 		wl_list_insert(&surface->subsurface_list, &sub->parent_link);
+
+		if (sub->reordered)
+			weston_surface_damage_subsurfaces(sub);
 	}
 }
 
@@ -3512,17 +3727,16 @@ subsurface_set_position(struct wl_client *client,
 }
 
 static struct weston_subsurface *
-subsurface_from_surface(struct weston_surface *surface)
+subsurface_find_sibling(struct weston_subsurface *sub,
+		       struct weston_surface *surface)
 {
-	struct weston_subsurface *sub;
+	struct weston_surface *parent = sub->parent;
+	struct weston_subsurface *sibling;
 
-	sub = weston_surface_to_subsurface(surface);
-	if (sub)
-		return sub;
-
-	wl_list_for_each(sub, &surface->subsurface_list, parent_link)
-		if (sub->surface == surface)
-			return sub;
+	wl_list_for_each(sibling, &parent->subsurface_list, parent_link) {
+		if (sibling->surface == surface && sibling != sub)
+			return sibling;
+	}
 
 	return NULL;
 }
@@ -3534,8 +3748,7 @@ subsurface_sibling_check(struct weston_subsurface *sub,
 {
 	struct weston_subsurface *sibling;
 
-	sibling = subsurface_from_surface(surface);
-
+	sibling = subsurface_find_sibling(sub, surface);
 	if (!sibling) {
 		wl_resource_post_error(sub->resource,
 			WL_SUBSURFACE_ERROR_BAD_SURFACE,
@@ -3544,13 +3757,7 @@ subsurface_sibling_check(struct weston_subsurface *sub,
 		return NULL;
 	}
 
-	if (sibling->parent != sub->parent) {
-		wl_resource_post_error(sub->resource,
-			WL_SUBSURFACE_ERROR_BAD_SURFACE,
-			"%s: wl_surface@%d has a different parent",
-			request, wl_resource_get_id(surface->resource));
-		return NULL;
-	}
+	assert(sibling->parent == sub->parent);
 
 	return sibling;
 }
@@ -3575,6 +3782,8 @@ subsurface_place_above(struct wl_client *client,
 	wl_list_remove(&sub->parent_link_pending);
 	wl_list_insert(sibling->parent_link_pending.prev,
 		       &sub->parent_link_pending);
+
+	sub->reordered = true;
 }
 
 static void
@@ -3597,6 +3806,8 @@ subsurface_place_below(struct wl_client *client,
 	wl_list_remove(&sub->parent_link_pending);
 	wl_list_insert(&sibling->parent_link_pending,
 		       &sub->parent_link_pending);
+
+	sub->reordered = true;
 }
 
 static void
@@ -3931,10 +4142,9 @@ weston_compositor_wake(struct weston_compositor *compositor)
 
 	switch (old_state) {
 	case WESTON_COMPOSITOR_SLEEPING:
-		weston_compositor_dpms(compositor, WESTON_DPMS_ON);
-		/* fall through */
 	case WESTON_COMPOSITOR_IDLE:
 	case WESTON_COMPOSITOR_OFFSCREEN:
+		weston_compositor_dpms(compositor, WESTON_DPMS_ON);
 		wl_signal_emit(&compositor->wake_signal, compositor);
 		/* fall through */
 	default:
@@ -3950,10 +4160,6 @@ weston_compositor_wake(struct weston_compositor *compositor)
  * This is used for example to prevent further rendering while the
  * compositor is shutting down.
  *
- * \note When offscreen state is entered, outputs will be powered
- * back on if they were sleeping (in DPMS off mode), even though
- * no rendering will be performed.
- *
  * Stops the idle timer.
  */
 WL_EXPORT void
@@ -3963,8 +4169,6 @@ weston_compositor_offscreen(struct weston_compositor *compositor)
 	case WESTON_COMPOSITOR_OFFSCREEN:
 		return;
 	case WESTON_COMPOSITOR_SLEEPING:
-		weston_compositor_dpms(compositor, WESTON_DPMS_ON);
-		/* fall through */
 	default:
 		compositor->state = WESTON_COMPOSITOR_OFFSCREEN;
 		wl_event_source_timer_update(compositor->idle_source, 0);
@@ -4119,6 +4323,22 @@ bind_output(struct wl_client *client,
 		wl_output_send_done(resource);
 }
 
+/** Get the backing object of wl_output
+ *
+ * \param resource A wl_output protocol object.
+ * \return The backing object (user data) of a wl_resource representing a
+ * wl_output protocol object.
+ */
+WL_EXPORT struct weston_output *
+weston_output_from_resource(struct wl_resource *resource)
+{
+	assert(wl_resource_instance_of(resource, &wl_output_interface,
+				       &output_interface));
+
+	return wl_resource_get_user_data(resource);
+}
+
+
 /* Move other outputs when one is resized so the space remains contiguous. */
 static void
 weston_compositor_reflow_outputs(struct weston_compositor *compositor,
@@ -4143,42 +4363,7 @@ weston_compositor_reflow_outputs(struct weston_compositor *compositor,
 	}
 }
 
-WL_EXPORT void
-weston_output_destroy(struct weston_output *output)
-{
-	struct wl_resource *resource;
-	struct weston_view *view;
-
-	output->destroying = 1;
-
-	wl_list_for_each(view, &output->compositor->view_list, link) {
-		if (view->output_mask & (1u << output->id))
-			weston_view_assign_output(view);
-	}
-
-	wl_event_source_remove(output->repaint_timer);
-
-	weston_presentation_feedback_discard_list(&output->feedback_list);
-
-	weston_compositor_reflow_outputs(output->compositor, output, output->width);
-	wl_list_remove(&output->link);
-
-	wl_signal_emit(&output->compositor->output_destroyed_signal, output);
-	wl_signal_emit(&output->destroy_signal, output);
-
-	free(output->name);
-	pixman_region32_fini(&output->region);
-	pixman_region32_fini(&output->previous_damage);
-	output->compositor->output_id_pool &= ~(1u << output->id);
-
-	wl_resource_for_each(resource, &output->resource_list) {
-		wl_resource_set_destructor(resource, NULL);
-	}
-
-	wl_global_destroy(output->global);
-}
-
-WL_EXPORT void
+static void
 weston_output_update_matrix(struct weston_output *output)
 {
 	float magnification;
@@ -4257,7 +4442,10 @@ weston_output_init_geometry(struct weston_output *output, int x, int y)
 	output->x = x;
 	output->y = y;
 
+	pixman_region32_fini(&output->previous_damage);
 	pixman_region32_init(&output->previous_damage);
+
+	pixman_region32_fini(&output->region);
 	pixman_region32_init_rect(&output->region, x, y,
 				  output->width,
 				  output->height);
@@ -4298,97 +4486,65 @@ weston_output_move(struct weston_output *output, int x, int y)
 	}
 }
 
-/** Initialize a weston_output object's parameters
+/** Signal that a pending output is taken into use.
  *
- * \param output     The weston_output object to initialize
- * \param c          The output's compositor
- * \param x          x coordinate for the output in global coordinate space
- * \param y          y coordinate for the output in global coordinate space
- * \param mm_width   Physical width of the output as reported by the backend
- * \param mm_height  Physical height of the output as reported by the backend
- * \param transform  Rotation of the output
- * \param scale      Native scaling factor for the output
+ * Removes the output from the pending list and adds it to the compositor's
+ * list of enabled outputs. The output created signal is emitted.
  *
- * Sets up the transformation, zoom, and geometry of the output using
- * the input properties.
- *
- * Establishes a repaint timer for the output with the relevant display
- * object's event loop.  See output_repaint_timer_handler().
- *
- * The output is assigned an ID.  Weston can support up to 32 distinct
- * outputs, with IDs numbered from 0-31; the compositor's output_id_pool
- * is referred to and used to find the first available ID number, and
- * then this ID is marked as used in output_id_pool.
- *
- * The output is also assigned a Wayland global with the wl_output
- * external interface.
- */
-WL_EXPORT void
-weston_output_init(struct weston_output *output, struct weston_compositor *c,
-		   int x, int y, int mm_width, int mm_height, uint32_t transform,
-		   int32_t scale)
-{
-	struct wl_event_loop *loop;
-
-	/* Verify we haven't reached the limit of 32 available output IDs */
-	assert(ffs(~c->output_id_pool) > 0);
-
-	output->compositor = c;
-	output->x = x;
-	output->y = y;
-	output->mm_width = mm_width;
-	output->mm_height = mm_height;
-	output->dirty = 1;
-	output->original_scale = scale;
-
-	weston_output_transform_scale_init(output, transform, scale);
-	weston_output_init_zoom(output);
-
-	weston_output_init_geometry(output, x, y);
-	weston_output_damage(output);
-
-	wl_signal_init(&output->frame_signal);
-	wl_signal_init(&output->destroy_signal);
-	wl_list_init(&output->animation_list);
-	wl_list_init(&output->resource_list);
-	wl_list_init(&output->feedback_list);
-	wl_list_init(&output->link);
-
-	loop = wl_display_get_event_loop(c->wl_display);
-	output->repaint_timer = wl_event_loop_add_timer(loop,
-					output_repaint_timer_handler, output);
-
-	/* Invert the output id pool and look for the lowest numbered
-	 * switch (the least significant bit).  Take that bit's position
-	 * as our ID, and mark it used in the compositor's output_id_pool.
-	 */
-	output->id = ffs(~output->compositor->output_id_pool) - 1;
-	output->compositor->output_id_pool |= 1u << output->id;
-
-	output->global =
-		wl_global_create(c->wl_display, &wl_output_interface, 3,
-				 output, bind_output);
-}
-
-/** Adds an output to the compositor's output list and
- *  send the compositor's output_created signal.
+ * The output gets an internal ID assigned, and the wl_output global is
+ * created.
  *
  * \param compositor The compositor instance.
  * \param output The output to be added.
+ *
+ * \internal
  */
-WL_EXPORT void
+static void
 weston_compositor_add_output(struct weston_compositor *compositor,
                              struct weston_output *output)
 {
 	struct weston_view *view, *next;
 
+	assert(!output->enabled);
+
+	/* Verify we haven't reached the limit of 32 available output IDs */
+	assert(ffs(~compositor->output_id_pool) > 0);
+
+	/* Invert the output id pool and look for the lowest numbered
+	 * switch (the least significant bit).  Take that bit's position
+	 * as our ID, and mark it used in the compositor's output_id_pool.
+	 */
+	output->id = ffs(~compositor->output_id_pool) - 1;
+	compositor->output_id_pool |= 1u << output->id;
+
+	wl_list_remove(&output->link);
 	wl_list_insert(compositor->output_list.prev, &output->link);
+	output->enabled = true;
+
+	output->global = wl_global_create(compositor->wl_display,
+					  &wl_output_interface, 3,
+					  output, bind_output);
+
 	wl_signal_emit(&compositor->output_created_signal, output);
 
 	wl_list_for_each_safe(view, next, &compositor->view_list, link)
 		weston_view_geometry_dirty(view);
 }
 
+/** Transform device coordinates into global coordinates
+ *
+ * \param device_x[in] X coordinate in device units.
+ * \param device_y[in] Y coordinate in device units.
+ * \param x[out] X coordinate in the global space.
+ * \param y[out] Y coordinate in the global space.
+ *
+ * Transforms coordinates from the device coordinate space
+ * (physical pixel units) to the global coordinate space (logical pixel units).
+ * This takes into account output transform and scale.
+ *
+ * \memberof weston_output
+ * \internal
+ */
 WL_EXPORT void
 weston_output_transform_coordinate(struct weston_output *output,
 				   double device_x, double device_y,
@@ -4404,6 +4560,359 @@ weston_output_transform_coordinate(struct weston_output *output,
 
 	*x = p.f[0] / p.f[3];
 	*y = p.f[1] / p.f[3];
+}
+
+/** Removes output from compositor's list of enabled outputs
+ *
+ * \param output The weston_output object that is being removed.
+ *
+ * The following happens:
+ *
+ * - The output assignments of all views in the current scenegraph are
+ *   recomputed.
+ *
+ * - Presentation feedback is discarded.
+ *
+ * - Compositor is notified that outputs were changed and
+ *   applies the necessary changes to re-layout outputs.
+ *
+ * - The output is put back in the pending outputs list.
+ *
+ * - Signal is emitted to notify all users of the weston_output
+ *   object that the output is being destroyed.
+ *
+ * - wl_output protocol objects referencing this weston_output
+ *   are made inert, and the wl_output global is removed.
+ *
+ * - The output's internal ID is released.
+ *
+ * \memberof weston_output
+ * \internal
+ */
+static void
+weston_compositor_remove_output(struct weston_output *output)
+{
+	struct weston_compositor *compositor = output->compositor;
+	struct wl_resource *resource;
+	struct weston_view *view;
+
+	assert(output->destroying);
+	assert(output->enabled);
+
+	wl_list_for_each(view, &compositor->view_list, link) {
+		if (view->output_mask & (1u << output->id))
+			weston_view_assign_output(view);
+	}
+
+	weston_presentation_feedback_discard_list(&output->feedback_list);
+
+	weston_compositor_reflow_outputs(compositor, output, output->width);
+
+	wl_list_remove(&output->link);
+	wl_list_insert(compositor->pending_output_list.prev, &output->link);
+	output->enabled = false;
+
+	wl_signal_emit(&compositor->output_destroyed_signal, output);
+	wl_signal_emit(&output->destroy_signal, output);
+
+	wl_global_destroy(output->global);
+	output->global = NULL;
+	wl_resource_for_each(resource, &output->resource_list) {
+		wl_resource_set_destructor(resource, NULL);
+	}
+
+	compositor->output_id_pool &= ~(1u << output->id);
+	output->id = 0xffffffff; /* invalid */
+}
+
+/** Sets the output scale for a given output.
+ *
+ * \param output The weston_output object that the scale is set for.
+ * \param scale  Scale factor for the given output.
+ *
+ * It only supports setting scale for an output that
+ * is not enabled and it can only be ran once.
+ *
+ * \memberof weston_output
+ */
+WL_EXPORT void
+weston_output_set_scale(struct weston_output *output,
+			int32_t scale)
+{
+	/* We can only set scale on a disabled output */
+	assert(!output->enabled);
+
+	/* We only want to set scale once */
+	assert(!output->scale);
+
+	output->scale = scale;
+}
+
+/** Sets the output transform for a given output.
+ *
+ * \param output    The weston_output object that the transform is set for.
+ * \param transform Transform value for the given output.
+ *
+ * It only supports setting transform for an output that is
+ * not enabled and it can only be ran once.
+ *
+ * Refer to wl_output::transform section located at
+ * https://wayland.freedesktop.org/docs/html/apa.html#protocol-spec-wl_output
+ * for list of values that can be passed to this function.
+ *
+ * \memberof weston_output
+ */
+WL_EXPORT void
+weston_output_set_transform(struct weston_output *output,
+			    uint32_t transform)
+{
+	/* We can only set transform on a disabled output */
+	assert(!output->enabled);
+
+	/* We only want to set transform once */
+	assert(output->transform == UINT32_MAX);
+
+	output->transform = transform;
+}
+
+/** Initializes a weston_output object with enough data so
+ ** an output can be configured.
+ *
+ * \param output     The weston_output object to initialize
+ * \param compositor The compositor instance.
+ *
+ * Sets initial values for fields that are expected to be
+ * configured either by compositors or backends.
+ *
+ * \memberof weston_output
+ * \internal
+ */
+WL_EXPORT void
+weston_output_init(struct weston_output *output,
+		   struct weston_compositor *compositor)
+{
+	output->compositor = compositor;
+	output->destroying = 0;
+
+	/* Backends must set output->name */
+	assert(output->name);
+
+	wl_list_init(&output->link);
+	output->enabled = false;
+
+	/* Add some (in)sane defaults which can be used
+	 * for checking if an output was properly configured
+	 */
+	output->mm_width = 0;
+	output->mm_height = 0;
+	output->scale = 0;
+	/* Can't use -1 on uint32_t and 0 is valid enum value */
+	output->transform = UINT32_MAX;
+
+	pixman_region32_init(&output->previous_damage);
+	pixman_region32_init(&output->region);
+}
+
+/** Adds weston_output object to pending output list.
+ *
+ * \param output     The weston_output object to add
+ * \param compositor The compositor instance.
+ *
+ * Also notifies the compositor that an output is pending for
+ * configuration.
+ *
+ * The opposite of this operation is built into weston_output_destroy().
+ *
+ * \memberof weston_output
+ * \internal
+ */
+WL_EXPORT void
+weston_compositor_add_pending_output(struct weston_output *output,
+				     struct weston_compositor *compositor)
+{
+	assert(output->disable);
+	assert(output->enable);
+
+	wl_list_remove(&output->link);
+	wl_list_insert(compositor->pending_output_list.prev, &output->link);
+	wl_signal_emit(&compositor->output_pending_signal, output);
+}
+
+/** Constructs a weston_output object that can be used by the compositor.
+ *
+ * \param output The weston_output object that needs to be enabled. Must not
+ * be enabled already.
+ *
+ * Output coordinates are calculated and each new output is by default
+ * assigned to the right of previous one.
+ *
+ * Sets up the transformation, zoom, and geometry of the output using
+ * the properties that need to be configured by the compositor.
+ *
+ * Establishes a repaint timer for the output with the relevant display
+ * object's event loop. See output_repaint_timer_handler().
+ *
+ * The output is assigned an ID. Weston can support up to 32 distinct
+ * outputs, with IDs numbered from 0-31; the compositor's output_id_pool
+ * is referred to and used to find the first available ID number, and
+ * then this ID is marked as used in output_id_pool.
+ *
+ * The output is also assigned a Wayland global with the wl_output
+ * external interface.
+ *
+ * Backend specific function is called to set up the output output.
+ *
+ * Output is added to the compositor's output list
+ *
+ * If the backend specific function fails, the weston_output object
+ * is returned to a state it was before calling this function and
+ * is added to the compositor's pending_output_list in case it needs
+ * to be reconfigured or just so it can be destroyed at shutdown.
+ *
+ * 0 is returned on success, -1 on failure.
+ */
+WL_EXPORT int
+weston_output_enable(struct weston_output *output)
+{
+	struct weston_compositor *c = output->compositor;
+	struct weston_output *iterator;
+	int x = 0, y = 0;
+
+	if (output->enabled) {
+		weston_log("Error: attempt to enable an enabled output '%s'\n",
+			   output->name);
+		return -1;
+	}
+
+	iterator = container_of(c->output_list.prev,
+				struct weston_output, link);
+
+	if (!wl_list_empty(&c->output_list))
+		x = iterator->x + iterator->width;
+
+	/* Make sure the scale is set up */
+	assert(output->scale);
+
+	/* Make sure we have a transform set */
+	assert(output->transform != UINT32_MAX);
+
+	output->x = x;
+	output->y = y;
+	output->dirty = 1;
+	output->original_scale = output->scale;
+
+	weston_output_transform_scale_init(output, output->transform, output->scale);
+	weston_output_init_zoom(output);
+
+	weston_output_init_geometry(output, x, y);
+	weston_output_damage(output);
+
+	wl_signal_init(&output->frame_signal);
+	wl_signal_init(&output->destroy_signal);
+	wl_list_init(&output->animation_list);
+	wl_list_init(&output->resource_list);
+	wl_list_init(&output->feedback_list);
+
+	/* Enable the output (set up the crtc or create a
+	 * window representing the output, set up the
+	 * renderer, etc)
+	 */
+	if (output->enable(output) < 0) {
+		weston_log("Enabling output \"%s\" failed.\n", output->name);
+		return -1;
+	}
+
+	weston_compositor_add_output(output->compositor, output);
+
+	return 0;
+}
+
+/** Converts a weston_output object to a pending output state, so it
+ ** can be configured again or destroyed.
+ *
+ * \param output The weston_output object that needs to be disabled.
+ *
+ * Calls a backend specific function to disable an output, in case
+ * such function exists.
+ *
+ * The backend specific disable function may choose to postpone the disabling
+ * by returning a negative value, in which case this function returns early.
+ * In that case the backend will guarantee the output will be disabled soon
+ * by the backend calling this function again. One must not attempt to re-enable
+ * the output until that happens.
+ *
+ * Otherwise, if the output is being used by the compositor, it is removed
+ * from weston's output_list (see weston_compositor_remove_output())
+ * and is returned to a state it was before weston_output_enable()
+ * was ran (see weston_output_enable_undo()).
+ *
+ * See weston_output_init() for more information on the
+ * state output is returned to.
+ *
+ * If the output has never been enabled yet, this function can still be
+ * called to ensure that the output is actually turned off rather than left
+ * in the state it was discovered in.
+ */
+WL_EXPORT void
+weston_output_disable(struct weston_output *output)
+{
+	/* Should we rename this? */
+	output->destroying = 1;
+
+	/* Disable is called unconditionally also for not-enabled outputs,
+	 * because at compositor start-up, if there is an output that is
+	 * already on but the compositor wants to turn it off, we have to
+	 * forward the turn-off to the backend so it knows to do it.
+	 * The backend cannot initially turn off everything, because it
+	 * would cause unnecessary mode-sets for all outputs the compositor
+	 * wants to be on.
+	 */
+	if (output->disable(output) < 0)
+		return;
+
+	if (output->enabled)
+		weston_compositor_remove_output(output);
+
+	output->destroying = 0;
+}
+
+/** Emits a signal to indicate that there are outputs waiting to be configured.
+ *
+ * \param compositor The compositor instance
+ */
+WL_EXPORT void
+weston_pending_output_coldplug(struct weston_compositor *compositor)
+{
+	struct weston_output *output, *next;
+
+	wl_list_for_each_safe(output, next, &compositor->pending_output_list, link)
+		wl_signal_emit(&compositor->output_pending_signal, output);
+}
+
+/** Uninitialize an output
+ *
+ * Removes the output from the list of enabled outputs if necessary, but
+ * does not call the backend's output disable function. The output will no
+ * longer be in the list of pending outputs either.
+ *
+ * All fields of weston_output become uninitialized, i.e. should not be used
+ * anymore. The caller can free the memory after this.
+ *
+ * \memberof weston_output
+ * \internal
+ */
+WL_EXPORT void
+weston_output_destroy(struct weston_output *output)
+{
+	output->destroying = 1;
+
+	if (output->enabled)
+		weston_compositor_remove_output(output);
+
+	pixman_region32_fini(&output->region);
+	pixman_region32_fini(&output->previous_damage);
+	wl_list_remove(&output->link);
+	free(output->name);
 }
 
 static void
@@ -4743,6 +5252,7 @@ weston_compositor_create(struct wl_display *display, void *user_data)
 	wl_signal_init(&ec->hide_input_panel_signal);
 	wl_signal_init(&ec->update_input_panel_signal);
 	wl_signal_init(&ec->seat_created_signal);
+	wl_signal_init(&ec->output_pending_signal);
 	wl_signal_init(&ec->output_created_signal);
 	wl_signal_init(&ec->output_destroyed_signal);
 	wl_signal_init(&ec->output_moved_signal);
@@ -4778,6 +5288,7 @@ weston_compositor_create(struct wl_display *display, void *user_data)
 	wl_list_init(&ec->plane_list);
 	wl_list_init(&ec->layer_list);
 	wl_list_init(&ec->seat_list);
+	wl_list_init(&ec->pending_output_list);
 	wl_list_init(&ec->output_list);
 	wl_list_init(&ec->key_binding_list);
 	wl_list_init(&ec->modifier_binding_list);
@@ -4797,9 +5308,16 @@ weston_compositor_create(struct wl_display *display, void *user_data)
 
 	loop = wl_display_get_event_loop(ec->wl_display);
 	ec->idle_source = wl_event_loop_add_timer(loop, idle_handler, ec);
+	ec->repaint_timer =
+		wl_event_loop_add_timer(loop, output_repaint_timer_handler,
+					ec);
 
-	weston_layer_init(&ec->fade_layer, &ec->layer_list);
-	weston_layer_init(&ec->cursor_layer, &ec->fade_layer.link);
+	weston_layer_init(&ec->fade_layer, ec);
+	weston_layer_init(&ec->cursor_layer, ec);
+
+	weston_layer_set_position(&ec->fade_layer, WESTON_LAYER_POSITION_FADE);
+	weston_layer_set_position(&ec->cursor_layer,
+				  WESTON_LAYER_POSITION_CURSOR);
 
 	weston_compositor_add_debug_binding(ec, KEY_T,
 					    timeline_key_binding_handler, ec);
@@ -4820,6 +5338,10 @@ weston_compositor_shutdown(struct weston_compositor *ec)
 
 	/* Destroy all outputs associated with this compositor */
 	wl_list_for_each_safe(output, next, &ec->output_list, link)
+		output->destroy(output);
+
+	/* Destroy all pending outputs associated with this compositor */
+	wl_list_for_each_safe(output, next, &ec->pending_output_list, link)
 		output->destroy(output);
 
 	if (ec->renderer)
@@ -4977,18 +5499,27 @@ weston_load_module(const char *name, const char *entrypoint)
 	const char *builddir = getenv("WESTON_BUILD_DIR");
 	char path[PATH_MAX];
 	void *module, *init;
+	size_t len;
 
 	if (name == NULL)
 		return NULL;
 
 	if (name[0] != '/') {
 		if (builddir)
-			snprintf(path, sizeof path, "%s/.libs/%s", builddir, name);
+			len = snprintf(path, sizeof path, "%s/.libs/%s",
+				       builddir, name);
 		else
-			snprintf(path, sizeof path, "%s/%s", LIBWESTON_MODULEDIR, name);
+			len = snprintf(path, sizeof path, "%s/%s",
+				       LIBWESTON_MODULEDIR, name);
 	} else {
-		snprintf(path, sizeof path, "%s", name);
+		len = snprintf(path, sizeof path, "%s", name);
 	}
+
+	/* snprintf returns the length of the string it would've written,
+	 * _excluding_ the NUL byte. So even being equal to the size of
+	 * our buffer is an error here. */
+	if (len >= sizeof path)
+		return NULL;
 
 	module = dlopen(path, RTLD_NOW | RTLD_NOLOAD);
 	if (module) {
@@ -5096,7 +5627,7 @@ weston_compositor_load_backend(struct weston_compositor *compositor,
 	if (backend >= ARRAY_LENGTH(backend_map))
 		return -1;
 
-	backend_init = weston_load_module(backend_map[backend], "backend_init");
+	backend_init = weston_load_module(backend_map[backend], "weston_backend_init");
 	if (!backend_init)
 		return -1;
 
@@ -5106,14 +5637,12 @@ weston_compositor_load_backend(struct weston_compositor *compositor,
 WL_EXPORT int
 weston_compositor_load_xwayland(struct weston_compositor *compositor)
 {
-	int (*module_init)(struct weston_compositor *ec,
-			   int *argc, char *argv[]);
-	int argc = 0;
+	int (*module_init)(struct weston_compositor *ec);
 
-	module_init = weston_load_module("xwayland.so", "module_init");
+	module_init = weston_load_module("xwayland.so", "weston_module_init");
 	if (!module_init)
 		return -1;
-	if (module_init(compositor, &argc, NULL) < 0)
+	if (module_init(compositor) < 0)
 		return -1;
 	return 0;
 }
