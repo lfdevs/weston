@@ -1686,6 +1686,7 @@ handle_escape(struct terminal *terminal)
 				fprintf(stderr, "Unimplemented windowOp %d\n", args[0]);
 			break;
 		}
+		break;
 	case 'u':    /* Restore cursor location */
 		terminal->row = terminal->saved_row;
 		terminal->column = terminal->saved_column;
@@ -2264,6 +2265,9 @@ terminal_copy(struct terminal *terminal, struct input *input)
 {
 	terminal->selection =
 		display_create_data_source(terminal->display);
+	if (!terminal->selection)
+		return;
+
 	wl_data_source_offer(terminal->selection,
 			     "text/plain;charset=utf-8");
 	wl_data_source_add_listener(terminal->selection,

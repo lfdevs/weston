@@ -1,9 +1,9 @@
-m4_define([weston_major_version], [3])
+m4_define([weston_major_version], [4])
 m4_define([weston_minor_version], [0])
 m4_define([weston_micro_version], [0])
 m4_define([weston_version],
           [weston_major_version.weston_minor_version.weston_micro_version])
-m4_define([libweston_major_version], [3])
+m4_define([libweston_major_version], [4])
 m4_define([libweston_minor_version], [0])
 m4_define([libweston_patch_version], [0])
 
@@ -34,6 +34,11 @@ AC_CONFIG_MACRO_DIR([m4])
 
 AC_USE_SYSTEM_EXTENSIONS
 AC_SYS_LARGEFILE
+
+save_CFLAGS="$CFLAGS"
+export CFLAGS="$CFLAGS -Werror"
+AC_HEADER_MAJOR
+CFLAGS="$save_CFLAGS"
 
 AM_INIT_AUTOMAKE([1.11 parallel-tests foreign no-dist-gzip dist-xz color-tests subdir-objects])
 
@@ -86,7 +91,8 @@ AC_ARG_VAR([WESTON_SHELL_CLIENT],
 
 PKG_PROG_PKG_CONFIG()
 
-WESTON_SEARCH_LIBS([DLOPEN], [dl], [dlopen])
+# Check for dlsym instead of dlopen because ASAN hijacks the latter
+WESTON_SEARCH_LIBS([DL], [dl], [dlsym])
 
 # In old glibc versions (< 2.17) clock_gettime() and clock_getres() are in librt
 WESTON_SEARCH_LIBS([CLOCK_GETTIME], [rt], [clock_gettime])
@@ -141,6 +147,7 @@ if test x$enable_egl = xyes; then
 	AC_DEFINE([ENABLE_EGL], [1], [Build Weston with EGL support])
 	PKG_CHECK_MODULES(EGL, [egl glesv2])
         PKG_CHECK_MODULES([EGL_TESTS], [egl glesv2 wayland-client wayland-egl])
+	AC_CHECK_HEADERS([linux/sync_file.h])
 fi
 
 COMPOSITOR_MODULES="$COMPOSITOR_MODULES xkbcommon >= 0.3.0"
@@ -161,7 +168,7 @@ AC_ARG_ENABLE(xwayland-test, [  --enable-xwayland-test],,
 AM_CONDITIONAL(ENABLE_XWAYLAND, test x$enable_xwayland = xyes)
 AM_CONDITIONAL(ENABLE_XWAYLAND_TEST, test x$enable_xwayland = xyes -a x$enable_xwayland_test = xyes)
 if test x$enable_xwayland = xyes; then
-  PKG_CHECK_MODULES([XWAYLAND], xcb xcb-xfixes xcb-composite xcursor cairo-xcb)
+  PKG_CHECK_MODULES([XWAYLAND], xcb xcb-xfixes xcb-composite xcb-shape xcursor cairo-xcb)
   AC_DEFINE([BUILD_XWAYLAND], [1], [Build the X server launcher])
 
   AC_ARG_WITH(xserver-path, AS_HELP_STRING([--with-xserver-path=PATH],
@@ -198,7 +205,10 @@ AC_ARG_ENABLE(drm-compositor, [  --enable-drm-compositor],,
 AM_CONDITIONAL(ENABLE_DRM_COMPOSITOR, test x$enable_drm_compositor = xyes)
 if test x$enable_drm_compositor = xyes; then
   AC_DEFINE([BUILD_DRM_COMPOSITOR], [1], [Build the DRM compositor])
-  PKG_CHECK_MODULES(DRM_COMPOSITOR, [libudev >= 136 libdrm >= 2.4.30 gbm mtdev >= 1.1.0])
+  PKG_CHECK_MODULES(DRM_COMPOSITOR, [libudev >= 136 libdrm >= 2.4.30 gbm])
+  PKG_CHECK_MODULES(DRM_COMPOSITOR_ATOMIC, [libdrm >= 2.4.78],
+		    [AC_DEFINE([HAVE_DRM_ATOMIC], 1, [libdrm supports atomic API])],
+		    [AC_MSG_WARN([libdrm does not support atomic modesetting, will omit that capability])])
   PKG_CHECK_MODULES(DRM_COMPOSITOR_GBM, [gbm >= 10.2],
 		    [AC_DEFINE([HAVE_GBM_FD_IMPORT], 1, [gbm supports dmabuf import])],
 		    [AC_MSG_WARN([gbm does not support dmabuf import, will omit that capability])])
@@ -208,7 +218,7 @@ fi
 PKG_CHECK_MODULES(LIBINPUT_BACKEND, [libinput >= 0.8.0])
 PKG_CHECK_MODULES(COMPOSITOR, [$COMPOSITOR_MODULES])
 
-PKG_CHECK_MODULES(WAYLAND_PROTOCOLS, [wayland-protocols >= 1.8],
+PKG_CHECK_MODULES(WAYLAND_PROTOCOLS, [wayland-protocols >= 1.13],
 		  [ac_wayland_protocols_pkgdatadir=`$PKG_CONFIG --variable=pkgdatadir wayland-protocols`])
 AC_SUBST(WAYLAND_PROTOCOLS_DATADIR, $ac_wayland_protocols_pkgdatadir)
 
@@ -241,7 +251,7 @@ AM_CONDITIONAL([ENABLE_FBDEV_COMPOSITOR],
                [test x$enable_fbdev_compositor = xyes])
 AS_IF([test x$enable_fbdev_compositor = xyes], [
   AC_DEFINE([BUILD_FBDEV_COMPOSITOR], [1], [Build the fbdev compositor])
-  PKG_CHECK_MODULES([FBDEV_COMPOSITOR], [libudev >= 136 mtdev >= 1.1.0])
+  PKG_CHECK_MODULES([FBDEV_COMPOSITOR], [libudev >= 136])
 ])
 
 AC_ARG_ENABLE([rdp-compositor], [  --enable-rdp-compositor],,
@@ -374,19 +384,23 @@ AC_ARG_ENABLE(simple-dmabuf-drm-client,
                              [do not build the simple dmabuf drm client]),,
               enable_simple_dmabuf_drm_client="auto")
 if ! test "x$enable_simple_dmabuf_drm_client" = "xno"; then
-  PKG_CHECK_MODULES(SIMPLE_DMABUF_DRM_CLIENT, [wayland-client libdrm egl],
-    [PKG_CHECK_MODULES(LIBDRM_PLATFORM, [libdrm_freedreno],
-      AC_DEFINE([HAVE_LIBDRM_FREEDRENO], [1], [Build freedreno dmabuf client]) have_simple_dmabuf_drm_client=freedreno,
-    [PKG_CHECK_MODULES(LIBDRM_PLATFORM, [libdrm_intel],
-      AC_DEFINE([HAVE_LIBDRM_INTEL], [1], [Build intel dmabuf client]) have_simple_dmabuf_drm_client=intel,
-    have_simple_dmabuf_drm_client=unsupported)])],
-  have_simple_dmabuf_drm_client=unsupported)
+  PKG_CHECK_MODULES(SIMPLE_DMABUF_DRM_CLIENT, [wayland-client libdrm egl], [have_simple_dmabuf_libs=yes],
+		    [have_simple_dmabuf_libs=no])
 
-  if test "x$have_simple_dmabuf_drm_client" = "xunsupported" -a "x$enable_simple_dmabuf_drm_client" = "xyes"; then
+  PKG_CHECK_MODULES(LIBDRM_PLATFORM_FREEDRENO, [libdrm_freedreno],
+      AC_DEFINE([HAVE_LIBDRM_FREEDRENO], [1], [Build freedreno dmabuf client]) have_simple_dmabuf_drm_client=yes,
+      [true])
+  PKG_CHECK_MODULES(LIBDRM_PLATFORM_INTEL, [libdrm_intel],
+      AC_DEFINE([HAVE_LIBDRM_INTEL], [1], [Build intel dmabuf client]) have_simple_dmabuf_drm_client=yes,
+      [true])
+
+  if test "x$have_simple_dmabuf_drm_client" != "xyes" -o \
+	  "x$have_simple_dmabuf_libs" = "xno" && \
+     test "x$enable_simple_dmabuf_drm_client" = "xyes"; then
     AC_MSG_ERROR([DRM dmabuf client explicitly enabled, but libdrm_intel or libdrm_freedreno not found])
   fi
 
-  if test "x$have_simple_dmabuf_drm_client" = "xfreedreno" -o "x$have_simple_dmabuf_drm_client" = "xintel"; then
+  if test "x$have_simple_dmabuf_drm_client" = "xyes" -a "x$have_simple_dmabuf_libs" = "xyes"; then
     enable_simple_dmabuf_drm_client="yes"
   fi
 fi
@@ -445,6 +459,9 @@ if test x$enable_weston_launch = xyes; then
 fi
 
 AM_CONDITIONAL(HAVE_PANGO, test "x$have_pango" = "xyes")
+if test "x$have_pango" = "xyes"; then
+  AC_DEFINE([HAVE_PANGO], [1], [Have pango])
+fi
 
 AM_CONDITIONAL(HAVE_CAIRO_GLESV2,
 	       [test "x$have_cairo_egl" = "xyes" -a "x$cairo_modules" = "xcairo-glesv2" -a "x$enable_egl" = "xyes"])
@@ -489,6 +506,7 @@ AC_ARG_ENABLE(dbus,
               AS_HELP_STRING([--disable-dbus],
                              [do not build with dbus support]),,
               enable_dbus=auto)
+have_dbus=no
 if test "x$enable_dbus" != "xno"; then
         PKG_CHECK_MODULES(DBUS,
                           dbus-1 >= 1.6,
@@ -590,26 +608,6 @@ if test "x$GCC" = "xyes"; then
 fi
 AC_SUBST(GCC_CFLAGS)
 
-AC_ARG_ENABLE(libunwind,
-              AS_HELP_STRING([--disable-libunwind],
-                             [Disable libunwind usage for backtraces]),,
-              enable_libunwind=auto)
-AM_CONDITIONAL(HAVE_LIBUNWIND, [test "x$enable_libunwind" = xyes])
-have_libunwind=no
-if test "x$enable_libunwind" != "xno"; then
-        PKG_CHECK_MODULES(LIBUNWIND,
-                          libunwind,
-                          have_libunwind=yes,
-                          have_libunwind=no)
-        if test "x$have_libunwind" = "xno" -a "x$enable_libunwind" = "xyes"; then
-          AC_MSG_ERROR([libunwind support explicitly requested, but libunwind couldn't be found])
-        fi
-        if test "x$have_libunwind" = "xyes"; then
-             enable_libunwind=yes
-             AC_DEFINE(HAVE_LIBUNWIND, 1, [Have libunwind support])
-        fi
-fi
-
 
 if test "x$WESTON_NATIVE_BACKEND" = "x"; then
 	WESTON_NATIVE_BACKEND="drm-backend.so"
@@ -677,7 +675,9 @@ AC_CONFIG_FILES([Makefile libweston/version.h compositor/weston.pc])
 # AC_CONFIG_FILES needs the full name when running autoconf, so we need to use
 # libweston_abi_version here, and outside [] because of m4 quoting rules
 AC_CONFIG_FILES([libweston/libweston-]libweston_major_version[.pc:libweston/libweston.pc.in])
+AC_CONFIG_FILES([libweston/libweston-]libweston_major_version[-uninstalled.pc:libweston/libweston-uninstalled.pc.in])
 AC_CONFIG_FILES([libweston-desktop/libweston-desktop-]libweston_major_version[.pc:libweston-desktop/libweston-desktop.pc.in])
+AC_CONFIG_FILES([libweston-desktop/libweston-desktop-]libweston_major_version[-uninstalled.pc:libweston-desktop/libweston-desktop-uninstalled.pc.in])
 
 AM_CONDITIONAL([HAVE_GIT_REPO], [test -f $srcdir/.git/logs/HEAD])
 
@@ -723,6 +723,5 @@ AC_MSG_RESULT([
 	LCMS2 Support			${have_lcms}
 	libjpeg Support			${have_jpeglib}
 	libwebp Support			${have_webp}
-	libunwind Support		${have_libunwind}
 	VA H.264 encoding Support	${have_libva}
 ])

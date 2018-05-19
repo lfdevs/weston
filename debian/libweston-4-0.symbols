@@ -1,5 +1,5 @@
-libweston-3.so.0 libweston-3-0 #MINVER#
-* Build-Depends-Package: libweston-3-dev
+libweston-4.so.0 libweston-4-0 #MINVER#
+* Build-Depends-Package: libweston-4-dev
  linux_dmabuf_buffer_get@Base 1.12.0
  linux_dmabuf_buffer_get_user_data@Base 1.12.0
  linux_dmabuf_buffer_send_server_error@Base 1.12.0
@@ -108,7 +108,6 @@ libweston-3.so.0 libweston-3-0 #MINVER#
  weston_move_scale_run@Base 1.12.0
  weston_output_activate_zoom@Base 1.12.0
  weston_output_damage@Base 1.12.0
- weston_output_destroy@Base 1.12.0
  weston_output_disable@Base 3.0.0
  weston_output_enable@Base 3.0.0
  weston_output_finish_frame@Base 1.12.0
@@ -119,6 +118,7 @@ libweston-3.so.0 libweston-3-0 #MINVER#
  weston_output_mode_switch_to_native@Base 1.12.0
  weston_output_mode_switch_to_temporary@Base 1.12.0
  weston_output_move@Base 1.12.0
+ weston_output_release@Base 4.0.0
  weston_output_schedule_repaint@Base 1.12.0
  weston_output_set_scale@Base 3.0.0
  weston_output_set_transform@Base 3.0.0
@@ -239,6 +239,8 @@ libweston-3.so.0 libweston-3-0 #MINVER#
  zwp_input_method_v1_interface@Base 1.12.0
  zwp_input_panel_surface_v1_interface@Base 1.12.0
  zwp_input_panel_v1_interface@Base 1.12.0
+ zwp_input_timestamps_manager_v1_interface@Base 4.0.0
+ zwp_input_timestamps_v1_interface@Base 4.0.0
  zwp_linux_buffer_params_v1_interface@Base 1.12.0
  zwp_linux_dmabuf_v1_interface@Base 1.12.0
  zwp_locked_pointer_v1_interface@Base 1.12.0
@@ -247,13 +249,14 @@ libweston-3.so.0 libweston-3-0 #MINVER#
  zwp_relative_pointer_v1_interface@Base 1.12.0
  zwp_text_input_manager_v1_interface@Base 1.12.0
  zwp_text_input_v1_interface@Base 1.12.0
-libweston-desktop-3.so.0 libweston-3-0 #MINVER#
-* Build-Depends-Package: libweston-3-dev
+libweston-desktop-4.so.0 libweston-4-0 #MINVER#
+* Build-Depends-Package: libweston-4-dev
  weston_desktop_client_for_each_surface@Base 1.12.0
  weston_desktop_client_get_client@Base 1.12.0
  weston_desktop_client_ping@Base 1.12.0
  weston_desktop_create@Base 1.12.0
  weston_desktop_destroy@Base 1.12.0
+ weston_desktop_surface_add_metadata_listener@Base 4.0.0
  weston_desktop_surface_close@Base 1.12.0
  weston_desktop_surface_create_view@Base 1.12.0
  weston_desktop_surface_get_activated@Base 1.12.0
@@ -280,9 +283,6 @@ libweston-desktop-3.so.0 libweston-3-0 #MINVER#
  weston_seat_break_desktop_grabs@Base 1.12.0
  weston_surface_get_desktop_surface@Base 1.12.0
  weston_surface_is_desktop_surface@Base 1.12.0
- xdg_popup_interface@Base 1.12.0
- xdg_shell_interface@Base 1.12.0
- xdg_surface_interface@Base 1.12.0
  zxdg_popup_v6_interface@Base 1.12.0
  zxdg_positioner_v6_interface@Base 1.12.0
  zxdg_shell_v6_interface@Base 1.12.0

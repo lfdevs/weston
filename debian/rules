@@ -2,7 +2,8 @@
 
 override_dh_auto_configure:
 	dh_auto_configure -- --disable-libunwind --libexec=/usr/lib/weston \
-		--with-cairo=image --enable-screen-sharing
+		--with-cairo=image --enable-screen-sharing \
+		--enable-systemd-notify
 
 override_dh_auto_test:
 	# the test suite does not 100% pass in headless mode
@@ -12,7 +13,7 @@ override_dh_install:
 	dh_install --fail-missing -X.la
 
 override_dh_makeshlibs:
-	dh_makeshlibs -Xlibweston-3/ -- -c4
+	dh_makeshlibs -Xlibweston-4/ -- -c4
 
 override_dh_fixperms:
 	dh_fixperms -Xusr/bin/weston-launch

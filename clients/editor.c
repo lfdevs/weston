@@ -49,6 +49,7 @@ struct text_entry {
 	struct window *window;
 	char *text;
 	int active;
+	bool panel_visible;
 	uint32_t cursor;
 	uint32_t anchor;
 	struct {
@@ -499,8 +500,10 @@ text_input_leave(void *data,
 	text_entry_commit_and_reset(entry);
 	entry->active--;
 
-	if (!entry->active)
+	if (!entry->active) {
 		zwp_text_input_v1_hide_input_panel(text_input);
+		entry->panel_visible = false;
+	}
 
 	widget_schedule_redraw(entry->widget);
 }
@@ -636,6 +639,9 @@ editor_copy_cut(struct editor *editor, struct input *input, bool cut)
 
 		editor->selection =
 			display_create_data_source(editor->display);
+		if (!editor->selection)
+			return;
+
 		wl_data_source_offer(editor->selection,
 				     "text/plain;charset=utf-8");
 		wl_data_source_add_listener(editor->selection,
@@ -699,6 +705,7 @@ text_entry_create(struct editor *editor, const char *text)
 	entry->window = editor->window;
 	entry->text = strdup(text);
 	entry->active = 0;
+	entry->panel_visible = false;
 	entry->cursor = strlen(text);
 	entry->anchor = entry->cursor;
 	entry->text_input =
@@ -787,7 +794,12 @@ text_entry_activate(struct text_entry *entry,
 	struct wl_surface *surface = window_get_wl_surface(entry->window);
 
 	if (entry->click_to_show && entry->active) {
-		zwp_text_input_v1_show_input_panel(entry->text_input);
+		entry->panel_visible = !entry->panel_visible;
+
+		if (entry->panel_visible)
+			zwp_text_input_v1_show_input_panel(entry->text_input);
+		else
+			zwp_text_input_v1_hide_input_panel(entry->text_input);
 
 		return;
 	}

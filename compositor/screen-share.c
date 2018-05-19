@@ -44,6 +44,7 @@
 #include "weston.h"
 #include "shared/helpers.h"
 #include "shared/os-compatibility.h"
+#include "shared/timespec-util.h"
 #include "fullscreen-shell-unstable-v1-client-protocol.h"
 
 struct shared_output {
@@ -140,11 +141,14 @@ ss_seat_handle_motion(void *data, struct wl_pointer *pointer,
 		      uint32_t time, wl_fixed_t x, wl_fixed_t y)
 {
 	struct ss_seat *seat = data;
+	struct timespec ts;
+
+	timespec_from_msec(&ts, time);
 
 	/* No transformation of input position is required here because we are
 	 * always receiving the input in the same coordinates as the output. */
 
-	notify_motion_absolute(&seat->base, time,
+	notify_motion_absolute(&seat->base, &ts,
 			       wl_fixed_to_double(x), wl_fixed_to_double(y));
 	notify_pointer_frame(&seat->base);
 }
@@ -155,8 +159,11 @@ ss_seat_handle_button(void *data, struct wl_pointer *pointer,
 		      uint32_t state)
 {
 	struct ss_seat *seat = data;
+	struct timespec ts;
 
-	notify_button(&seat->base, time, button, state);
+	timespec_from_msec(&ts, time);
+
+	notify_button(&seat->base, &ts, button, state);
 	notify_pointer_frame(&seat->base);
 }
 
@@ -166,12 +173,15 @@ ss_seat_handle_axis(void *data, struct wl_pointer *pointer,
 {
 	struct ss_seat *seat = data;
 	struct weston_pointer_axis_event weston_event;
+	struct timespec ts;
 
 	weston_event.axis = axis;
 	weston_event.value = wl_fixed_to_double(value);
 	weston_event.has_discrete = false;
 
-	notify_axis(&seat->base, time, &weston_event);
+	timespec_from_msec(&ts, time);
+
+	notify_axis(&seat->base, &ts, &weston_event);
 	notify_pointer_frame(&seat->base);
 }
 
@@ -267,9 +277,11 @@ ss_seat_handle_key(void *data, struct wl_keyboard *keyboard,
 		   uint32_t key, uint32_t state)
 {
 	struct ss_seat *seat = data;
+	struct timespec ts;
 
+	timespec_from_msec(&ts, time);
 	seat->key_serial = serial;
-	notify_key(&seat->base, time, key,
+	notify_key(&seat->base, &ts, key,
 		   state ? WL_KEYBOARD_KEY_STATE_PRESSED :
 			   WL_KEYBOARD_KEY_STATE_RELEASED,
 		   seat->keyboard_state_update);
@@ -1082,8 +1094,8 @@ weston_output_find(struct weston_compositor *c, int32_t x, int32_t y)
 }
 
 static void
-share_output_binding(struct weston_keyboard *keyboard, uint32_t time, uint32_t key,
-		     void *data)
+share_output_binding(struct weston_keyboard *keyboard,
+		     const struct timespec *time, uint32_t key, void *data)
 {
 	struct weston_output *output;
 	struct weston_pointer *pointer;

@@ -133,8 +133,8 @@ unpremultiply_and_swap_a8b8g8r8_to_PAMrgba(void *pixels, size_t size)
 }
 
 static void
-trigger_binding(struct weston_keyboard *keyboard, uint32_t time, uint32_t key,
-		void *data)
+trigger_binding(struct weston_keyboard *keyboard, const struct timespec *time,
+		uint32_t key, void *data)
 {
 	const char *prefix = "surfaceshot-";
 	const char *suffix = ".pam";
@@ -185,7 +185,7 @@ trigger_binding(struct weston_keyboard *keyboard, uint32_t time, uint32_t key,
 
 	unpremultiply_and_swap_a8b8g8r8_to_PAMrgba(pixels, sz);
 
-	fp = file_create_dated(prefix, suffix, fname, sizeof(fname));
+	fp = file_create_dated(NULL, prefix, suffix, fname, sizeof(fname));
 	if (!fp) {
 		const char *msg;
 

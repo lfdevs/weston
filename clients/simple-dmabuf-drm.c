@@ -38,13 +38,15 @@
 #include <sys/mman.h>
 #include <signal.h>
 #include <fcntl.h>
+#include <getopt.h>
 
 #include <xf86drm.h>
 
 #ifdef HAVE_LIBDRM_INTEL
 #include <i915_drm.h>
 #include <intel_bufmgr.h>
-#elif HAVE_LIBDRM_FREEDRENO
+#endif
+#ifdef HAVE_LIBDRM_FREEDRENO
 #include <freedreno/freedreno_drmif.h>
 #endif
 #include <drm_fourcc.h>
@@ -58,6 +60,12 @@
 
 extern const unsigned nv12_tiled[];
 struct buffer;
+
+/* Possible options that affect the displayed image */
+#define OPT_Y_INVERTED 1  /* contents has y axis inverted */
+#define OPT_IMMEDIATE  2  /* create wl_buffer immediately */
+
+#define ALIGN(v, a) ((v + a - 1) & ~(a - 1))
 
 struct display {
 	struct wl_display *display;
@@ -82,6 +90,7 @@ struct drm_device {
 	int (*export_bo_to_prime)(struct buffer *buf);
 	int (*map_bo)(struct buffer *buf);
 	void (*unmap_bo)(struct buffer *buf);
+	void (*device_destroy)(struct buffer *buf);
 };
 
 struct buffer {
@@ -93,10 +102,11 @@ struct buffer {
 
 #ifdef HAVE_LIBDRM_INTEL
 	drm_intel_bufmgr *bufmgr;
-	drm_intel_bo *bo;
-#elif HAVE_LIBDRM_FREEDRENO
+	drm_intel_bo *intel_bo;
+#endif /* HAVE_LIBDRM_INTEL */
+#if HAVE_LIBDRM_FREEDRENO
 	struct fd_device *fd_dev;
-	struct fd_bo *bo;
+	struct fd_bo *fd_bo;
 #endif /* HAVE_LIBDRM_FREEDRENO */
 
 	uint32_t gem_handle;
@@ -152,15 +162,15 @@ intel_alloc_bo(struct buffer *my_buf)
 
 	assert(my_buf->bufmgr);
 
-	my_buf->bo = drm_intel_bo_alloc_tiled(my_buf->bufmgr, "test",
-					      my_buf->width, my_buf->height,
-					      (my_buf->bpp / 8), &tiling,
-					      &my_buf->stride, 0);
+	my_buf->intel_bo = drm_intel_bo_alloc_tiled(my_buf->bufmgr, "test",
+						    my_buf->width, my_buf->height,
+						    (my_buf->bpp / 8), &tiling,
+						    &my_buf->stride, 0);
 
 	printf("buffer allocated w %d, h %d, stride %lu, size %lu\n",
-	       my_buf->width, my_buf->height, my_buf->stride, my_buf->bo->size);
+	       my_buf->width, my_buf->height, my_buf->stride, my_buf->intel_bo->size);
 
-	if (!my_buf->bo)
+	if (!my_buf->intel_bo)
 		return 0;
 
 	if (tiling != I915_TILING_NONE)
@@ -172,16 +182,16 @@ intel_alloc_bo(struct buffer *my_buf)
 static void
 intel_free_bo(struct buffer *my_buf)
 {
-	drm_intel_bo_unreference(my_buf->bo);
+	drm_intel_bo_unreference(my_buf->intel_bo);
 }
 
 static int
 intel_map_bo(struct buffer *my_buf)
 {
-	if (drm_intel_gem_bo_map_gtt(my_buf->bo) != 0)
+	if (drm_intel_gem_bo_map_gtt(my_buf->intel_bo) != 0)
 		return 0;
 
-	my_buf->mmap = my_buf->bo->virtual;
+	my_buf->mmap = my_buf->intel_bo->virtual;
 
 	return 1;
 }
@@ -189,52 +199,61 @@ intel_map_bo(struct buffer *my_buf)
 static int
 intel_bo_export_to_prime(struct buffer *buffer)
 {
-	return drm_intel_bo_gem_export_to_prime(buffer->bo, &buffer->dmabuf_fd);
+	return drm_intel_bo_gem_export_to_prime(buffer->intel_bo, &buffer->dmabuf_fd);
 }
 
 static void
 intel_unmap_bo(struct buffer *my_buf)
 {
-	drm_intel_gem_bo_unmap_gtt(my_buf->bo);
+	drm_intel_gem_bo_unmap_gtt(my_buf->intel_bo);
 }
-#elif HAVE_LIBDRM_FREEDRENO
-#define ALIGN(v, a) ((v + a - 1) & ~(a - 1))
 
-static
-int fd_alloc_bo(struct buffer *buf)
+static void
+intel_device_destroy(struct buffer *my_buf)
+{
+	drm_intel_bufmgr_destroy(my_buf->bufmgr);
+}
+
+#endif /* HAVE_LIBDRM_INTEL */
+#ifdef HAVE_LIBDRM_FREEDRENO
+
+static int
+fd_alloc_bo(struct buffer *buf)
 {
 	int flags = DRM_FREEDRENO_GEM_CACHE_WCOMBINE;
-	int size = buf->width * buf->height * buf->bpp / 8;
+	int size;
+
 	buf->fd_dev = fd_device_new(buf->drm_fd);
-
-	buf->bo = fd_bo_new(buf->fd_dev, size, flags);
-
-	if (!buf->bo)
-		return 0;
 	buf->stride = ALIGN(buf->width, 32) * buf->bpp / 8;
+	size = buf->stride * buf->height;
+	buf->fd_dev = fd_device_new(buf->drm_fd);
+	buf->fd_bo = fd_bo_new(buf->fd_dev, size, flags);
+
+	if (!buf->fd_bo)
+		return 0;
 	return 1;
 }
 
-static
-void fd_free_bo(struct buffer *buf)
+static void
+fd_free_bo(struct buffer *buf)
 {
-	fd_bo_del(buf->bo);
+	fd_bo_del(buf->fd_bo);
 }
 
-static
-int fd_bo_export_to_prime(struct buffer *buf)
+static int
+fd_bo_export_to_prime(struct buffer *buf)
 {
-	buf->dmabuf_fd = fd_bo_dmabuf(buf->bo);
+	buf->dmabuf_fd = fd_bo_dmabuf(buf->fd_bo);
 	if (buf->dmabuf_fd > 0)
 		return 0;
 
 	return 1;
 }
 
-static
-int fd_map_bo(struct buffer *buf)
+static int
+fd_map_bo(struct buffer *buf)
 {
-	buf->mmap = fd_bo_map(buf->bo);
+	buf->mmap = fd_bo_map(buf->fd_bo);
 
 	if (buf->mmap != NULL)
 		return 1;
@@ -242,11 +261,17 @@ int fd_map_bo(struct buffer *buf)
 	return 0;
 }
 
-static
-void fd_unmap_bo(struct buffer *buf)
+static void
+fd_unmap_bo(struct buffer *buf)
 {
 }
-#endif
+
+static void
+fd_device_destroy(struct buffer *buf)
+{
+	fd_device_del(buf->fd_dev);
+}
+#endif /* HAVE_LIBDRM_FREEDRENO */
 
 static void
 fill_content(struct buffer *my_buf)
@@ -276,12 +301,7 @@ fill_content(struct buffer *my_buf)
 static void
 drm_device_destroy(struct buffer *buf)
 {
-#ifdef HAVE_LIBDRM_INTEL
-	drm_intel_bufmgr_destroy(buf->bufmgr);
-#elif HAVE_LIBDRM_FREEDRENO
-	fd_device_del(buf->fd_dev);
-#endif
-
+	buf->dev->device_destroy(buf);
 	close(buf->drm_fd);
 }
 
@@ -307,14 +327,17 @@ drm_device_init(struct buffer *buf)
 		dev->export_bo_to_prime = intel_bo_export_to_prime;
 		dev->map_bo = intel_map_bo;
 		dev->unmap_bo = intel_unmap_bo;
+		dev->device_destroy = intel_device_destroy;
 	}
-#elif HAVE_LIBDRM_FREEDRENO
+#endif
+#ifdef HAVE_LIBDRM_FREEDRENO
 	else if (!strcmp(dev->name, "msm")) {
 		dev->alloc_bo = fd_alloc_bo;
 		dev->free_bo = fd_free_bo;
 		dev->export_bo_to_prime = fd_bo_export_to_prime;
 		dev->map_bo = fd_map_bo;
 		dev->unmap_bo = fd_unmap_bo;
+		dev->device_destroy = fd_device_destroy;
 	}
 #endif
 	else {
@@ -379,11 +402,11 @@ static const struct zwp_linux_buffer_params_v1_listener params_listener = {
 
 static int
 create_dmabuf_buffer(struct display *display, struct buffer *buffer,
-		     int width, int height, int format)
+		     int width, int height, int format, uint32_t opts)
 {
 	struct zwp_linux_buffer_params_v1 *params;
 	uint64_t modifier = 0;
-	uint32_t flags;
+	uint32_t flags = 0;
 	struct drm_device *drm_dev;
 
 	if (!drm_connect(buffer)) {
@@ -434,7 +457,8 @@ create_dmabuf_buffer(struct display *display, struct buffer *buffer,
 	 * correct height to the compositor.
 	 */
 	buffer->height = height;
-	flags = 0;
+	if (opts & OPT_Y_INVERTED)
+		flags |= ZWP_LINUX_BUFFER_PARAMS_V1_FLAGS_Y_INVERT;
 
 	params = zwp_linux_dmabuf_v1_create_params(display->dmabuf);
 	zwp_linux_buffer_params_v1_add(params,
@@ -517,7 +541,8 @@ static const struct zxdg_toplevel_v6_listener xdg_toplevel_listener = {
 };
 
 static struct window *
-create_window(struct display *display, int width, int height, int format)
+create_window(struct display *display, int width, int height, int format,
+	      uint32_t opts)
 {
 	struct window *window;
 	int i;
@@ -566,7 +591,7 @@ create_window(struct display *display, int width, int height, int format)
 
 	for (i = 0; i < NUM_BUFFERS; ++i) {
 		ret = create_dmabuf_buffer(display, &window->buffers[i],
-		                               width, height, format);
+		                               width, height, format, opts);
 
 		if (ret < 0)
 			return NULL;
@@ -735,7 +760,7 @@ static const struct wl_registry_listener registry_listener = {
 };
 
 static struct display *
-create_display(int is_immediate, int format)
+create_display(int opts, int format)
 {
 	struct display *display;
 	const char *extensions;
@@ -748,7 +773,7 @@ create_display(int is_immediate, int format)
 	display->display = wl_display_connect(NULL);
 	assert(display->display);
 
-	display->req_dmabuf_immediate = is_immediate;
+	display->req_dmabuf_immediate = opts & OPT_IMMEDIATE;
 	display->req_dmabuf_modifiers = (format == DRM_FORMAT_NV12);
 
 	/*
@@ -814,13 +839,15 @@ print_usage_and_exit(void)
 	printf("usage flags:\n"
 		"\t'--import-immediate=<>'\n\t\t0 to import dmabuf via roundtrip,"
 		"\n\t\t1 to enable import without roundtrip\n"
+		"\t'--y-inverted=<>'\n\t\t0 to not pass Y_INVERTED flag,"
+		"\n\t\t1 to pass Y_INVERTED flag\n"
 		"\t'--import-format=<>'\n\t\tXRGB to import dmabuf as XRGB8888,"
 		"\n\t\tNV12 to import as multi plane NV12 with tiling modifier\n");
 	exit(0);
 }
 
 static int
-is_import_mode_immediate(const char* c)
+is_true(const char* c)
 {
 	if (!strcmp(c, "1"))
 		return 1;
@@ -851,31 +878,39 @@ main(int argc, char **argv)
 	struct sigaction sigint;
 	struct display *display;
 	struct window *window;
-	int is_immediate = 0;
+	int opts = 0;
 	int import_format = DRM_FORMAT_XRGB8888;
-	int ret = 0, i = 0;
+	int c, option_index, ret = 0;
 
-	if (argc > 1) {
-		static const char import_mode[] = "--import-immediate=";
-		static const char format[] = "--import-format=";
-		for (i = 1; i < argc; i++) {
-			if (!strncmp(argv[i], import_mode,
-				     sizeof(import_mode) - 1)) {
-				is_immediate = is_import_mode_immediate(argv[i]
-							+ sizeof(import_mode) - 1);
-			}
-			else if (!strncmp(argv[i], format, sizeof(format) - 1)) {
-				import_format = parse_import_format(argv[i]
-							+ sizeof(format) - 1);
-			}
-			else {
-				print_usage_and_exit();
-			}
+	static struct option long_options[] = {
+		{"import-format",    required_argument, 0,  'f' },
+		{"import-immediate", required_argument, 0,  'i' },
+		{"y-inverted",       required_argument, 0,  'y' },
+		{"help",             no_argument      , 0,  'h' },
+		{0, 0, 0, 0}
+	};
+
+	while ((c = getopt_long(argc, argv, "hf:i:y:",
+				  long_options, &option_index)) != -1) {
+		switch (c) {
+		case 'f':
+			import_format = parse_import_format(optarg);
+			break;
+		case 'i':
+			if (is_true(optarg))
+				opts |= OPT_IMMEDIATE;
+			break;
+		case 'y':
+			if (is_true(optarg))
+				opts |= OPT_Y_INVERTED;
+			break;
+		default:
+			print_usage_and_exit();
 		}
 	}
 
-	display = create_display(is_immediate, import_format);
-	window = create_window(display, 256, 256, import_format);
+	display = create_display(opts, import_format);
+	window = create_window(display, 256, 256, import_format, opts);
 	if (!window)
 		return 1;
 

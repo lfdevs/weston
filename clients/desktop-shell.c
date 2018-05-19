@@ -34,8 +34,6 @@
 #include <math.h>
 #include <cairo.h>
 #include <sys/wait.h>
-#include <sys/timerfd.h>
-#include <sys/epoll.h>
 #include <linux/input.h>
 #include <libgen.h>
 #include <ctype.h>
@@ -49,6 +47,7 @@
 #include "shared/helpers.h"
 #include "shared/xalloc.h"
 #include "shared/zalloc.h"
+#include "shared/file-util.h"
 
 #include "weston-desktop-shell-client-protocol.h"
 
@@ -91,8 +90,13 @@ struct surface {
 			  int32_t width, int32_t height);
 };
 
+struct output;
+
 struct panel {
 	struct surface base;
+
+	struct output *owner;
+
 	struct window *window;
 	struct widget *widget;
 	struct wl_list launcher_list;
@@ -105,6 +109,9 @@ struct panel {
 
 struct background {
 	struct surface base;
+
+	struct output *owner;
+
 	struct window *window;
 	struct widget *widget;
 	int painted;
@@ -119,6 +126,8 @@ struct output {
 	uint32_t server_output_id;
 	struct wl_list link;
 
+	int x;
+	int y;
 	struct panel *panel;
 	struct background *background;
 };
@@ -137,8 +146,7 @@ struct panel_launcher {
 struct panel_clock {
 	struct widget *widget;
 	struct panel *panel;
-	struct task clock_task;
-	int clock_fd;
+	struct toytimer timer;
 	char *format_string;
 	time_t refresh_timer;
 };
@@ -354,14 +362,10 @@ panel_launcher_touch_up_handler(struct widget *widget, struct input *input,
 }
 
 static void
-clock_func(struct task *task, uint32_t events)
+clock_func(struct toytimer *tt)
 {
-	struct panel_clock *clock =
-		container_of(task, struct panel_clock, clock_task);
-	uint64_t exp;
+	struct panel_clock *clock = container_of(tt, struct panel_clock, timer);
 
-	if (read(clock->clock_fd, &exp, sizeof exp) != sizeof exp)
-		abort();
 	widget_schedule_redraw(clock->widget);
 }
 
@@ -412,10 +416,7 @@ clock_timer_reset(struct panel_clock *clock)
 	its.it_interval.tv_nsec = 0;
 	its.it_value.tv_sec = clock->refresh_timer;
 	its.it_value.tv_nsec = 0;
-	if (timerfd_settime(clock->clock_fd, 0, &its, NULL) < 0) {
-		fprintf(stderr, "could not set timerfd\n: %m");
-		return -1;
-	}
+	toytimer_arm(&clock->timer, &its);
 
 	return 0;
 }
@@ -424,9 +425,7 @@ static void
 panel_destroy_clock(struct panel_clock *clock)
 {
 	widget_destroy(clock->widget);
-
-	close(clock->clock_fd);
-
+	toytimer_fini(&clock->timer);
 	free(clock);
 }
 
@@ -434,18 +433,10 @@ static void
 panel_add_clock(struct panel *panel)
 {
 	struct panel_clock *clock;
-	int timerfd;
-
-	timerfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
-	if (timerfd < 0) {
-		fprintf(stderr, "could not create timerfd\n: %m");
-		return;
-	}
 
 	clock = xzalloc(sizeof *clock);
 	clock->panel = panel;
 	panel->clock = clock;
-	clock->clock_fd = timerfd;
 
 	switch (panel->clock_format) {
 	case CLOCK_FORMAT_MINUTES:
@@ -460,9 +451,8 @@ panel_add_clock(struct panel *panel)
 		assert(!"not reached");
 	}
 
-	clock->clock_task.run = clock_func;
-	display_watch_fd(window_get_display(panel->window), clock->clock_fd,
-			 EPOLLIN, &clock->clock_task);
+	toytimer_init(&clock->timer, CLOCK_MONOTONIC,
+		      window_get_display(panel->window), clock_func);
 	clock_timer_reset(clock);
 
 	clock->widget = widget_add_widget(panel->widget, clock);
@@ -520,6 +510,9 @@ panel_resize_handler(struct widget *widget,
 }
 
 static void
+panel_destroy(struct panel *panel);
+
+static void
 panel_configure(void *data,
 		struct weston_desktop_shell *desktop_shell,
 		uint32_t edges, struct window *window,
@@ -528,6 +521,15 @@ panel_configure(void *data,
 	struct desktop *desktop = data;
 	struct surface *surface = window_get_user_data(window);
 	struct panel *panel = container_of(surface, struct panel, base);
+	struct output *owner;
+
+	if (width < 1 || height < 1) {
+		/* Shell plugin configures 0x0 for redundant panel. */
+		owner = panel->owner;
+		panel_destroy(panel);
+		owner->panel = NULL;
+		return;
+	}
 
 	switch (desktop->panel_position) {
 	case WESTON_DESKTOP_SHELL_PANEL_POSITION_TOP:
@@ -587,13 +589,14 @@ panel_destroy(struct panel *panel)
 }
 
 static struct panel *
-panel_create(struct desktop *desktop)
+panel_create(struct desktop *desktop, struct output *output)
 {
 	struct panel *panel;
 	struct weston_config_section *s;
 
 	panel = xzalloc(sizeof *panel);
 
+	panel->owner = output;
 	panel->base.configure = panel_configure;
 	panel->window = window_create_custom(desktop->display);
 	panel->widget = window_add_widget(panel->window, panel);
@@ -760,8 +763,12 @@ background_draw(struct widget *widget, void *data)
 	image = NULL;
 	if (background->image)
 		image = load_cairo_surface(background->image);
-	else if (background->color == 0)
-		image = load_cairo_surface(DATADIR "/weston/pattern.png");
+	else if (background->color == 0) {
+		char *name = file_name_with_datadir("pattern.png");
+
+		image = load_cairo_surface(name);
+		free(name);
+	}
 
 	if (image && background->type != -1) {
 		im_w = cairo_image_surface_get_width(image);
@@ -808,13 +815,25 @@ background_draw(struct widget *widget, void *data)
 }
 
 static void
+background_destroy(struct background *background);
+
+static void
 background_configure(void *data,
 		     struct weston_desktop_shell *desktop_shell,
 		     uint32_t edges, struct window *window,
 		     int32_t width, int32_t height)
 {
+	struct output *owner;
 	struct background *background =
 		(struct background *) window_get_user_data(window);
+
+	if (width < 1 || height < 1) {
+		/* Shell plugin configures 0x0 for redundant background. */
+		owner = background->owner;
+		background_destroy(background);
+		owner->background = NULL;
+		return;
+	}
 
 	widget_schedule_resize(background->widget, width, height);
 }
@@ -1089,13 +1108,14 @@ background_destroy(struct background *background)
 }
 
 static struct background *
-background_create(struct desktop *desktop)
+background_create(struct desktop *desktop, struct output *output)
 {
 	struct background *background;
 	struct weston_config_section *s;
 	char *type;
 
 	background = xzalloc(sizeof *background);
+	background->owner = output;
 	background->base.configure = background_configure;
 	background->window = window_create_custom(desktop->display);
 	background->widget = window_add_widget(background->window, background);
@@ -1173,7 +1193,8 @@ grab_surface_create(struct desktop *desktop)
 static void
 output_destroy(struct output *output)
 {
-	background_destroy(output->background);
+	if (output->background)
+		background_destroy(output->background);
 	if (output->panel)
 		panel_destroy(output->panel);
 	wl_output_destroy(output->output);
@@ -1205,9 +1226,13 @@ output_handle_geometry(void *data,
 {
 	struct output *output = data;
 
+	output->x = x;
+	output->y = y;
+
 	if (output->panel)
 		window_set_buffer_transform(output->panel->window, transform);
-	window_set_buffer_transform(output->background->window, transform);
+	if (output->background)
+		window_set_buffer_transform(output->background->window, transform);
 }
 
 static void
@@ -1235,7 +1260,8 @@ output_handle_scale(void *data,
 
 	if (output->panel)
 		window_set_buffer_scale(output->panel->window, scale);
-	window_set_buffer_scale(output->background->window, scale);
+	if (output->background)
+		window_set_buffer_scale(output->background->window, scale);
 }
 
 static const struct wl_output_listener output_listener = {
@@ -1251,13 +1277,13 @@ output_init(struct output *output, struct desktop *desktop)
 	struct wl_surface *surface;
 
 	if (desktop->want_panel) {
-		output->panel = panel_create(desktop);
+		output->panel = panel_create(desktop, output);
 		surface = window_get_wl_surface(output->panel->window);
 		weston_desktop_shell_set_panel(desktop->shell,
 					       output->output, surface);
 	}
 
-	output->background = background_create(desktop);
+	output->background = background_create(desktop, output);
 	surface = window_get_wl_surface(output->background->window);
 	weston_desktop_shell_set_background(desktop->shell,
 					    output->output, surface);
@@ -1284,6 +1310,49 @@ create_output(struct desktop *desktop, uint32_t id)
 	 * in which case we can't create the panel and background just yet */
 	if (desktop->shell)
 		output_init(output, desktop);
+}
+
+static void
+output_remove(struct desktop *desktop, struct output *output)
+{
+	struct output *cur;
+	struct output *rep = NULL;
+
+	if (!output->background) {
+		output_destroy(output);
+		return;
+	}
+
+	/* Find a wl_output that is a clone of the removed wl_output.
+	 * We don't want to leave the clone without a background or panel. */
+	wl_list_for_each(cur, &desktop->outputs, link) {
+		if (cur == output)
+			continue;
+
+		/* XXX: Assumes size matches. */
+		if (cur->x == output->x && cur->y == output->y) {
+			rep = cur;
+			break;
+		}
+	}
+
+	if (rep) {
+		/* If found, hand over the background and panel so they don't
+		 * get destroyed. */
+		assert(!rep->background);
+		assert(!rep->panel);
+
+		rep->background = output->background;
+		output->background = NULL;
+		rep->background->owner = rep;
+
+		rep->panel = output->panel;
+		output->panel = NULL;
+		if (rep->panel)
+			rep->panel->owner = rep;
+	}
+
+	output_destroy(output);
 }
 
 static void
@@ -1315,7 +1384,7 @@ global_handler_remove(struct display *display, uint32_t id,
 	if (!strcmp(interface, "wl_output")) {
 		wl_list_for_each(output, &desktop->outputs, link) {
 			if (output->server_output_id == id) {
-				output_destroy(output);
+				output_remove(desktop, output);
 				break;
 			}
 		}
@@ -1351,10 +1420,13 @@ panel_add_launchers(struct panel *panel, struct desktop *desktop)
 	}
 
 	if (count == 0) {
+                char *name = file_name_with_datadir("terminal.png");
+
 		/* add default launcher */
 		panel_add_launcher(panel,
-				   DATADIR "/weston/terminal.png",
+				   name,
 				   BINDIR "/weston-terminal");
+		free(name);
 	}
 }
 

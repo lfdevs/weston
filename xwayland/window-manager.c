@@ -161,6 +161,8 @@ struct weston_wm_window {
 	struct weston_output_weak_ref legacy_fullscreen_output;
 	int saved_width, saved_height;
 	int decorate;
+	uint32_t last_button_time;
+	int did_double;
 	int override_redirect;
 	int fullscreen;
 	int has_alpha;
@@ -972,7 +974,7 @@ weston_wm_window_create_frame(struct weston_wm_window *window)
 
 	window->frame = frame_create(window->wm->theme,
 				     window->width, window->height,
-				     buttons, window->name);
+				     buttons, window->name, NULL);
 	frame_resize_inside(window->frame, window->width, window->height);
 
 	weston_wm_window_get_frame_size(window, &width, &height);
@@ -1401,6 +1403,9 @@ weston_wm_window_destroy(struct weston_wm_window *window)
 		window->frame_id = XCB_WINDOW_NONE;
 	}
 
+	if (window->frame)
+		frame_destroy(window->frame);
+
 	if (window->surface_id)
 		wl_list_remove(&window->link);
 
@@ -1619,13 +1624,15 @@ weston_wm_window_handle_state(struct weston_wm_window *window,
 	struct weston_wm *wm = window->wm;
 	const struct weston_desktop_xwayland_interface *xwayland_interface =
 		wm->server->compositor->xwayland_interface;
-	uint32_t action, property;
+	uint32_t action, property1, property2;
 	int maximized = weston_wm_window_is_maximized(window);
 
 	action = client_message->data.data32[0];
-	property = client_message->data.data32[1];
+	property1 = client_message->data.data32[1];
+	property2 = client_message->data.data32[2];
 
-	if (property == wm->atom.net_wm_state_fullscreen &&
+	if ((property1 == wm->atom.net_wm_state_fullscreen ||
+	     property2 == wm->atom.net_wm_state_fullscreen) &&
 	    update_state(action, &window->fullscreen)) {
 		weston_wm_window_set_net_wm_state(window);
 		if (window->fullscreen) {
@@ -1640,10 +1647,12 @@ weston_wm_window_handle_state(struct weston_wm_window *window,
 				weston_wm_window_set_toplevel(window);
 		}
 	} else {
-		if (property == wm->atom.net_wm_state_maximized_vert &&
+		if ((property1 == wm->atom.net_wm_state_maximized_vert ||
+		     property2 == wm->atom.net_wm_state_maximized_vert) &&
 		    update_state(action, &window->maximized_vert))
 			weston_wm_window_set_net_wm_state(window);
-		if (property == wm->atom.net_wm_state_maximized_horz &&
+		if ((property1 == wm->atom.net_wm_state_maximized_horz ||
+		     property2 == wm->atom.net_wm_state_maximized_horz) &&
 		    update_state(action, &window->maximized_horz))
 			weston_wm_window_set_net_wm_state(window);
 
@@ -1926,6 +1935,7 @@ weston_wm_window_close(struct weston_wm_window *window, xcb_timestamp_t time)
 	}
 }
 
+#define DOUBLE_CLICK_PERIOD 250
 static void
 weston_wm_handle_button(struct weston_wm *wm, xcb_generic_event_t *event)
 {
@@ -1938,6 +1948,7 @@ weston_wm_handle_button(struct weston_wm *wm, xcb_generic_event_t *event)
 	enum theme_location location;
 	enum wl_pointer_button_state button_state;
 	uint32_t button_id;
+	uint32_t double_click = 0;
 
 	wm_log("XCB_BUTTON_%s (detail %d)\n",
 	       button->response_type == XCB_BUTTON_PRESS ?
@@ -1958,6 +1969,19 @@ weston_wm_handle_button(struct weston_wm *wm, xcb_generic_event_t *event)
 		WL_POINTER_BUTTON_STATE_RELEASED;
 	button_id = button->detail == 1 ? BTN_LEFT : BTN_RIGHT;
 
+	if (button_state == WL_POINTER_BUTTON_STATE_PRESSED) {
+		if (button->time - window->last_button_time <= DOUBLE_CLICK_PERIOD) {
+			double_click = 1;
+			window->did_double = 1;
+		} else
+			window->did_double = 0;
+
+		window->last_button_time = button->time;
+	} else if (window->did_double == 1) {
+		double_click = 1;
+		window->did_double = 0;
+	}
+
 	/* Make sure we're looking at the right location.  The frame
 	 * could have received a motion event from a pointer from a
 	 * different wl_seat, but under X it looks like our core
@@ -1965,8 +1989,13 @@ weston_wm_handle_button(struct weston_wm *wm, xcb_generic_event_t *event)
 	 * location before deciding what to do. */
 	location = frame_pointer_motion(window->frame, NULL,
 					button->event_x, button->event_y);
-	location = frame_pointer_button(window->frame, NULL,
-					button_id, button_state);
+	if (double_click)
+		location = frame_double_click(window->frame, NULL,
+					      button_id, button_state);
+	else
+		location = frame_pointer_button(window->frame, NULL,
+						button_id, button_state);
+
 	if (frame_status(window->frame) & FRAME_STATUS_REPAINT)
 		weston_wm_window_schedule_repaint(window);
 
@@ -2565,6 +2594,7 @@ send_configure(struct weston_surface *surface, int32_t width, int32_t height)
 	struct weston_wm_window *window = get_wm_window(surface);
 	struct weston_wm *wm = window->wm;
 	struct theme *t = window->wm->theme;
+	int new_width, new_height;
 	int vborder, hborder;
 
 	if (window->decorate && !window->fullscreen) {
@@ -2576,14 +2606,20 @@ send_configure(struct weston_surface *surface, int32_t width, int32_t height)
 	}
 
 	if (width > hborder)
-		window->width = width - hborder;
+		new_width = width - hborder;
 	else
-		window->width = 1;
+		new_width = 1;
 
 	if (height > vborder)
-		window->height = height - vborder;
+		new_height = height - vborder;
 	else
-		window->height = 1;
+		new_height = 1;
+
+	if (window->width == new_width && window->height == new_height)
+		return;
+
+	window->width = new_width;
+	window->height = new_height;
 
 	if (window->frame)
 		frame_resize_inside(window->frame, window->width, window->height);

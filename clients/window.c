@@ -349,9 +349,8 @@ struct input {
 	struct wl_callback *cursor_frame_cb;
 	uint32_t cursor_timer_start;
 	uint32_t cursor_anim_current;
-	int cursor_delay_fd;
+	struct toytimer cursor_timer;
 	bool cursor_timer_running;
-	struct task cursor_task;
 	struct wl_surface *pointer_surface;
 	uint32_t modifiers;
 	uint32_t pointer_enter_serial;
@@ -389,8 +388,7 @@ struct input {
 	int32_t repeat_delay_sec;
 	int32_t repeat_delay_nsec;
 
-	struct task repeat_task;
-	int repeat_timer_fd;
+	struct toytimer repeat_timer;
 	uint32_t repeat_sym;
 	uint32_t repeat_key;
 	uint32_t repeat_time;
@@ -440,8 +438,7 @@ struct tooltip {
 	struct widget *parent;
 	struct widget *widget;
 	char *entry;
-	struct task tooltip_task;
-	int tooltip_fd;
+	struct toytimer timer;
 	float x, y;
 };
 
@@ -2122,21 +2119,17 @@ widget_destroy_tooltip(struct widget *parent)
 		tooltip->widget = NULL;
 	}
 
-	close(tooltip->tooltip_fd);
+	toytimer_fini(&tooltip->timer);
 	free(tooltip->entry);
 	free(tooltip);
 	parent->tooltip = NULL;
 }
 
 static void
-tooltip_func(struct task *task, uint32_t events)
+tooltip_func(struct toytimer *tt)
 {
-	struct tooltip *tooltip =
-		container_of(task, struct tooltip, tooltip_task);
-	uint64_t exp;
+	struct tooltip *tooltip = container_of(tt, struct tooltip, timer);
 
-	if (read(tooltip->tooltip_fd, &exp, sizeof (uint64_t)) != sizeof (uint64_t))
-		abort();
 	window_create_tooltip(tooltip);
 }
 
@@ -2144,16 +2137,7 @@ tooltip_func(struct task *task, uint32_t events)
 static int
 tooltip_timer_reset(struct tooltip *tooltip)
 {
-	struct itimerspec its;
-
-	its.it_interval.tv_sec = 0;
-	its.it_interval.tv_nsec = 0;
-	its.it_value.tv_sec = TOOLTIP_TIMEOUT / 1000;
-	its.it_value.tv_nsec = (TOOLTIP_TIMEOUT % 1000) * 1000 * 1000;
-	if (timerfd_settime(tooltip->tooltip_fd, 0, &its, NULL) < 0) {
-		fprintf(stderr, "could not set timerfd\n: %m");
-		return -1;
-	}
+	toytimer_arm_once_usec(&tooltip->timer, TOOLTIP_TIMEOUT * 1000);
 
 	return 0;
 }
@@ -2186,15 +2170,8 @@ widget_set_tooltip(struct widget *parent, char *entry, float x, float y)
 	tooltip->x = x;
 	tooltip->y = y;
 	tooltip->entry = strdup(entry);
-	tooltip->tooltip_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
-	if (tooltip->tooltip_fd < 0) {
-		fprintf(stderr, "could not create timerfd\n: %m");
-		return -1;
-	}
-
-	tooltip->tooltip_task.run = tooltip_func;
-	display_watch_fd(parent->window->display, tooltip->tooltip_fd,
-			 EPOLLIN, &tooltip->tooltip_task);
+	toytimer_init(&tooltip->timer, CLOCK_MONOTONIC,
+		      parent->window->display, tooltip_func);
 	tooltip_timer_reset(tooltip);
 
 	return 0;
@@ -2546,7 +2523,7 @@ window_frame_create(struct window *window, void *data)
 
 	frame = xzalloc(sizeof *frame);
 	frame->frame = frame_create(window->display->theme, 0, 0,
-				    buttons, window->title);
+	                            buttons, window->title, NULL);
 
 	frame->widget = window_add_widget(window, frame);
 	frame->child = widget_add_widget(frame->widget, data);
@@ -2685,19 +2662,12 @@ input_ungrab(struct input *input)
 static void
 cursor_delay_timer_reset(struct input *input, uint32_t duration)
 {
-	struct itimerspec its;
-
 	if (!duration)
 		input->cursor_timer_running = false;
 	else
 		input->cursor_timer_running = true;
 
-	its.it_interval.tv_sec = 0;
-	its.it_interval.tv_nsec = 0;
-	its.it_value.tv_sec = duration / 1000;
-	its.it_value.tv_nsec = (duration % 1000) * 1000 * 1000;
-	if (timerfd_settime(input->cursor_delay_fd, 0, &its, NULL) < 0)
-		fprintf(stderr, "could not set cursor timerfd\n: %m");
+	toytimer_arm_once_usec(&input->cursor_timer, duration * 1000);
 }
 
 static void cancel_pointer_image_update(struct input *input)
@@ -2939,13 +2909,8 @@ static void
 input_remove_keyboard_focus(struct input *input)
 {
 	struct window *window = input->keyboard_focus;
-	struct itimerspec its;
 
-	its.it_interval.tv_sec = 0;
-	its.it_interval.tv_nsec = 0;
-	its.it_value.tv_sec = 0;
-	its.it_value.tv_nsec = 0;
-	timerfd_settime(input->repeat_timer_fd, 0, &its, NULL);
+	toytimer_disarm(&input->repeat_timer);
 
 	if (!window)
 		return;
@@ -2958,18 +2923,10 @@ input_remove_keyboard_focus(struct input *input)
 }
 
 static void
-keyboard_repeat_func(struct task *task, uint32_t events)
+keyboard_repeat_func(struct toytimer *tt)
 {
-	struct input *input =
-		container_of(task, struct input, repeat_task);
+	struct input *input = container_of(tt, struct input, repeat_timer);
 	struct window *window = input->keyboard_focus;
-	uint64_t exp;
-
-	if (read(input->repeat_timer_fd, &exp, sizeof exp) != sizeof exp)
-		/* If we change the timer between the fd becoming
-		 * readable and getting here, there'll be nothing to
-		 * read and we get EAGAIN. */
-		return;
 
 	if (window && window->key_handler) {
 		(*window->key_handler)(window, input, input->repeat_time,
@@ -3192,11 +3149,7 @@ keyboard_handle_key(void *data, struct wl_keyboard *keyboard,
 
 	if (state == WL_KEYBOARD_KEY_STATE_RELEASED &&
 	    key == input->repeat_key) {
-		its.it_interval.tv_sec = 0;
-		its.it_interval.tv_nsec = 0;
-		its.it_value.tv_sec = 0;
-		its.it_value.tv_nsec = 0;
-		timerfd_settime(input->repeat_timer_fd, 0, &its, NULL);
+		toytimer_disarm(&input->repeat_timer);
 	} else if (state == WL_KEYBOARD_KEY_STATE_PRESSED &&
 		   xkb_keymap_key_repeats(input->xkb.keymap, code)) {
 		input->repeat_sym = sym;
@@ -3206,7 +3159,7 @@ keyboard_handle_key(void *data, struct wl_keyboard *keyboard,
 		its.it_interval.tv_nsec = input->repeat_rate_nsec;
 		its.it_value.tv_sec = input->repeat_delay_sec;
 		its.it_value.tv_nsec = input->repeat_delay_nsec;
-		timerfd_settime(input->repeat_timer_fd, 0, &its, NULL);
+		toytimer_arm(&input->repeat_timer, &its);
 	}
 }
 
@@ -3888,18 +3841,14 @@ pointer_surface_frame_callback(void *data, struct wl_callback *callback,
 }
 
 static void
-cursor_timer_func(struct task *task, uint32_t events)
+cursor_timer_func(struct toytimer *tt)
 {
-	struct input *input = container_of(task, struct input, cursor_task);
+	struct input *input = container_of(tt, struct input, cursor_timer);
 	struct timespec tp;
 	struct wl_cursor *cursor;
 	uint32_t time;
-	uint64_t exp;
 
 	if (!input->cursor_timer_running)
-		return;
-
-	if (read(input->cursor_delay_fd, &exp, sizeof (uint64_t)) != sizeof (uint64_t))
 		return;
 
 	cursor = input->display->cursors[input->current_cursor];
@@ -5449,7 +5398,7 @@ create_menu(struct display *display,
 	menu->user_data = user_data;
 	menu->widget = window_add_widget(menu->window, menu);
 	menu->frame = frame_create(window->display->theme, 0, 0,
-				   FRAME_BUTTON_NONE, NULL);
+	                           FRAME_BUTTON_NONE, NULL, NULL);
 	fail_on_null(menu->frame, 0, __FILE__, __LINE__);
 	menu->entries = entries;
 	menu->count = count;
@@ -5876,19 +5825,13 @@ display_add_input(struct display *d, uint32_t id, int display_seat_version)
 	}
 
 	input->pointer_surface = wl_compositor_create_surface(d->compositor);
-	input->cursor_task.run = cursor_timer_func;
 
-	input->cursor_delay_fd = timerfd_create(CLOCK_MONOTONIC,
-						TFD_CLOEXEC | TFD_NONBLOCK);
-	display_watch_fd(d, input->cursor_delay_fd, EPOLLIN,
-			 &input->cursor_task);
+	toytimer_init(&input->cursor_timer, CLOCK_MONOTONIC, d,
+		      cursor_timer_func);
+
 	set_repeat_info(input, 40, 400);
-
-	input->repeat_timer_fd = timerfd_create(CLOCK_MONOTONIC,
-						TFD_CLOEXEC | TFD_NONBLOCK);
-	input->repeat_task.run = keyboard_repeat_func;
-	display_watch_fd(d, input->repeat_timer_fd,
-			 EPOLLIN, &input->repeat_task);
+	toytimer_init(&input->repeat_timer, CLOCK_MONOTONIC, d,
+		      keyboard_repeat_func);
 }
 
 static void
@@ -5931,8 +5874,8 @@ input_destroy(struct input *input)
 
 	wl_list_remove(&input->link);
 	wl_seat_destroy(input->seat);
-	close(input->repeat_timer_fd);
-	close(input->cursor_delay_fd);
+	toytimer_fini(&input->repeat_timer);
+	toytimer_fini(&input->cursor_timer);
 	free(input);
 }
 
@@ -6561,4 +6504,90 @@ keysym_modifiers_get_mask(struct wl_array *modifiers_map,
 		return XKB_MOD_INVALID;
 
 	return 1 << index;
+}
+
+static void
+toytimer_fire(struct task *tsk, uint32_t events)
+{
+	uint64_t e;
+	struct toytimer *tt;
+
+	tt = container_of(tsk, struct toytimer, tsk);
+
+	if (events != EPOLLIN)
+		fprintf(stderr, "unexpected timerfd events %x\n", events);
+
+	if (!(events & EPOLLIN))
+		return;
+
+	if (read(tt->fd, &e, sizeof e) != sizeof e) {
+		/* If we change the timer between the fd becoming
+		 * readable and getting here, there'll be nothing to
+		 * read and we get EAGAIN. */
+		if (errno != EAGAIN)
+			fprintf(stderr, "timer read failed: %m\n");
+		return;
+	}
+
+	tt->callback(tt);
+}
+
+void
+toytimer_init(struct toytimer *tt, clockid_t clock, struct display *display,
+	      toytimer_cb callback)
+{
+	memset(tt, 0, sizeof *tt);
+
+	tt->fd = timerfd_create(clock, TFD_CLOEXEC | TFD_NONBLOCK);
+	if (tt->fd == -1) {
+		fprintf(stderr, "creating timer failed: %m\n");
+		abort();
+	}
+
+	tt->display = display;
+	tt->callback = callback;
+	tt->tsk.run = toytimer_fire;
+	display_watch_fd(display, tt->fd, EPOLLIN, &tt->tsk);
+}
+
+void
+toytimer_fini(struct toytimer *tt)
+{
+	display_unwatch_fd(tt->display, tt->fd);
+	close(tt->fd);
+	tt->fd = -1;
+}
+
+void
+toytimer_arm(struct toytimer *tt, const struct itimerspec *its)
+{
+	int ret;
+
+	ret = timerfd_settime(tt->fd, 0, its, NULL);
+	if (ret < 0) {
+		fprintf(stderr, "timer setup failed: %m\n");
+		abort();
+	}
+}
+
+#define USEC_PER_SEC 1000000
+
+void
+toytimer_arm_once_usec(struct toytimer *tt, uint32_t usec)
+{
+	struct itimerspec its;
+
+	its.it_interval.tv_sec = 0;
+	its.it_interval.tv_nsec = 0;
+	its.it_value.tv_sec = usec / USEC_PER_SEC;
+	its.it_value.tv_nsec = (usec % USEC_PER_SEC) * 1000;
+	toytimer_arm(tt, &its);
+}
+
+void
+toytimer_disarm(struct toytimer *tt)
+{
+	struct itimerspec its = {};
+
+	toytimer_arm(tt, &its);
 }

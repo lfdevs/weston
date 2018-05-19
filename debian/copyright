@@ -1,54 +1,13 @@
 Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Source: http://wayland.freedesktop.org/
 
-Files: data/*
-Copyright: © 2007-2010 Novell, Inc.
-License: CC-BY-SA-3.0
-
-Files: data/terminal.png
-Copyright: @ 2002-2008 GNOME Project
-License: CC-BY-SA-3.0
-
-Files: src/hash.*
-Copyright: © 2009 Intel Corporation
-           © 1988-2004 Keith Packard and Bart Massey.
-License:
- Permission is hereby granted, free of charge, to any person obtaining a
- copy of this software and associated documentation files (the "Software"),
- to deal in the Software without restriction, including without limitation
- the rights to use, copy, modify, merge, publish, distribute, sublicense,
- and/or sell copies of the Software, and to permit persons to whom the
- Software is furnished to do so, subject to the following conditions:
- .
- The above copyright notice and this permission notice (including the next
- paragraph) shall be included in all copies or substantial portions of the
- Software.
- .
- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
- IN THE SOFTWARE.
- .
- Except as contained in this notice, the names of the authors
- or their institutions shall not be used in advertising or
- otherwise to promote the sale, use or other dealings in this
- Software without prior written authorization from the
- authors.
- .
- Authors:
-    Eric Anholt <eric@anholt.net>
-    Keith Packard <keithp@keithp.com>
-
 Files: *
 Copyright: © 2016 Armin Krezović
            © 2010-2012 Benjamin Franzke
            © 2016 Benoit Gschwind
            © 2013 BMW Car IT GmbH
            © 2009 Chris Wilson
-           © 2011-2016 Collabora, Ltd.
+           © 2011-2017 Collabora, Ltd.
            © 2013 David Herrmann
            © 2013-2016 DENSO CORPORATION
            © 2015 General Electric Company
@@ -78,7 +37,7 @@ Copyright: © 2016 Armin Krezović
            © 2011 Tim Wiederhake
            © 2008 Tungsten Graphics, Inc
            © 2013 Vasily Khoruzhick
-License:
+License: X11
  Permission to use, copy, modify, distribute, and sell this software and
  its documentation for any purpose is hereby granted without fee, provided
  that the above copyright notice appear in all copies and that both that
@@ -97,6 +56,46 @@ License:
  CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
  CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+Files: data/*
+Copyright: © 2007-2010 Novell, Inc.
+License: CC-BY-SA-3.0
+
+Files: data/terminal.png
+Copyright: @ 2002-2008 GNOME Project
+License: CC-BY-SA-3.0
+
+Files: src/hash.*
+Copyright: © 2009 Intel Corporation
+           © 1988-2004 Keith Packard and Bart Massey.
+License: MIT
+ Permission is hereby granted, free of charge, to any person obtaining a
+ copy of this software and associated documentation files (the "Software"),
+ to deal in the Software without restriction, including without limitation
+ the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ and/or sell copies of the Software, and to permit persons to whom the
+ Software is furnished to do so, subject to the following conditions:
+ .
+ The above copyright notice and this permission notice (including the next
+ paragraph) shall be included in all copies or substantial portions of the
+ Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+ IN THE SOFTWARE.
+ .
+ Except as contained in this notice, the names of the authors
+ or their institutions shall not be used in advertising or
+ otherwise to promote the sale, use or other dealings in this
+ Software without prior written authorization from the
+ authors.
+ .
+ Authors:
+    Eric Anholt <eric@anholt.net>
+    Keith Packard <keithp@keithp.com>
 
 
 License: CC-BY-SA-3.0

@@ -36,12 +36,13 @@
 
 static void
 weston_zoom_frame_z(struct weston_animation *animation,
-		struct weston_output *output, uint32_t msecs)
+		    struct weston_output *output,
+		    const struct timespec *time)
 {
 	if (animation->frame_counter <= 1)
-		output->zoom.spring_z.timestamp = msecs;
+		output->zoom.spring_z.timestamp = *time;
 
-	weston_spring_update(&output->zoom.spring_z, msecs);
+	weston_spring_update(&output->zoom.spring_z, time);
 
 	if (output->zoom.spring_z.current > output->zoom.max_level)
 		output->zoom.spring_z.current = output->zoom.max_level;
@@ -124,6 +125,9 @@ weston_output_update_zoom(struct weston_output *output)
 	struct weston_seat *seat = output->zoom.seat;
 	struct weston_pointer *pointer = weston_seat_get_pointer(seat);
 
+	if (!pointer)
+		return;
+
 	assert(output->zoom.active);
 
 	output->zoom.current.x = wl_fixed_to_double(pointer->x);
@@ -150,7 +154,7 @@ weston_output_activate_zoom(struct weston_output *output,
 {
 	struct weston_pointer *pointer = weston_seat_get_pointer(seat);
 
-	if (output->zoom.active)
+	if (!pointer || output->zoom.active)
 		return;
 
 	output->zoom.active = true;

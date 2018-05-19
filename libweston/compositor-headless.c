@@ -134,7 +134,7 @@ headless_output_destroy(struct weston_output *base)
 	struct headless_output *output = to_headless_output(base);
 
 	headless_output_disable(&output->base);
-	weston_output_destroy(&output->base);
+	weston_output_release(&output->base);
 
 	free(output);
 }
@@ -201,7 +201,6 @@ headless_output_set_size(struct weston_output *base,
 	output->mode.width = output_width;
 	output->mode.height = output_height;
 	output->mode.refresh = 60000;
-	wl_list_init(&output->base.mode_list);
 	wl_list_insert(&output->base.mode_list, &output->mode.link);
 
 	output->base.current_mode = &output->mode;
@@ -235,20 +234,15 @@ headless_output_create(struct weston_compositor *compositor,
 	if (output == NULL)
 		return -1;
 
-	output->base.name = strdup(name);
+	weston_output_init(&output->base, compositor, name);
+
 	output->base.destroy = headless_output_destroy;
 	output->base.disable = headless_output_disable;
 	output->base.enable = headless_output_enable;
 
-	weston_output_init(&output->base, compositor);
 	weston_compositor_add_pending_output(&output->base, compositor);
 
 	return 0;
-}
-
-static void
-headless_restore(struct weston_compositor *ec)
-{
 }
 
 static void
@@ -278,11 +272,12 @@ headless_backend_create(struct weston_compositor *compositor,
 		return NULL;
 
 	b->compositor = compositor;
+	compositor->backend = &b->base;
+
 	if (weston_compositor_set_presentation_clock_software(compositor) < 0)
 		goto err_free;
 
 	b->base.destroy = headless_destroy;
-	b->base.restore = headless_restore;
 
 	b->use_pixman = config->use_pixman;
 	if (b->use_pixman) {
@@ -291,8 +286,6 @@ headless_backend_create(struct weston_compositor *compositor,
 
 	if (!b->use_pixman && noop_renderer_init(compositor) < 0)
 		goto err_input;
-
-	compositor->backend = &b->base;
 
 	ret = weston_plugin_api_register(compositor, WESTON_WINDOWED_OUTPUT_API_NAME,
 					 &api, sizeof(api));

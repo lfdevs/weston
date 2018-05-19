@@ -228,8 +228,7 @@ nested_buffer_reference(struct nested_buffer_reference *ref,
 		ref->buffer->busy_count--;
 		if (ref->buffer->busy_count == 0) {
 			assert(wl_resource_get_client(ref->buffer->resource));
-			wl_resource_queue_event(ref->buffer->resource,
-						WL_BUFFER_RELEASE);
+			wl_buffer_send_release(ref->buffer->resource);
 		}
 		wl_list_remove(&ref->destroy_listener.link);
 	}
@@ -748,7 +747,7 @@ nested_init_compositor(struct nested *nested)
 
 	nested->egl_display = display_get_egl_display(nested->display);
 	extensions = eglQueryString(nested->egl_display, EGL_EXTENSIONS);
-	if (weston_check_egl_extension(extensions, "EGL_WL_bind_wayland_display") == NULL) {
+	if (!weston_check_egl_extension(extensions, "EGL_WL_bind_wayland_display")) {
 		fprintf(stderr, "no EGL_WL_bind_wayland_display extension\n");
 		return -1;
 	}

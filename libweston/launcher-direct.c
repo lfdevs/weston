@@ -33,7 +33,6 @@
 #include <unistd.h>
 #include <signal.h>
 #include <sys/stat.h>
-#include <sys/sysmacros.h>
 #include <sys/ioctl.h>
 #include <linux/vt.h>
 #include <linux/kd.h>
@@ -45,6 +44,14 @@
 
 #ifndef KDSKBMUTE
 #define KDSKBMUTE	0x4B51
+#endif
+
+/* major()/minor() */
+#ifdef MAJOR_IN_MKDEV
+#include <sys/mkdev.h>
+#endif
+#ifdef MAJOR_IN_SYSMACROS
+#include <sys/sysmacros.h>
 #endif
 
 #ifdef BUILD_DRM_COMPOSITOR
@@ -326,6 +333,5 @@ const struct launcher_interface launcher_direct_iface = {
 	.open = launcher_direct_open,
 	.close = launcher_direct_close,
 	.activate_vt = launcher_direct_activate_vt,
-	.restore = launcher_direct_restore,
 	.get_vt = launcher_direct_get_vt,
 };

@@ -87,14 +87,16 @@ When the DRM backend is loaded,
 .B weston
 will understand the following additional command line options.
 .TP
-\fB\-\-connector\fR=\fIconnectorid\fR
-Use the connector with id number
-.I connectorid
-as the only initial output.
-.TP
 .B \-\-current\-mode
 By default, use the current video mode of all outputs, instead of
 switching to the monitor preferred mode.
+.TP
+\fB\-\-drm\-device\fR=\fIcardN\fR
+Use the DRM device
+.I cardN
+instead of the default heuristics based on seat assignments and boot VGA
+status. For example, use
+.BR card0 .
 .TP
 \fB\-\-seat\fR=\fIseatid\fR
 Use graphics and input devices designated for seat

@@ -35,7 +35,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <sys/sysmacros.h>
 #include <systemd/sd-login.h>
 #include <unistd.h>
 
@@ -44,6 +43,14 @@
 #include "launcher-impl.h"
 
 #define DRM_MAJOR 226
+
+/* major()/minor() */
+#ifdef MAJOR_IN_MKDEV
+#include <sys/mkdev.h>
+#endif
+#ifdef MAJOR_IN_SYSMACROS
+#include <sys/sysmacros.h>
+#endif
 
 struct launcher_logind {
 	struct weston_launcher base;
@@ -231,11 +238,6 @@ launcher_logind_close(struct weston_launcher *launcher, int fd)
 				     minor(st.st_rdev));
 }
 
-static void
-launcher_logind_restore(struct weston_launcher *launcher)
-{
-}
-
 static int
 launcher_logind_activate_vt(struct weston_launcher *launcher, int vt)
 {
@@ -375,7 +377,6 @@ static void
 disconnected_dbus(struct launcher_logind *wl)
 {
 	weston_log("logind: dbus connection lost, exiting..\n");
-	launcher_logind_restore(&wl->base);
 	exit(-1);
 }
 
@@ -396,7 +397,6 @@ session_removed(struct launcher_logind *wl, DBusMessage *m)
 
 	if (!strcmp(name, wl->sid)) {
 		weston_log("logind: our session got closed, exiting..\n");
-		launcher_logind_restore(&wl->base);
 		exit(-1);
 	}
 }
@@ -845,6 +845,5 @@ const struct launcher_interface launcher_logind_iface = {
 	.open = launcher_logind_open,
 	.close = launcher_logind_close,
 	.activate_vt = launcher_logind_activate_vt,
-	.restore = launcher_logind_restore,
 	.get_vt = launcher_logind_get_vt,
 };

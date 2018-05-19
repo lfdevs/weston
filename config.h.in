@@ -45,6 +45,9 @@
 /* Define to 1 if you have the <dlfcn.h> header file. */
 #undef HAVE_DLFCN_H
 
+/* libdrm supports atomic API */
+#undef HAVE_DRM_ATOMIC
+
 /* Define to 1 if you have the <execinfo.h> header file. */
 #undef HAVE_EXECINFO_H
 
@@ -72,14 +75,17 @@
 /* Build intel dmabuf client */
 #undef HAVE_LIBDRM_INTEL
 
-/* Have libunwind support */
-#undef HAVE_LIBUNWIND
+/* Define to 1 if you have the <linux/sync_file.h> header file. */
+#undef HAVE_LINUX_SYNC_FILE_H
 
 /* Define to 1 if you have the <memory.h> header file. */
 #undef HAVE_MEMORY_H
 
 /* Define to 1 if you have the `mkostemp' function. */
 #undef HAVE_MKOSTEMP
+
+/* Have pango */
+#undef HAVE_PANGO
 
 /* Define to 1 if you have the `posix_fallocate' function. */
 #undef HAVE_POSIX_FALLOCATE
@@ -125,6 +131,14 @@
 
 /* Define to the sub-directory where libtool stores uninstalled libraries. */
 #undef LT_OBJDIR
+
+/* Define to 1 if `major', `minor', and `makedev' are declared in <mkdev.h>.
+   */
+#undef MAJOR_IN_MKDEV
+
+/* Define to 1 if `major', `minor', and `makedev' are declared in
+   <sysmacros.h>. */
+#undef MAJOR_IN_SYSMACROS
 
 /* Name of package */
 #undef PACKAGE

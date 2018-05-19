@@ -34,7 +34,6 @@
 #include <errno.h>
 #include <signal.h>
 #include <sys/socket.h>
-#include <sys/sysmacros.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
@@ -75,6 +74,13 @@ drmSetMaster(int drm_fd)
 
 #endif
 
+/* major()/minor() */
+#ifdef MAJOR_IN_MKDEV
+#include <sys/mkdev.h>
+#endif
+#ifdef MAJOR_IN_SYSMACROS
+#include <sys/sysmacros.h>
+#endif
 
 union cmsg_data { unsigned char b[4]; int fd; };
 
@@ -297,6 +303,5 @@ const struct launcher_interface launcher_weston_launch_iface = {
 	.open = launcher_weston_launch_open,
 	.close = launcher_weston_launch_close,
 	.activate_vt = launcher_weston_launch_activate_vt,
-	.restore = launcher_weston_launch_restore,
 	.get_vt = launcher_weston_launch_get_vt,
 };

@@ -40,8 +40,8 @@ Build-Depends:
  wayland-protocols (>= 1.7),
 Standards-Version: 3.9.8
 Homepage: http://wayland.freedesktop.org/
-Vcs-Git: git://anonscm.debian.org/pkg-xorg/wayland/weston
-Vcs-Browser: http://anonscm.debian.org/gitweb/?p=pkg-xorg/wayland/weston.git
+Vcs-Git: https://salsa.debian.org/xorg-team/wayland/weston.git
+Vcs-Browser: https://salsa.debian.org/xorg-team/wayland/weston
 
 Package: weston
 Architecture: linux-any
@@ -61,7 +61,7 @@ Description: reference implementation of a wayland compositor
  and fast compositor and is suitable for many embedded and mobile use
  cases.
 
-Package: libweston-3-0
+Package: libweston-4-0
 Section: libs
 Architecture: linux-any
 Depends:
@@ -78,12 +78,11 @@ Description: reference implementation of a wayland compositor (shared libs)
  .
  This package includes the libweston shared libraries.
 
-Package: libweston-3-dev
+Package: libweston-4-dev
 Section: libdevel
 Architecture: linux-any
-Priority: extra
 Depends:
- libweston-3-0 (= ${binary:Version}),
+ libweston-4-0 (= ${binary:Version}),
  libwayland-dev,
  libpixman-1-dev,
  libxkbcommon-dev,

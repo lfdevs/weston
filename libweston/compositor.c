@@ -341,7 +341,9 @@ weston_presentation_feedback_present(
 {
 	struct wl_client *client = wl_resource_get_client(feedback->resource);
 	struct wl_resource *o;
-	uint64_t secs;
+	uint32_t tv_sec_hi;
+	uint32_t tv_sec_lo;
+	uint32_t tv_nsec;
 
 	wl_resource_for_each(o, &output->resource_list) {
 		if (wl_resource_get_client(o) != client)
@@ -350,10 +352,9 @@ weston_presentation_feedback_present(
 		wp_presentation_feedback_send_sync_output(feedback->resource, o);
 	}
 
-	secs = ts->tv_sec;
+	timespec_to_proto(ts, &tv_sec_hi, &tv_sec_lo, &tv_nsec);
 	wp_presentation_feedback_send_presented(feedback->resource,
-						secs >> 32, secs & 0xffffffff,
-						ts->tv_nsec,
+						tv_sec_hi, tv_sec_lo, tv_nsec,
 						refresh_nsec,
 						seq >> 32, seq & 0xffffffff,
 						flags | feedback->psf_flags);
@@ -918,6 +919,39 @@ weston_view_damage_below(struct weston_view *view)
 	weston_view_schedule_repaint(view);
 }
 
+/** Send wl_surface.enter/leave events
+ *
+ * \param surface The surface.
+ * \param output The entered/left output.
+ * \param enter True if entered.
+ * \param left True if left.
+ *
+ * Send the enter/leave events for all protocol objects bound to the given
+ * output by the client owning the surface.
+ */
+static void
+weston_surface_send_enter_leave(struct weston_surface *surface,
+				struct weston_output *output,
+				bool enter,
+				bool leave)
+{
+	struct wl_resource *wloutput;
+	struct wl_client *client;
+
+	assert(enter != leave);
+
+	client = wl_resource_get_client(surface->resource);
+	wl_resource_for_each(wloutput, &output->resource_list) {
+		if (wl_resource_get_client(wloutput) != client)
+			continue;
+
+		if (enter)
+			wl_surface_send_enter(surface->resource, wloutput);
+		if (leave)
+			wl_surface_send_leave(surface->resource, wloutput);
+	}
+}
+
 /**
  * \param es    The surface
  * \param mask  The new set of outputs for the surface
@@ -933,9 +967,8 @@ weston_surface_update_output_mask(struct weston_surface *es, uint32_t mask)
 	uint32_t different = es->output_mask ^ mask;
 	uint32_t entered = mask & different;
 	uint32_t left = es->output_mask & different;
+	uint32_t output_bit;
 	struct weston_output *output;
-	struct wl_resource *resource = NULL;
-	struct wl_client *client;
 
 	es->output_mask = mask;
 	if (es->resource == NULL)
@@ -943,19 +976,14 @@ weston_surface_update_output_mask(struct weston_surface *es, uint32_t mask)
 	if (different == 0)
 		return;
 
-	client = wl_resource_get_client(es->resource);
-
 	wl_list_for_each(output, &es->compositor->output_list, link) {
-		if (1u << output->id & different)
-			resource =
-				wl_resource_find_for_client(&output->resource_list,
-							 client);
-		if (resource == NULL)
+		output_bit = 1u << output->id;
+		if (!(output_bit & different))
 			continue;
-		if (1u << output->id & entered)
-			wl_surface_send_enter(es->resource, resource);
-		if (1u << output->id & left)
-			wl_surface_send_leave(es->resource, resource);
+
+		weston_surface_send_enter_leave(es, output,
+						output_bit & entered,
+						output_bit & left);
 	}
 }
 
@@ -1694,14 +1722,10 @@ weston_surface_update_size(struct weston_surface *surface)
 	surface_set_size(surface, width, height);
 }
 
-WL_EXPORT uint32_t
-weston_compositor_get_time(void)
+WL_EXPORT void
+weston_compositor_get_time(struct timespec *time)
 {
-       struct timeval tv;
-
-       gettimeofday(&tv, NULL);
-
-       return tv.tv_sec * 1000 + tv.tv_usec / 1000;
+	clock_gettime(CLOCK_REALTIME, time);
 }
 
 WL_EXPORT struct weston_view *
@@ -1954,8 +1978,7 @@ weston_buffer_reference(struct weston_buffer_reference *ref,
 		ref->buffer->busy_count--;
 		if (ref->buffer->busy_count == 0) {
 			assert(wl_resource_get_client(ref->buffer->resource));
-			wl_resource_queue_event(ref->buffer->resource,
-						WL_BUFFER_RELEASE);
+			wl_buffer_send_release(ref->buffer->resource);
 		}
 		wl_list_remove(&ref->destroy_listener.link);
 	}
@@ -2266,6 +2289,7 @@ weston_output_repaint(struct weston_output *output, void *repaint_data)
 	struct wl_list frame_callback_list;
 	pixman_region32_t output_damage;
 	int r;
+	uint32_t frame_time_msec;
 
 	if (output->destroying)
 		return 0;
@@ -2319,14 +2343,16 @@ weston_output_repaint(struct weston_output *output, void *repaint_data)
 
 	weston_compositor_repick(ec);
 
+	frame_time_msec = timespec_to_msec(&output->frame_time);
+
 	wl_list_for_each_safe(cb, cnext, &frame_callback_list, link) {
-		wl_callback_send_done(cb->resource, output->frame_time);
+		wl_callback_send_done(cb->resource, frame_time_msec);
 		wl_resource_destroy(cb->resource);
 	}
 
 	wl_list_for_each_safe(animation, next, &output->animation_list, link) {
 		animation->frame_counter++;
-		animation->frame(animation, output, output->frame_time);
+		animation->frame(animation, output, &output->frame_time);
 	}
 
 	TL_POINT("core_repaint_posted", TLP_OUTPUT(output), TLP_END);
@@ -2431,7 +2457,7 @@ output_repaint_timer_handler(void *data)
 	struct weston_output *output;
 	struct timespec now;
 	void *repaint_data = NULL;
-	int ret;
+	int ret = 0;
 
 	weston_compositor_read_presentation_clock(compositor, &now);
 
@@ -2469,8 +2495,6 @@ weston_output_finish_frame(struct weston_output *output,
 	struct timespec now;
 	int64_t msec_rel;
 
-	TL_POINT("core_repaint_finished", TLP_OUTPUT(output),
-		 TLP_VBLANK(stamp), TLP_END);
 
 	assert(output->repaint_status == REPAINT_AWAITING_COMPLETION);
 	assert(stamp || (presented_flags & WP_PRESENTATION_FEEDBACK_INVALID));
@@ -2485,13 +2509,16 @@ weston_output_finish_frame(struct weston_output *output,
 		goto out;
 	}
 
+	TL_POINT("core_repaint_finished", TLP_OUTPUT(output),
+		 TLP_VBLANK(stamp), TLP_END);
+
 	refresh_nsec = millihz_to_nsec(output->current_mode->refresh);
 	weston_presentation_feedback_present_list(&output->feedback_list,
 						  output, refresh_nsec, stamp,
 						  output->msc,
 						  presented_flags);
 
-	output->frame_time = timespec_to_msec(stamp);
+	output->frame_time = *stamp;
 
 	timespec_add_nsec(&output->next_repaint, stamp, refresh_nsec);
 	timespec_add_msec(&output->next_repaint, &output->next_repaint,
@@ -4653,9 +4680,6 @@ weston_output_set_scale(struct weston_output *output,
  * \param output    The weston_output object that the transform is set for.
  * \param transform Transform value for the given output.
  *
- * It only supports setting transform for an output that is
- * not enabled and it can only be ran once.
- *
  * Refer to wl_output::transform section located at
  * https://wayland.freedesktop.org/docs/html/apa.html#protocol-spec-wl_output
  * for list of values that can be passed to this function.
@@ -4666,13 +4690,59 @@ WL_EXPORT void
 weston_output_set_transform(struct weston_output *output,
 			    uint32_t transform)
 {
-	/* We can only set transform on a disabled output */
-	assert(!output->enabled);
+	struct weston_pointer_motion_event ev;
+	struct wl_resource *resource;
+	struct weston_seat *seat;
+	pixman_region32_t old_region;
+	int mid_x, mid_y;
 
-	/* We only want to set transform once */
-	assert(output->transform == UINT32_MAX);
+	if (!output->enabled && output->transform == UINT32_MAX) {
+		output->transform = transform;
+		return;
+	}
 
-	output->transform = transform;
+	weston_output_transform_scale_init(output, transform, output->scale);
+
+	pixman_region32_init(&old_region);
+	pixman_region32_copy(&old_region, &output->region);
+
+	weston_output_init_geometry(output, output->x, output->y);
+
+	output->dirty = 1;
+
+	/* Notify clients of the change for output transform. */
+	wl_resource_for_each(resource, &output->resource_list) {
+		wl_output_send_geometry(resource,
+					output->x,
+					output->y,
+					output->mm_width,
+					output->mm_height,
+					output->subpixel,
+					output->make,
+					output->model,
+					output->transform);
+
+		if (wl_resource_get_version(resource) >= WL_OUTPUT_DONE_SINCE_VERSION)
+			wl_output_send_done(resource);
+	}
+
+	/* we must ensure that pointers are inside output, otherwise they disappear */
+	mid_x = output->x + output->width / 2;
+	mid_y = output->y + output->height / 2;
+
+	ev.mask = WESTON_POINTER_MOTION_ABS;
+	ev.x = wl_fixed_to_double(wl_fixed_from_int(mid_x));
+	ev.y = wl_fixed_to_double(wl_fixed_from_int(mid_y));
+
+	wl_list_for_each(seat, &output->compositor->seat_list, link) {
+		struct weston_pointer *pointer = weston_seat_get_pointer(seat);
+
+		if (pointer && pixman_region32_contains_point(&old_region,
+							      wl_fixed_to_int(pointer->x),
+							      wl_fixed_to_int(pointer->y),
+							      NULL))
+			weston_pointer_move(pointer, &ev);
+	}
 }
 
 /** Initializes a weston_output object with enough data so
@@ -4680,23 +4750,25 @@ weston_output_set_transform(struct weston_output *output,
  *
  * \param output     The weston_output object to initialize
  * \param compositor The compositor instance.
+ * \param name       Name for the output (the string is copied).
  *
  * Sets initial values for fields that are expected to be
  * configured either by compositors or backends.
+ *
+ * The name is used in logs, and can be used by compositors as a configuration
+ * identifier.
  *
  * \memberof weston_output
  * \internal
  */
 WL_EXPORT void
 weston_output_init(struct weston_output *output,
-		   struct weston_compositor *compositor)
+		   struct weston_compositor *compositor,
+		   const char *name)
 {
 	output->compositor = compositor;
 	output->destroying = 0;
-
-	/* Backends must set output->name */
-	assert(output->name);
-
+	output->name = strdup(name);
 	wl_list_init(&output->link);
 	output->enabled = false;
 
@@ -4711,6 +4783,7 @@ weston_output_init(struct weston_output *output,
 
 	pixman_region32_init(&output->previous_damage);
 	pixman_region32_init(&output->region);
+	wl_list_init(&output->mode_list);
 }
 
 /** Adds weston_output object to pending output list.
@@ -4721,7 +4794,7 @@ weston_output_init(struct weston_output *output,
  * Also notifies the compositor that an output is pending for
  * configuration.
  *
- * The opposite of this operation is built into weston_output_destroy().
+ * The opposite of this operation is built into weston_output_release().
  *
  * \memberof weston_output
  * \internal
@@ -4902,7 +4975,7 @@ weston_pending_output_coldplug(struct weston_compositor *compositor)
  * \internal
  */
 WL_EXPORT void
-weston_output_destroy(struct weston_output *output)
+weston_output_release(struct weston_output *output)
 {
 	output->destroying = 1;
 
@@ -5209,8 +5282,9 @@ weston_environment_get_fd(const char *env)
 }
 
 static void
-timeline_key_binding_handler(struct weston_keyboard *keyboard, uint32_t time,
-			     uint32_t key, void *data)
+timeline_key_binding_handler(struct weston_keyboard *keyboard,
+			     const struct timespec *time, uint32_t key,
+			     void *data)
 {
 	struct weston_compositor *compositor = data;
 
@@ -5624,6 +5698,11 @@ weston_compositor_load_backend(struct weston_compositor *compositor,
 	int (*backend_init)(struct weston_compositor *c,
 			    struct weston_backend_config *config_base);
 
+	if (compositor->backend) {
+		weston_log("Error: attempt to load a backend when one is already loaded\n");
+		return -1;
+	}
+
 	if (backend >= ARRAY_LENGTH(backend_map))
 		return -1;
 
@@ -5631,7 +5710,12 @@ weston_compositor_load_backend(struct weston_compositor *compositor,
 	if (!backend_init)
 		return -1;
 
-	return backend_init(compositor, config_base);
+	if (backend_init(compositor, config_base) < 0) {
+		compositor->backend = NULL;
+		return -1;
+	}
+
+	return 0;
 }
 
 WL_EXPORT int

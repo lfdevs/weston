@@ -43,12 +43,14 @@
 #endif /* ENABLE_EGL */
 
 #include "shared/helpers.h"
+#include "shared/timespec-util.h"
 
 struct weston_test {
 	struct weston_compositor *compositor;
 	struct weston_layer layer;
 	struct weston_process process;
 	struct weston_seat seat;
+	bool is_seat_initialized;
 };
 
 struct weston_test_surface {
@@ -73,6 +75,22 @@ test_client_sigchld(struct weston_process *process, int status)
 	assert(status == 0);
 
 	wl_display_terminate(test->compositor->wl_display);
+}
+
+static int
+test_seat_init(struct weston_test *test)
+{
+	/* create our own seat */
+	weston_seat_init(&test->seat, test->compositor, "test-seat");
+	test->is_seat_initialized = true;
+
+	/* add devices */
+	weston_seat_init_pointer(&test->seat);
+	if (weston_seat_init_keyboard(&test->seat, NULL) < 0)
+		return -1;
+	weston_seat_init_touch(&test->seat);
+
+	return 0;
 }
 
 static struct weston_seat *
@@ -145,12 +163,14 @@ move_surface(struct wl_client *client, struct wl_resource *resource,
 
 static void
 move_pointer(struct wl_client *client, struct wl_resource *resource,
+	     uint32_t tv_sec_hi, uint32_t tv_sec_lo, uint32_t tv_nsec,
 	     int32_t x, int32_t y)
 {
 	struct weston_test *test = wl_resource_get_user_data(resource);
 	struct weston_seat *seat = get_seat(test);
 	struct weston_pointer *pointer = weston_seat_get_pointer(seat);
 	struct weston_pointer_motion_event event = { 0 };
+	struct timespec time;
 
 	event = (struct weston_pointer_motion_event) {
 		.mask = WESTON_POINTER_MOTION_REL,
@@ -158,19 +178,45 @@ move_pointer(struct wl_client *client, struct wl_resource *resource,
 		.dy = wl_fixed_to_double(wl_fixed_from_int(y) - pointer->y),
 	};
 
-	notify_motion(seat, 100, &event);
+	timespec_from_proto(&time, tv_sec_hi, tv_sec_lo, tv_nsec);
+
+	notify_motion(seat, &time, &event);
 
 	notify_pointer_position(test, resource);
 }
 
 static void
 send_button(struct wl_client *client, struct wl_resource *resource,
+	    uint32_t tv_sec_hi, uint32_t tv_sec_lo, uint32_t tv_nsec,
 	    int32_t button, uint32_t state)
 {
+	struct timespec time;
+
 	struct weston_test *test = wl_resource_get_user_data(resource);
 	struct weston_seat *seat = get_seat(test);
 
-	notify_button(seat, 100, button, state);
+	timespec_from_proto(&time, tv_sec_hi, tv_sec_lo, tv_nsec);
+
+	notify_button(seat, &time, button, state);
+}
+
+static void
+send_axis(struct wl_client *client, struct wl_resource *resource,
+	  uint32_t tv_sec_hi, uint32_t tv_sec_lo, uint32_t tv_nsec,
+	  uint32_t axis, wl_fixed_t value)
+{
+	struct weston_test *test = wl_resource_get_user_data(resource);
+	struct weston_seat *seat = get_seat(test);
+	struct timespec time;
+	struct weston_pointer_axis_event axis_event;
+
+	timespec_from_proto(&time, tv_sec_hi, tv_sec_lo, tv_nsec);
+	axis_event.axis = axis;
+	axis_event.value = wl_fixed_to_double(value);
+	axis_event.has_discrete = false;
+	axis_event.discrete = 0;
+
+	notify_axis(seat, &time, &axis_event);
 }
 
 static void
@@ -198,12 +244,16 @@ activate_surface(struct wl_client *client, struct wl_resource *resource,
 
 static void
 send_key(struct wl_client *client, struct wl_resource *resource,
+	 uint32_t tv_sec_hi, uint32_t tv_sec_lo, uint32_t tv_nsec,
 	 uint32_t key, enum wl_keyboard_key_state state)
 {
 	struct weston_test *test = wl_resource_get_user_data(resource);
 	struct weston_seat *seat = get_seat(test);
+	struct timespec time;
 
-	notify_key(seat, 100, key, state, STATE_UPDATE_AUTOMATIC);
+	timespec_from_proto(&time, tv_sec_hi, tv_sec_lo, tv_nsec);
+
+	notify_key(seat, &time, key, state, STATE_UPDATE_AUTOMATIC);
 }
 
 static void
@@ -220,7 +270,10 @@ device_release(struct wl_client *client,
 	} else if (strcmp(device, "touch") == 0) {
 		weston_seat_release_touch(seat);
 	} else if (strcmp(device, "seat") == 0) {
+		assert(test->is_seat_initialized &&
+		       "Trying to release already released test seat");
 		weston_seat_release(seat);
+		test->is_seat_initialized = false;
 	} else {
 		assert(0 && "Unsupported device");
 	}
@@ -239,6 +292,10 @@ device_add(struct wl_client *client,
 		weston_seat_init_keyboard(seat, NULL);
 	} else if (strcmp(device, "touch") == 0) {
 		weston_seat_init_touch(seat);
+	} else if (strcmp(device, "seat") == 0) {
+		assert(!test->is_seat_initialized &&
+		       "Trying to add already added test seat");
+		test_seat_init(test);
 	} else {
 		assert(0 && "Unsupported device");
 	}
@@ -486,15 +543,32 @@ capture_screenshot(struct wl_client *client,
 				     capture_screenshot_done, resource);
 }
 
+static void
+send_touch(struct wl_client *client, struct wl_resource *resource,
+	   uint32_t tv_sec_hi, uint32_t tv_sec_lo, uint32_t tv_nsec,
+	   int32_t touch_id, wl_fixed_t x, wl_fixed_t y, uint32_t touch_type)
+{
+	struct weston_test *test = wl_resource_get_user_data(resource);
+	struct weston_seat *seat = get_seat(test);
+	struct timespec time;
+
+	timespec_from_proto(&time, tv_sec_hi, tv_sec_lo, tv_nsec);
+
+	notify_touch(seat, &time, touch_id, wl_fixed_to_double(x),
+		     wl_fixed_to_double(y), touch_type);
+}
+
 static const struct weston_test_interface test_implementation = {
 	move_surface,
 	move_pointer,
 	send_button,
+	send_axis,
 	activate_surface,
 	send_key,
 	device_release,
 	device_add,
 	capture_screenshot,
+	send_touch,
 };
 
 static void
@@ -561,14 +635,8 @@ wet_module_init(struct weston_compositor *ec,
 			     test, bind_test) == NULL)
 		return -1;
 
-	/* create our own seat */
-	weston_seat_init(&test->seat, ec, "test-seat");
-
-	/* add devices */
-	weston_seat_init_pointer(&test->seat);
-	if (weston_seat_init_keyboard(&test->seat, NULL) < 0)
+	if (test_seat_init(test) == -1)
 		return -1;
-	weston_seat_init_touch(&test->seat);
 
 	loop = wl_display_get_event_loop(ec->wl_display);
 	wl_event_loop_add_idle(loop, idle_launch_client, test);

@@ -35,7 +35,7 @@
 extern "C" {
 #endif
 
-#define WESTON_DRM_BACKEND_CONFIG_VERSION 2
+#define WESTON_DRM_BACKEND_CONFIG_VERSION 3
 
 struct libinput_device;
 
@@ -98,12 +98,6 @@ weston_drm_output_get_api(struct weston_compositor *compositor)
 struct weston_drm_backend_config {
 	struct weston_backend_config base;
 
-	/** The connector id of the output to be initialized.
-	 *
-	 * A value of 0 will enable all available outputs.
-	 */
-	int connector;
-
 	/** The tty to be used. Set to 0 to use the current tty. */
 	int tty;
 
@@ -145,6 +139,13 @@ struct weston_drm_backend_config {
 	 *
 	 * It is exprimed in milliseconds, 0 means disabled. */
 	uint32_t pageflip_timeout;
+
+	/** Specific DRM device to open
+	 *
+	 * A DRM device name, like "card0", to open. If NULL, use heuristics
+	 * based on seat names and boot_vga to find the right device.
+	 */
+	char *specific_device;
 };
 
 #ifdef  __cplusplus

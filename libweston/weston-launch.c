@@ -42,7 +42,6 @@
 #include <sys/wait.h>
 #include <sys/socket.h>
 #include <sys/signalfd.h>
-#include <sys/sysmacros.h>
 #include <signal.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -91,6 +90,14 @@ drmSetMaster(int drm_fd)
 	return 0;
 }
 
+#endif
+
+/* major()/minor() */
+#ifdef MAJOR_IN_MKDEV
+#    include <sys/mkdev.h>
+#endif
+#ifdef MAJOR_IN_SYSMACROS
+#    include <sys/sysmacros.h>
 #endif
 
 struct weston_launch {
@@ -676,8 +683,10 @@ static void
 help(const char *name)
 {
 	fprintf(stderr, "Usage: %s [args...] [-- [weston args..]]\n", name);
-	fprintf(stderr, "  -u, --user      Start session as specified username\n");
-	fprintf(stderr, "  -t, --tty       Start session on alternative tty\n");
+	fprintf(stderr, "  -u, --user      Start session as specified username,\n"
+			"                  e.g. -u joe, requires root.\n");
+	fprintf(stderr, "  -t, --tty       Start session on alternative tty,\n"
+			"                  e.g. -t /dev/tty4, requires -u option.\n");
 	fprintf(stderr, "  -v, --verbose   Be verbose\n");
 	fprintf(stderr, "  -h, --help      Display this help message\n");
 }
@@ -698,7 +707,7 @@ main(int argc, char *argv[])
 
 	memset(&wl, 0, sizeof wl);
 
-	while ((c = getopt_long(argc, argv, "u:t::vh", opts, &i)) != -1) {
+	while ((c = getopt_long(argc, argv, "u:t:vh", opts, &i)) != -1) {
 		switch (c) {
 		case 'u':
 			wl.new_user = optarg;
@@ -721,6 +730,9 @@ main(int argc, char *argv[])
 
 	if ((argc - optind) > (MAX_ARGV_SIZE - 6))
 		error(1, E2BIG, "Too many arguments to pass to weston");
+
+	if (tty && !wl.new_user)
+		error(1, 0, "-t/--tty option requires -u/--user option as well");
 
 	if (wl.new_user)
 		wl.pw = getpwnam(wl.new_user);

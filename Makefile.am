@@ -30,15 +30,6 @@ ivi-shell/weston.ini : $(srcdir)/ivi-shell/weston.ini.in
 		-e 's|@plugin_prefix[@]||g' \
 		$< > $@
 
-tests/weston-ivi.ini : $(srcdir)/ivi-shell/weston.ini.in
-	$(AM_V_GEN)$(MKDIR_P) $(dir $@) && $(SED) \
-		-e 's|@bindir[@]|$(bindir)|g' \
-		-e 's|@abs_top_builddir[@]|$(abs_top_builddir)|g' \
-		-e 's|@abs_top_srcdir[@]|$(abs_top_srcdir)|g' \
-		-e 's|@libexecdir[@]|$(abs_builddir)|g' \
-		-e 's|@plugin_prefix[@]|$(abs_top_builddir)/.libs/|g' \
-		$< > $@
-
 all-local : weston.ini ivi-shell/weston.ini
 
 AM_CFLAGS = $(GCC_CFLAGS)
@@ -50,14 +41,12 @@ AM_CPPFLAGS = 					\
 	-I$(top_builddir)/tests			\
 	-I$(top_srcdir)/shared			\
 	-I$(top_builddir)/protocol		\
-	-DDATADIR='"$(datadir)"'		\
 	-DLIBWESTON_MODULEDIR='"$(libweston_moduledir)"' \
 	-DLIBEXECDIR='"$(libexecdir)"'		\
 	-DBINDIR='"$(bindir)"'
 
 CLEANFILES = weston.ini				\
 	ivi-shell/weston.ini			\
-	tests/weston-ivi.ini			\
 	internal-screenshot-00.png		\
 	$(BUILT_SOURCES)
 
@@ -72,9 +61,9 @@ install-libweston_moduleLTLIBRARIES install-moduleLTLIBRARIES: install-libLTLIBR
 lib_LTLIBRARIES = libweston-@LIBWESTON_MAJOR@.la
 libweston_@LIBWESTON_MAJOR@_la_CPPFLAGS = $(AM_CPPFLAGS) -DIN_WESTON
 libweston_@LIBWESTON_MAJOR@_la_CFLAGS = $(AM_CFLAGS) \
-	$(COMPOSITOR_CFLAGS) $(EGL_CFLAGS) $(LIBUNWIND_CFLAGS) $(LIBDRM_CFLAGS)
-libweston_@LIBWESTON_MAJOR@_la_LIBADD = $(COMPOSITOR_LIBS) $(LIBUNWIND_LIBS) \
-	$(DLOPEN_LIBS) -lm $(CLOCK_GETTIME_LIBS) \
+	$(COMPOSITOR_CFLAGS) $(EGL_CFLAGS) $(LIBDRM_CFLAGS)
+libweston_@LIBWESTON_MAJOR@_la_LIBADD = $(COMPOSITOR_LIBS) \
+	$(DL_LIBS) -lm $(CLOCK_GETTIME_LIBS) \
 	$(LIBINPUT_BACKEND_LIBS) libshared.la
 libweston_@LIBWESTON_MAJOR@_la_LDFLAGS = -version-info $(LT_VERSION_INFO)
 
@@ -133,19 +122,15 @@ libweston_desktop_@LIBWESTON_MAJOR@_la_SOURCES =	\
 	libweston-desktop/surface.c			\
 	libweston-desktop/wl-shell.c			\
 	libweston-desktop/xdg-shell-v6.c		\
-	libweston-desktop/xdg-shell-v5.c		\
 	libweston-desktop/xwayland.c
 
 nodist_libweston_desktop_@LIBWESTON_MAJOR@_la_SOURCES =		\
 	protocol/xdg-shell-unstable-v6-protocol.c		\
-	protocol/xdg-shell-unstable-v6-server-protocol.h	\
-	protocol/xdg-shell-unstable-v5-protocol.c		\
-	protocol/xdg-shell-unstable-v5-server-protocol.h
+	protocol/xdg-shell-unstable-v6-server-protocol.h
 
 BUILT_SOURCES += $(nodist_libweston_desktop_@LIBWESTON_MAJOR@_la_SOURCES)
 
 libweston-desktop-@LIBWESTON_MAJOR@.la libweston-desktop/libweston_desktop_@LIBWESTON_MAJOR@_la-xdg-shell-v6.lo: protocol/xdg-shell-unstable-v6-server-protocol.h
-libweston-desktop-@LIBWESTON_MAJOR@.la libweston-desktop/libweston_desktop_@LIBWESTON_MAJOR@_la-xdg-shell-v5.lo: protocol/xdg-shell-unstable-v5-server-protocol.h
 
 if SYSTEMD_NOTIFY_SUPPORT
 module_LTLIBRARIES += systemd-notify.la
@@ -181,7 +166,9 @@ nodist_libweston_@LIBWESTON_MAJOR@_la_SOURCES =				\
 	protocol/relative-pointer-unstable-v1-protocol.c		\
 	protocol/relative-pointer-unstable-v1-server-protocol.h		\
 	protocol/pointer-constraints-unstable-v1-protocol.c		\
-	protocol/pointer-constraints-unstable-v1-server-protocol.h
+	protocol/pointer-constraints-unstable-v1-server-protocol.h      \
+	protocol/input-timestamps-unstable-v1-protocol.c		\
+	protocol/input-timestamps-unstable-v1-server-protocol.h
 
 BUILT_SOURCES += $(nodist_libweston_@LIBWESTON_MAJOR@_la_SOURCES)
 
@@ -191,10 +178,10 @@ weston_LDFLAGS = -export-dynamic
 weston_CPPFLAGS = $(AM_CPPFLAGS) -DIN_WESTON 		\
 				 -DMODULEDIR='"$(moduledir)"' \
 				 -DXSERVER_PATH='"@XSERVER_PATH@"'
-weston_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS) $(LIBUNWIND_CFLAGS)
+weston_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS) $(LIBINPUT_BACKEND_CFLAGS)
 weston_LDADD = libshared.la libweston-@LIBWESTON_MAJOR@.la \
-	$(COMPOSITOR_LIBS) $(LIBUNWIND_LIBS) \
-	$(DLOPEN_LIBS) $(LIBINPUT_BACKEND_LIBS) \
+	$(COMPOSITOR_LIBS) \
+	$(DL_LIBS) $(LIBINPUT_BACKEND_LIBS) \
 	$(CLOCK_GETRES_LIBS) \
 	-lm
 
@@ -334,6 +321,7 @@ gl_renderer_la_SOURCES =			\
 	libweston/gl-renderer.c			\
 	libweston/vertex-clipping.c		\
 	libweston/vertex-clipping.h		\
+	libweston/weston-sync-file.h		\
 	shared/helpers.h
 endif
 
@@ -358,6 +346,7 @@ x11_backend_la_SOURCES = 			\
 	shared/helpers.h
 endif
 
+INPUT_BACKEND_CFLAGS = $(LIBINPUT_BACKEND_CFLAGS)
 INPUT_BACKEND_LIBS = $(LIBINPUT_BACKEND_LIBS)
 INPUT_BACKEND_SOURCES =				\
 	libweston/libinput-seat.c		\
@@ -381,6 +370,7 @@ drm_backend_la_CFLAGS =				\
 	$(COMPOSITOR_CFLAGS)			\
 	$(EGL_CFLAGS)				\
 	$(DRM_COMPOSITOR_CFLAGS)		\
+	$(INPUT_BACKEND_CFLAGS)			\
 	$(AM_CFLAGS)
 drm_backend_la_SOURCES =			\
 	libweston/compositor-drm.c		\
@@ -455,6 +445,7 @@ fbdev_backend_la_CFLAGS =			\
 	$(EGL_CFLAGS)				\
 	$(FBDEV_COMPOSITOR_CFLAGS)		\
 	$(PIXMAN_CFLAGS)			\
+	$(INPUT_BACKEND_CFLAGS)			\
 	$(AM_CFLAGS)
 fbdev_backend_la_SOURCES =			\
 	libweston/compositor-fbdev.c		\
@@ -636,8 +627,10 @@ nodist_weston_simple_dmabuf_drm_SOURCES =		\
 	protocol/linux-dmabuf-unstable-v1-protocol.c \
 	protocol/linux-dmabuf-unstable-v1-client-protocol.h
 weston_simple_dmabuf_drm_CFLAGS = $(AM_CFLAGS) $(SIMPLE_DMABUF_DRM_CLIENT_CFLAGS)
-weston_simple_dmabuf_drm_LDADD = $(SIMPLE_DMABUF_DRM_CLIENT_LIBS) $(LIBDRM_PLATFORM_LIBS) libshared.la
-BUILT_SOURCES += protocol/linux-dmabuf-unstable-v1-client-protocol.h
+weston_simple_dmabuf_drm_LDADD = $(SIMPLE_DMABUF_DRM_CLIENT_LIBS) \
+	$(LIBDRM_PLATFORM_FREEDRENO_LIBS) \
+	$(LIBDRM_PLATFORM_INTEL_LIBS)     \
+	libshared.la
 endif
 
 if BUILD_SIMPLE_DMABUF_V4L_CLIENT
@@ -652,7 +645,6 @@ nodist_weston_simple_dmabuf_v4l_SOURCES =		\
 	protocol/linux-dmabuf-unstable-v1-client-protocol.h
 weston_simple_dmabuf_v4l_CFLAGS = $(AM_CFLAGS) $(SIMPLE_DMABUF_V4L_CLIENT_CFLAGS)
 weston_simple_dmabuf_v4l_LDADD = $(SIMPLE_DMABUF_V4L_CLIENT_LIBS) libshared.la
-BUILT_SOURCES += protocol/linux-dmabuf-unstable-v1-client-protocol.h
 endif
 
 noinst_LTLIBRARIES += libtoytoolkit.la
@@ -834,7 +826,9 @@ weston_info_SOURCES = 					\
 	shared/helpers.h
 nodist_weston_info_SOURCES =				\
 	protocol/presentation-time-protocol.c		\
-	protocol/presentation-time-client-protocol.h
+	protocol/presentation-time-client-protocol.h	\
+	protocol/linux-dmabuf-unstable-v1-protocol.c	\
+	protocol/linux-dmabuf-unstable-v1-client-protocol.h
 weston_info_LDADD = $(WESTON_INFO_LIBS) libshared.la
 weston_info_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
@@ -891,7 +885,11 @@ BUILT_SOURCES +=					\
 	protocol/ivi-hmi-controller-protocol.c		\
 	protocol/ivi-hmi-controller-client-protocol.h	\
 	protocol/ivi-application-protocol.c		\
-	protocol/ivi-application-client-protocol.h
+	protocol/ivi-application-client-protocol.h	\
+	protocol/linux-dmabuf-unstable-v1-protocol.c	\
+	protocol/linux-dmabuf-unstable-v1-client-protocol.h		\
+	protocol/input-timestamps-unstable-v1-protocol.c		\
+	protocol/input-timestamps-unstable-v1-client-protocol.h
 
 westondatadir = $(datadir)/weston
 dist_westondata_DATA =				\
@@ -948,7 +946,6 @@ desktop_shell_la_CPPFLAGS =			\
 	-I$(top_builddir)/libweston		\
 	-I$(top_srcdir)/libweston		\
 	-I$(top_builddir)/desktop-shell		\
-	-DDATADIR='"$(datadir)"'		\
 	-DMODULEDIR='"$(moduledir)"'		\
 	-DLIBEXECDIR='"$(libexecdir)"'		\
 	-DIN_WESTON
@@ -1078,7 +1075,6 @@ xwayland_la_CPPFLAGS =				\
 	-I$(top_builddir)/libweston		\
 	-I$(top_srcdir)/libweston		\
 	-I$(top_builddir)/xwayland		\
-	-DDATADIR='"$(datadir)"'		\
 	-DMODULEDIR='"$(moduledir)"'		\
 	-DLIBEXECDIR='"$(libexecdir)"'
 
@@ -1115,6 +1111,10 @@ endif
 noinst_LTLIBRARIES += libshared.la libshared-cairo.la \
 	libzunitc.la libzunitcmain.la
 
+libshared_la_CPPFLAGS = \
+	-DDATADIR='"$(datadir)"' \
+	$(AM_CPPFLAGS)
+
 libshared_la_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS)
 
 libshared_la_SOURCES =				\
@@ -1129,18 +1129,21 @@ libshared_la_SOURCES =				\
 	shared/xalloc.c			\
 	shared/xalloc.h
 
+libshared_cairo_la_CPPFLAGS = $(libshared_la_CPPFLAGS)
+
 libshared_cairo_la_CFLAGS =			\
-	-DDATADIR='"$(datadir)"'		\
 	$(AM_CFLAGS)				\
 	$(COMPOSITOR_CFLAGS)			\
 	$(PIXMAN_CFLAGS)			\
 	$(CAIRO_CFLAGS)				\
+	$(PANGO_CFLAGS)				\
 	$(PNG_CFLAGS)				\
 	$(WEBP_CFLAGS)
 
 libshared_cairo_la_LIBADD =			\
 	$(PIXMAN_LIBS)				\
 	$(CAIRO_LIBS)				\
+	$(PANGO_LIBS)				\
 	$(PNG_LIBS)				\
 	$(WEBP_LIBS)				\
 	$(JPEG_LIBS)
@@ -1221,18 +1224,15 @@ weston_tests =					\
 	bad_buffer.weston			\
 	keyboard.weston				\
 	event.weston				\
-	button.weston				\
+	pointer.weston				\
 	text.weston				\
 	presentation.weston			\
 	viewporter.weston			\
 	roles.weston				\
 	subsurface.weston			\
 	subsurface-shot.weston			\
-	devices.weston
-
-ivi_tests =
-
-$(ivi_tests) : $(builddir)/tests/weston-ivi.ini
+	devices.weston				\
+	touch.weston
 
 AM_TESTS_ENVIRONMENT = \
 	abs_builddir='$(abs_builddir)'; export abs_builddir; \
@@ -1345,10 +1345,14 @@ vertex_clip_test_LDADD = libtest-runner.la -lm $(CLOCK_GETTIME_LIBS)
 
 libtest_client_la_SOURCES =			\
 	tests/weston-test-client-helper.c	\
-	tests/weston-test-client-helper.h
-nodist_libtest_client_la_SOURCES =		\
-	protocol/weston-test-protocol.c	\
-	protocol/weston-test-client-protocol.h
+	tests/weston-test-client-helper.h	\
+	tests/input-timestamps-helper.c		\
+	tests/input-timestamps-helper.h
+nodist_libtest_client_la_SOURCES =				\
+	protocol/weston-test-protocol.c				\
+	protocol/weston-test-client-protocol.h			\
+	protocol/input-timestamps-unstable-v1-protocol.c	\
+	protocol/input-timestamps-unstable-v1-client-protocol.h
 libtest_client_la_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS) $(CAIRO_CFLAGS)
 libtest_client_la_LIBADD = libshared.la libtest-runner.la $(TEST_CLIENT_LIBS) $(CAIRO_LIBS)
 
@@ -1378,9 +1382,9 @@ event_weston_SOURCES = tests/event-test.c
 event_weston_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
 event_weston_LDADD = libtest-client.la
 
-button_weston_SOURCES = tests/button-test.c
-button_weston_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
-button_weston_LDADD = libtest-client.la
+pointer_weston_SOURCES = tests/pointer-test.c
+pointer_weston_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
+pointer_weston_LDADD = libtest-client.la
 
 devices_weston_SOURCES = tests/devices-test.c
 devices_weston_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
@@ -1423,6 +1427,10 @@ nodist_viewporter_weston_SOURCES =		\
 viewporter_weston_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
 viewporter_weston_LDADD = libtest-client.la
 
+touch_weston_SOURCES = tests/touch-test.c
+touch_weston_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
+touch_weston_LDADD = libtest-client.la
+
 if ENABLE_XWAYLAND_TEST
 weston_tests +=	xwayland-test.weston
 xwayland_test_weston_SOURCES = tests/xwayland-test.c
@@ -1460,7 +1468,7 @@ nodist_ivi_layout_test_la_SOURCES =		\
 	protocol/weston-test-protocol.c		\
 	protocol/weston-test-server-protocol.h
 
-ivi_tests +=					\
+ivi_tests =					\
 	ivi-shell-app.weston
 
 ivi_shell_app_weston_SOURCES = tests/ivi-shell-app-test.c
@@ -1558,6 +1566,10 @@ if ENABLE_DRM_COMPOSITOR
 man_MANS += weston-drm.7
 endif
 
+if ENABLE_RDP_COMPOSITOR
+man_MANS += weston-rdp.7
+endif
+
 MAN_SUBSTS =								\
 	-e 's|__weston_native_backend__|$(WESTON_NATIVE_BACKEND)|g'	\
 	-e 's|__weston_modules_dir__|$(pkglibdir)|g'			\
@@ -1572,6 +1584,7 @@ SUFFIXES = .1 .5 .7 .man
 EXTRA_DIST +=					\
 	man/weston.man				\
 	man/weston-drm.man			\
+	man/weston-rdp.man			\
 	man/weston.ini.man
 
 CLEANFILES += $(man_MANS)
@@ -1604,7 +1617,7 @@ $(if $(findstring unstable,$1),unstable,stable)
 endef
 
 define protoname
-$(shell echo $1 | sed 's/\([a-z\-]\+\)-[a-z]\+-v[0-9]\+/\1/')
+$(shell echo $1 | $(SED) 's/\([a-z\-]\+\)-[a-z]\+-v[0-9]\+/\1/')
 endef
 
 protocol/%-protocol.c : $(WAYLAND_PROTOCOLS_DATADIR)/$$(call protostability,$$*)/$$(call protoname,$$*)/$$*.xml

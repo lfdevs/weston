@@ -43,11 +43,6 @@
 #include <sys/time.h>
 #include <linux/limits.h>
 
-#ifdef HAVE_LIBUNWIND
-#define UNW_LOCAL_ONLY
-#include <libunwind.h>
-#endif
-
 #include "weston.h"
 #include "compositor.h"
 #include "../shared/os-compatibility.h"
@@ -189,85 +184,6 @@ sigchld_handler(int signal_number, void *data)
 
 	return 1;
 }
-
-#ifdef HAVE_LIBUNWIND
-
-static void
-print_backtrace(void)
-{
-	unw_cursor_t cursor;
-	unw_context_t context;
-	unw_word_t off;
-	unw_proc_info_t pip;
-	int ret, i = 0;
-	char procname[256];
-	const char *filename;
-	Dl_info dlinfo;
-
-	pip.unwind_info = NULL;
-	ret = unw_getcontext(&context);
-	if (ret) {
-		weston_log("unw_getcontext: %d\n", ret);
-		return;
-	}
-
-	ret = unw_init_local(&cursor, &context);
-	if (ret) {
-		weston_log("unw_init_local: %d\n", ret);
-		return;
-	}
-
-	ret = unw_step(&cursor);
-	while (ret > 0) {
-		ret = unw_get_proc_info(&cursor, &pip);
-		if (ret) {
-			weston_log("unw_get_proc_info: %d\n", ret);
-			break;
-		}
-
-		ret = unw_get_proc_name(&cursor, procname, 256, &off);
-		if (ret && ret != -UNW_ENOMEM) {
-			if (ret != -UNW_EUNSPEC)
-				weston_log("unw_get_proc_name: %d\n", ret);
-			procname[0] = '?';
-			procname[1] = 0;
-		}
-
-		if (dladdr((void *)(pip.start_ip + off), &dlinfo) && dlinfo.dli_fname &&
-		    *dlinfo.dli_fname)
-			filename = dlinfo.dli_fname;
-		else
-			filename = "?";
-
-		weston_log("%u: %s (%s%s+0x%x) [%p]\n", i++, filename, procname,
-			   ret == -UNW_ENOMEM ? "..." : "", (int)off, (void *)(pip.start_ip + off));
-
-		ret = unw_step(&cursor);
-		if (ret < 0)
-			weston_log("unw_step: %d\n", ret);
-	}
-}
-
-#else
-
-static void
-print_backtrace(void)
-{
-	void *buffer[32];
-	int i, count;
-	Dl_info info;
-
-	count = backtrace(buffer, ARRAY_LENGTH(buffer));
-	for (i = 0; i < count; i++) {
-		dladdr(buffer[i], &info);
-		weston_log("  [%016lx]  %s  (%s)\n",
-			(long) buffer[i],
-			info.dli_sname ? info.dli_sname : "--",
-			info.dli_fname);
-	}
-}
-
-#endif
 
 static void
 child_client_exec(int sockfd, const char *path)
@@ -553,18 +469,20 @@ usage(int error_code)
 		"  --shell=MODULE\tShell module, defaults to desktop-shell.so\n"
 		"  -S, --socket=NAME\tName of socket to listen on\n"
 		"  -i, --idle-time=SECS\tIdle time in seconds\n"
+		"  --xwayland\t\tLoad the xwayland module\n"
 		"  --modules\t\tLoad the comma-separated list of modules\n"
 		"  --log=FILE\t\tLog to the given file\n"
 		"  -c, --config=FILE\tConfig file to load, defaults to weston.ini\n"
 		"  --no-config\t\tDo not read weston.ini\n"
+		"  --wait-for-debugger\tRaise SIGSTOP on start-up\n"
 		"  -h, --help\t\tThis help message\n\n");
 
 #if defined(BUILD_DRM_COMPOSITOR)
 	fprintf(stderr,
 		"Options for drm-backend.so:\n\n"
-		"  --connector=ID\tBring up only this connector\n"
 		"  --seat=SEAT\t\tThe seat that weston should run on\n"
 		"  --tty=TTY\t\tThe tty to use\n"
+		"  --drm-device=CARD\tThe DRM device to use, e.g. \"card0\".\n"
 		"  --use-pixman\t\tUse the pixman (CPU) renderer\n"
 		"  --current-mode\tPrefer current KMS mode over EDID preferred mode\n\n");
 #endif
@@ -640,38 +558,6 @@ static int on_term_signal(int signal_number, void *data)
 	wl_display_terminate(display);
 
 	return 1;
-}
-
-static void
-on_caught_signal(int s, siginfo_t *siginfo, void *context)
-{
-	/* This signal handler will do a best-effort backtrace, and
-	 * then call the backend restore function, which will switch
-	 * back to the vt we launched from or ungrab X etc and then
-	 * raise SIGTRAP.  If we run weston under gdb from X or a
-	 * different vt, and tell gdb "handle *s* nostop", this
-	 * will allow weston to switch back to gdb on crash and then
-	 * gdb will catch the crash with SIGTRAP.*/
-
-	weston_log("caught signal: %d\n", s);
-
-	print_backtrace();
-
-	segv_compositor->backend->restore(segv_compositor);
-
-	raise(SIGTRAP);
-}
-
-static void
-catch_signals(void)
-{
-	struct sigaction action;
-
-	action.sa_flags = SA_SIGINFO | SA_RESETHAND;
-	action.sa_sigaction = on_caught_signal;
-	sigemptyset(&action.sa_mask);
-	sigaction(SIGSEGV, &action, NULL);
-	sigaction(SIGABRT, &action, NULL);
 }
 
 static const char *
@@ -1222,9 +1108,9 @@ load_drm_backend(struct weston_compositor *c,
 	wet->drm_use_current_mode = false;
 
 	const struct weston_option options[] = {
-		{ WESTON_OPTION_INTEGER, "connector", 0, &config.connector },
 		{ WESTON_OPTION_STRING, "seat", 0, &config.seat_id },
 		{ WESTON_OPTION_INTEGER, "tty", 0, &config.tty },
+		{ WESTON_OPTION_STRING, "drm-device", 0, &config.specific_device },
 		{ WESTON_OPTION_BOOLEAN, "current-mode", 0, &wet->drm_use_current_mode },
 		{ WESTON_OPTION_BOOLEAN, "use-pixman", 0, &config.use_pixman },
 	};
@@ -1614,6 +1500,9 @@ load_wayland_backend(struct weston_compositor *c,
 	int count = 1;
 	int ret = 0;
 	int i;
+	int32_t use_pixman_ = 0;
+	int32_t sprawl_ = 0;
+	int32_t fullscreen_ = 0;
 
 	struct wet_output_config *parsed_options = wet_init_parsed_options(c);
 	if (!parsed_options)
@@ -1622,22 +1511,22 @@ load_wayland_backend(struct weston_compositor *c,
 	config.cursor_size = 32;
 	config.cursor_theme = NULL;
 	config.display_name = NULL;
-	config.fullscreen = false;
-	config.sprawl = false;
-	config.use_pixman = false;
 
 	const struct weston_option wayland_options[] = {
 		{ WESTON_OPTION_INTEGER, "width", 0, &parsed_options->width },
 		{ WESTON_OPTION_INTEGER, "height", 0, &parsed_options->height },
 		{ WESTON_OPTION_INTEGER, "scale", 0, &parsed_options->scale },
 		{ WESTON_OPTION_STRING, "display", 0, &config.display_name },
-		{ WESTON_OPTION_BOOLEAN, "use-pixman", 0, &config.use_pixman },
+		{ WESTON_OPTION_BOOLEAN, "use-pixman", 0, &use_pixman_ },
 		{ WESTON_OPTION_INTEGER, "output-count", 0, &count },
-		{ WESTON_OPTION_BOOLEAN, "fullscreen", 0, &config.fullscreen },
-		{ WESTON_OPTION_BOOLEAN, "sprawl", 0, &config.sprawl },
+		{ WESTON_OPTION_BOOLEAN, "fullscreen", 0, &fullscreen_ },
+		{ WESTON_OPTION_BOOLEAN, "sprawl", 0, &sprawl_ },
 	};
 
 	parse_options(wayland_options, ARRAY_LENGTH(wayland_options), argc, argv);
+	config.sprawl = sprawl_;
+	config.use_pixman = use_pixman_;
+	config.fullscreen = fullscreen_;
 
 	section = weston_config_get_section(wc, "shell", NULL, NULL);
 	weston_config_section_get_string(section, "cursor-theme",
@@ -1785,6 +1674,7 @@ int main(int argc, char *argv[])
 	struct weston_seat *seat;
 	struct wet_compositor user_data;
 	int require_input;
+	int32_t wait_for_debugger = 0;
 
 	const struct weston_option core_options[] = {
 		{ WESTON_OPTION_STRING, "backend", 'B', &backend },
@@ -1798,6 +1688,7 @@ int main(int argc, char *argv[])
 		{ WESTON_OPTION_BOOLEAN, "version", 0, &version },
 		{ WESTON_OPTION_BOOLEAN, "no-config", 0, &noconfig },
 		{ WESTON_OPTION_STRING, "config", 'c', &config_file },
+		{ WESTON_OPTION_BOOLEAN, "wait-for-debugger", 0, &wait_for_debugger },
 	};
 
 	if (os_fd_set_cloexec(fileno(stdin))) {
@@ -1859,6 +1750,16 @@ int main(int argc, char *argv[])
 
 	section = weston_config_get_section(config, "core", NULL, NULL);
 
+	if (!wait_for_debugger)
+		weston_config_section_get_bool(section, "wait-for-debugger",
+					       &wait_for_debugger, 0);
+	if (wait_for_debugger) {
+		weston_log("Weston PID is %ld - "
+			   "waiting for debugger, send SIGCONT to continue...\n",
+			   (long)getpid());
+		raise(SIGSTOP);
+	}
+
 	if (!backend) {
 		weston_config_section_get_string(section, "backend", &backend,
 						 NULL);
@@ -1871,6 +1772,7 @@ int main(int argc, char *argv[])
 		weston_log("fatal: failed to create compositor\n");
 		goto out;
 	}
+	segv_compositor = ec;
 
 	if (weston_compositor_init_config(ec, config) < 0)
 		goto out;
@@ -1885,9 +1787,6 @@ int main(int argc, char *argv[])
 	}
 
 	weston_pending_output_coldplug(ec);
-
-	catch_signals();
-	segv_compositor = ec;
 
 	if (idle_time < 0)
 		weston_config_section_get_int(section, "idle-time", &idle_time, -1);

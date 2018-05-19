@@ -33,13 +33,13 @@
 #include <linux/input.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <mtdev.h>
 #include <assert.h>
 #include <libinput.h>
 
 #include "compositor.h"
 #include "libinput-device.h"
 #include "shared/helpers.h"
+#include "shared/timespec-util.h"
 
 void
 evdev_led_update(struct evdev_device *device, enum weston_led weston_leds)
@@ -66,6 +66,7 @@ handle_keyboard_key(struct libinput_device *libinput_device,
 		libinput_event_keyboard_get_key_state(keyboard_event);
 	int seat_key_count =
 		libinput_event_keyboard_get_seat_key_count(keyboard_event);
+	struct timespec time;
 
 	/* Ignore key events that are not seat wide state changes. */
 	if ((key_state == LIBINPUT_KEY_STATE_PRESSED &&
@@ -74,8 +75,10 @@ handle_keyboard_key(struct libinput_device *libinput_device,
 	     seat_key_count != 0))
 		return;
 
-	notify_key(device->seat,
-		   libinput_event_keyboard_get_time(keyboard_event),
+	timespec_from_usec(&time,
+			   libinput_event_keyboard_get_time_usec(keyboard_event));
+
+	notify_key(device->seat, &time,
 		   libinput_event_keyboard_get_key(keyboard_event),
 		   key_state, STATE_UPDATE_AUTOMATIC);
 }
@@ -87,26 +90,25 @@ handle_pointer_motion(struct libinput_device *libinput_device,
 	struct evdev_device *device =
 		libinput_device_get_user_data(libinput_device);
 	struct weston_pointer_motion_event event = { 0 };
-	uint64_t time_usec =
-		libinput_event_pointer_get_time_usec(pointer_event);
+	struct timespec time;
 	double dx_unaccel, dy_unaccel;
 
+	timespec_from_usec(&time,
+			   libinput_event_pointer_get_time_usec(pointer_event));
 	dx_unaccel = libinput_event_pointer_get_dx_unaccelerated(pointer_event);
 	dy_unaccel = libinput_event_pointer_get_dy_unaccelerated(pointer_event);
 
 	event = (struct weston_pointer_motion_event) {
 		.mask = WESTON_POINTER_MOTION_REL |
 			WESTON_POINTER_MOTION_REL_UNACCEL,
-		.time_usec = time_usec,
+		.time = time,
 		.dx = libinput_event_pointer_get_dx(pointer_event),
 		.dy = libinput_event_pointer_get_dy(pointer_event),
 		.dx_unaccel = dx_unaccel,
 		.dy_unaccel = dy_unaccel,
 	};
 
-	notify_motion(device->seat,
-		      libinput_event_pointer_get_time(pointer_event),
-		      &event);
+	notify_motion(device->seat, &time, &event);
 
 	return true;
 }
@@ -119,14 +121,15 @@ handle_pointer_motion_absolute(
 	struct evdev_device *device =
 		libinput_device_get_user_data(libinput_device);
 	struct weston_output *output = device->output;
-	uint32_t time;
+	struct timespec time;
 	double x, y;
 	uint32_t width, height;
 
 	if (!output)
 		return false;
 
-	time = libinput_event_pointer_get_time(pointer_event);
+	timespec_from_usec(&time,
+			   libinput_event_pointer_get_time_usec(pointer_event));
 	width = device->output->current_mode->width;
 	height = device->output->current_mode->height;
 
@@ -136,7 +139,7 @@ handle_pointer_motion_absolute(
 							      height);
 
 	weston_output_transform_coordinate(device->output, x, y, &x, &y);
-	notify_motion_absolute(device->seat, time, x, y);
+	notify_motion_absolute(device->seat, &time, x, y);
 
 	return true;
 }
@@ -151,6 +154,7 @@ handle_pointer_button(struct libinput_device *libinput_device,
 		libinput_event_pointer_get_button_state(pointer_event);
 	int seat_button_count =
 		libinput_event_pointer_get_seat_button_count(pointer_event);
+	struct timespec time;
 
 	/* Ignore button events that are not seat wide state changes. */
 	if ((button_state == LIBINPUT_BUTTON_STATE_PRESSED &&
@@ -159,8 +163,10 @@ handle_pointer_button(struct libinput_device *libinput_device,
 	     seat_button_count != 0))
 		return false;
 
-	notify_button(device->seat,
-		      libinput_event_pointer_get_time(pointer_event),
+	timespec_from_usec(&time,
+			   libinput_event_pointer_get_time_usec(pointer_event));
+
+	notify_button(device->seat, &time,
 		      libinput_event_pointer_get_button(pointer_event),
                       button_state);
 
@@ -227,6 +233,7 @@ handle_pointer_axis(struct libinput_device *libinput_device,
 	enum libinput_pointer_axis_source source;
 	uint32_t wl_axis_source;
 	bool has_vert, has_horiz;
+	struct timespec time;
 
 	has_vert = libinput_event_pointer_has_axis(pointer_event,
 				   LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL);
@@ -257,6 +264,9 @@ handle_pointer_axis(struct libinput_device *libinput_device,
 
 	notify_axis_source(device->seat, wl_axis_source);
 
+	timespec_from_usec(&time,
+			   libinput_event_pointer_get_time_usec(pointer_event));
+
 	if (has_vert) {
 		axis = LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL;
 		vert_discrete = get_axis_discrete(pointer_event, axis);
@@ -267,9 +277,7 @@ handle_pointer_axis(struct libinput_device *libinput_device,
 		weston_event.discrete = vert_discrete;
 		weston_event.has_discrete = (vert_discrete != 0);
 
-		notify_axis(device->seat,
-			    libinput_event_pointer_get_time(pointer_event),
-			    &weston_event);
+		notify_axis(device->seat, &time, &weston_event);
 	}
 
 	if (has_horiz) {
@@ -282,9 +290,7 @@ handle_pointer_axis(struct libinput_device *libinput_device,
 		weston_event.discrete = horiz_discrete;
 		weston_event.has_discrete = (horiz_discrete != 0);
 
-		notify_axis(device->seat,
-			    libinput_event_pointer_get_time(pointer_event),
-			    &weston_event);
+		notify_axis(device->seat, &time, &weston_event);
 	}
 
 	return true;
@@ -300,13 +306,14 @@ handle_touch_with_coords(struct libinput_device *libinput_device,
 	double x;
 	double y;
 	uint32_t width, height;
-	uint32_t time;
+	struct timespec time;
 	int32_t slot;
 
 	if (!device->output)
 		return;
 
-	time = libinput_event_touch_get_time(touch_event);
+	timespec_from_usec(&time,
+			   libinput_event_touch_get_time_usec(touch_event));
 	slot = libinput_event_touch_get_seat_slot(touch_event);
 
 	width = device->output->current_mode->width;
@@ -317,7 +324,7 @@ handle_touch_with_coords(struct libinput_device *libinput_device,
 	weston_output_transform_coordinate(device->output,
 					   x, y, &x, &y);
 
-	notify_touch(device->seat, time, slot, x, y, touch_type);
+	notify_touch(device->seat, &time, slot, x, y, touch_type);
 }
 
 static void
@@ -340,10 +347,13 @@ handle_touch_up(struct libinput_device *libinput_device,
 {
 	struct evdev_device *device =
 		libinput_device_get_user_data(libinput_device);
-	uint32_t time = libinput_event_touch_get_time(touch_event);
+	struct timespec time;
 	int32_t slot = libinput_event_touch_get_seat_slot(touch_event);
 
-	notify_touch(device->seat, time, slot, 0, 0, WL_TOUCH_UP);
+	timespec_from_usec(&time,
+			   libinput_event_touch_get_time_usec(touch_event));
+
+	notify_touch(device->seat, &time, slot, 0, 0, WL_TOUCH_UP);
 }
 
 static void

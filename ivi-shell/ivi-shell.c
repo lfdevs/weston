@@ -67,12 +67,6 @@ struct ivi_shell_surface
 	struct wl_list link;
 };
 
-struct ivi_shell_setting
-{
-	char *ivi_module;
-	int developermode;
-};
-
 /*
  * Implementation of ivi_surface
  */
@@ -376,7 +370,7 @@ shell_destroy(struct wl_listener *listener, void *data)
 }
 
 static void
-terminate_binding(struct weston_keyboard *keyboard, uint32_t time,
+terminate_binding(struct weston_keyboard *keyboard, const struct timespec *time,
 		  uint32_t key, void *data)
 {
 	struct weston_compositor *compositor = data;
@@ -385,16 +379,24 @@ terminate_binding(struct weston_keyboard *keyboard, uint32_t time,
 }
 
 static void
-init_ivi_shell(struct weston_compositor *compositor, struct ivi_shell *shell,
-	       const struct ivi_shell_setting *setting)
+init_ivi_shell(struct weston_compositor *compositor, struct ivi_shell *shell)
 {
+	struct weston_config *config = wet_get_config(compositor);
+	struct weston_config_section *section;
+	int developermode;
+
 	shell->compositor = compositor;
 
 	wl_list_init(&shell->ivi_surface_list);
 
 	weston_layer_init(&shell->input_panel_layer, compositor);
 
-	if (setting->developermode) {
+	section = weston_config_get_section(config, "ivi-shell", NULL, NULL);
+
+	weston_config_section_get_bool(section, "developermode",
+				       &developermode, 0);
+
+	if (developermode) {
 		weston_install_debug_key_binding(compositor, MODIFIER_SUPER);
 
 		weston_compositor_add_key_binding(compositor, KEY_BACKSPACE,
@@ -402,37 +404,6 @@ init_ivi_shell(struct weston_compositor *compositor, struct ivi_shell *shell,
 						  terminate_binding,
 						  compositor);
 	}
-}
-
-static int
-ivi_shell_setting_create(struct ivi_shell_setting *dest,
-			 struct weston_compositor *compositor,
-			 int *argc, char *argv[])
-{
-	int result = 0;
-	struct weston_config *config = wet_get_config(compositor);
-	struct weston_config_section *section;
-
-	const struct weston_option ivi_shell_options[] = {
-		{ WESTON_OPTION_STRING, "ivi-module", 0, &dest->ivi_module },
-	};
-
-	parse_options(ivi_shell_options, ARRAY_LENGTH(ivi_shell_options),
-		      argc, argv);
-
-	section = weston_config_get_section(config, "ivi-shell", NULL, NULL);
-
-	if (!dest->ivi_module &&
-	    weston_config_section_get_string(section, "ivi-module",
-					     &dest->ivi_module, NULL) < 0) {
-		weston_log("Error: ivi-shell: No ivi-module set\n");
-		result = -1;
-	}
-
-	weston_config_section_get_bool(section, "developermode",
-				       &dest->developermode, 0);
-
-	return result;
 }
 
 static void
@@ -450,7 +421,8 @@ activate_binding(struct weston_seat *seat,
 }
 
 static void
-click_to_activate_binding(struct weston_pointer *pointer, uint32_t time,
+click_to_activate_binding(struct weston_pointer *pointer,
+			  const struct timespec *time,
 			  uint32_t button, void *data)
 {
 	if (pointer->grab != &pointer->default_grab)
@@ -462,7 +434,8 @@ click_to_activate_binding(struct weston_pointer *pointer, uint32_t time,
 }
 
 static void
-touch_to_activate_binding(struct weston_touch *touch, uint32_t time,
+touch_to_activate_binding(struct weston_touch *touch,
+			  const struct timespec *time,
 			  void *data)
 {
 	if (touch->grab != &touch->default_grab)
@@ -496,45 +469,34 @@ wet_shell_init(struct weston_compositor *compositor,
 	       int *argc, char *argv[])
 {
 	struct ivi_shell *shell;
-	struct ivi_shell_setting setting = { };
 	int retval = -1;
 
 	shell = zalloc(sizeof *shell);
 	if (shell == NULL)
 		return -1;
 
-	if (ivi_shell_setting_create(&setting, compositor, argc, argv) != 0)
-		return -1;
-
-	init_ivi_shell(compositor, shell, &setting);
+	init_ivi_shell(compositor, shell);
 
 	shell->destroy_listener.notify = shell_destroy;
 	wl_signal_add(&compositor->destroy_signal, &shell->destroy_listener);
 
 	if (input_panel_setup(shell) < 0)
-		goto out_settings;
+		goto out;
 
 	shell->text_backend = text_backend_init(compositor);
 	if (!shell->text_backend)
-		goto out_settings;
+		goto out;
 
 	if (wl_global_create(compositor->wl_display,
 			     &ivi_application_interface, 1,
 			     shell, bind_ivi_application) == NULL)
-		goto out_settings;
+		goto out;
 
 	ivi_layout_init_with_compositor(compositor);
 	shell_add_bindings(compositor, shell);
 
-	/* Call module_init of ivi-modules which are defined in weston.ini */
-	if (load_controller_modules(compositor, setting.ivi_module,
-				    argc, argv) < 0)
-		goto out_settings;
-
 	retval = 0;
 
-out_settings:
-	free(setting.ivi_module);
-
+out:
 	return retval;
 }

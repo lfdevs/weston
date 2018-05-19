@@ -40,6 +40,7 @@
 #include <unistd.h>
 #include <linux/fb.h>
 #include <linux/input.h>
+#include <assert.h>
 
 #include <libudev.h>
 
@@ -91,7 +92,6 @@ struct fbdev_output {
 
 	/* pixman details. */
 	pixman_image_t *hw_surface;
-	uint8_t depth;
 };
 
 static const char default_seat[] = "seat0";
@@ -261,8 +261,7 @@ calculate_refresh_rate(struct fb_var_screeninfo *vinfo)
 }
 
 static int
-fbdev_query_screen_info(struct fbdev_output *output, int fd,
-                        struct fbdev_screeninfo *info)
+fbdev_query_screen_info(int fd, struct fbdev_screeninfo *info)
 {
 	struct fb_var_screeninfo varinfo;
 	struct fb_fix_screeninfo fixinfo;
@@ -297,8 +296,7 @@ fbdev_query_screen_info(struct fbdev_output *output, int fd,
 }
 
 static int
-fbdev_set_screen_info(struct fbdev_output *output, int fd,
-                      struct fbdev_screeninfo *info)
+fbdev_set_screen_info(int fd, struct fbdev_screeninfo *info)
 {
 	struct fb_var_screeninfo varinfo;
 
@@ -337,12 +335,10 @@ fbdev_set_screen_info(struct fbdev_output *output, int fd,
 	return 1;
 }
 
-static void fbdev_frame_buffer_destroy(struct fbdev_output *output);
-
 /* Returns an FD for the frame buffer device. */
 static int
-fbdev_frame_buffer_open(struct fbdev_output *output, const char *fb_dev,
-                        struct fbdev_screeninfo *screen_info)
+fbdev_frame_buffer_open(const char *fb_dev,
+			struct fbdev_screeninfo *screen_info)
 {
 	int fd = -1;
 
@@ -357,7 +353,7 @@ fbdev_frame_buffer_open(struct fbdev_output *output, const char *fb_dev,
 	}
 
 	/* Grab the screen info. */
-	if (fbdev_query_screen_info(output, fd, screen_info) < 0) {
+	if (fbdev_query_screen_info(fd, screen_info) < 0) {
 		weston_log("Failed to get frame buffer info: %s\n",
 		           strerror(errno));
 
@@ -383,6 +379,7 @@ fbdev_frame_buffer_map(struct fbdev_output *output, int fd)
 	if (output->fb == MAP_FAILED) {
 		weston_log("Failed to mmap frame buffer: %s\n",
 		           strerror(errno));
+		output->fb = NULL;
 		goto out_close;
 	}
 
@@ -402,8 +399,10 @@ fbdev_frame_buffer_map(struct fbdev_output *output, int fd)
 	retval = 0;
 
 out_unmap:
-	if (retval != 0 && output->fb != NULL)
-		fbdev_frame_buffer_destroy(output);
+	if (retval != 0 && output->fb != NULL) {
+		munmap(output->fb, output->fb_info.buffer_length);
+		output->fb = NULL;
+	}
 
 out_close:
 	if (fd >= 0)
@@ -413,9 +412,18 @@ out_close:
 }
 
 static void
-fbdev_frame_buffer_destroy(struct fbdev_output *output)
+fbdev_frame_buffer_unmap(struct fbdev_output *output)
 {
-	weston_log("Destroying fbdev frame buffer.\n");
+	if (!output->fb) {
+		assert(!output->hw_surface);
+		return;
+	}
+
+	weston_log("Unmapping fbdev frame buffer.\n");
+
+	if (output->hw_surface)
+		pixman_image_unref(output->hw_surface);
+	output->hw_surface = NULL;
 
 	if (munmap(output->fb, output->fb_info.buffer_length) < 0)
 		weston_log("Failed to munmap frame buffer: %s\n",
@@ -425,7 +433,6 @@ fbdev_frame_buffer_destroy(struct fbdev_output *output)
 }
 
 static void fbdev_output_destroy(struct weston_output *base);
-static void fbdev_output_disable(struct weston_output *base);
 
 static int
 fbdev_output_enable(struct weston_output *base)
@@ -436,7 +443,7 @@ fbdev_output_enable(struct weston_output *base)
 	struct wl_event_loop *loop;
 
 	/* Create the frame buffer. */
-	fb_fd = fbdev_frame_buffer_open(output, output->device, &output->fb_info);
+	fb_fd = fbdev_frame_buffer_open(output->device, &output->fb_info);
 	if (fb_fd < 0) {
 		weston_log("Creating frame buffer failed.\n");
 		return -1;
@@ -465,11 +472,26 @@ fbdev_output_enable(struct weston_output *base)
 	return 0;
 
 out_hw_surface:
-	pixman_image_unref(output->hw_surface);
-	output->hw_surface = NULL;
-	fbdev_frame_buffer_destroy(output);
+	fbdev_frame_buffer_unmap(output);
 
 	return -1;
+}
+
+static int
+fbdev_output_disable(struct weston_output *base)
+{
+	struct fbdev_output *output = to_fbdev_output(base);
+
+	if (!base->enabled)
+		return 0;
+
+	wl_event_source_remove(output->finish_frame_timer);
+	output->finish_frame_timer = NULL;
+
+	pixman_renderer_output_destroy(&output->base);
+	fbdev_frame_buffer_unmap(output);
+
+	return 0;
 }
 
 static int
@@ -489,18 +511,17 @@ fbdev_output_create(struct fbdev_backend *backend,
 	output->device = strdup(device);
 
 	/* Create the frame buffer. */
-	fb_fd = fbdev_frame_buffer_open(output, device, &output->fb_info);
+	fb_fd = fbdev_frame_buffer_open(device, &output->fb_info);
 	if (fb_fd < 0) {
 		weston_log("Creating frame buffer failed.\n");
 		goto out_free;
 	}
 
-	output->base.name = strdup("fbdev");
-	output->base.destroy = fbdev_output_destroy;
-	output->base.disable = NULL;
-	output->base.enable = fbdev_output_enable;
+	weston_output_init(&output->base, backend->compositor, "fbdev");
 
-	weston_output_init(&output->base, backend->compositor);
+	output->base.destroy = fbdev_output_destroy;
+	output->base.disable = fbdev_output_disable;
+	output->base.enable = fbdev_output_enable;
 
 	/* only one static mode in list */
 	output->mode.flags =
@@ -508,7 +529,6 @@ fbdev_output_create(struct fbdev_backend *backend,
 	output->mode.width = output->fb_info.x_resolution;
 	output->mode.height = output->fb_info.y_resolution;
 	output->mode.refresh = output->fb_info.refresh_rate;
-	wl_list_init(&output->base.mode_list);
 	wl_list_insert(&output->base.mode_list, &output->mode.link);
 
 	output->base.current_mode = &output->mode;
@@ -539,14 +559,10 @@ fbdev_output_destroy(struct weston_output *base)
 
 	weston_log("Destroying fbdev output.\n");
 
-	/* Close the frame buffer. */
 	fbdev_output_disable(base);
 
-	if (base->renderer_state != NULL)
-		pixman_renderer_output_destroy(base);
-
 	/* Remove the output. */
-	weston_output_destroy(&output->base);
+	weston_output_release(&output->base);
 
 	free(output->device);
 	free(output);
@@ -581,8 +597,7 @@ fbdev_output_reenable(struct fbdev_backend *backend,
 	weston_log("Re-enabling fbdev output.\n");
 
 	/* Create the frame buffer. */
-	fb_fd = fbdev_frame_buffer_open(output, output->device,
-	                                &new_screen_info);
+	fb_fd = fbdev_frame_buffer_open(output->device, &new_screen_info);
 	if (fb_fd < 0) {
 		weston_log("Creating frame buffer failed.\n");
 		goto err;
@@ -592,8 +607,7 @@ fbdev_output_reenable(struct fbdev_backend *backend,
 	 * disabled. */
 	if (compare_screen_info (&output->fb_info, &new_screen_info) != 0) {
 		/* Perform a mode-set to restore the old mode. */
-		if (fbdev_set_screen_info(output, fb_fd,
-		                          &output->fb_info) < 0) {
+		if (fbdev_set_screen_info(fb_fd, &output->fb_info) < 0) {
 			weston_log("Failed to restore mode settings. "
 			           "Attempting to re-open output anyway.\n");
 		}
@@ -623,24 +637,6 @@ err:
 	return -1;
 }
 
-/* NOTE: This leaves output->fb_info populated, caching data so that if
- * fbdev_output_reenable() is called again, it can determine whether a mode-set
- * is needed. */
-static void
-fbdev_output_disable(struct weston_output *base)
-{
-	struct fbdev_output *output = to_fbdev_output(base);
-
-	weston_log("Disabling fbdev output.\n");
-
-	if (output->hw_surface != NULL) {
-		pixman_image_unref(output->hw_surface);
-		output->hw_surface = NULL;
-	}
-
-	fbdev_frame_buffer_destroy(output);
-}
-
 static void
 fbdev_backend_destroy(struct weston_compositor *base)
 {
@@ -653,6 +649,8 @@ fbdev_backend_destroy(struct weston_compositor *base)
 
 	/* Chain up. */
 	weston_launcher_destroy(base->launcher);
+
+	udev_unref(backend->udev);
 
 	free(backend);
 }
@@ -680,7 +678,7 @@ session_notify(struct wl_listener *listener, void *data)
 		udev_input_disable(&backend->input);
 
 		wl_list_for_each(output, &compositor->output_list, link) {
-			fbdev_output_disable(output);
+			fbdev_frame_buffer_unmap(to_fbdev_output(output));
 		}
 
 		backend->prev_state = compositor->state;
@@ -700,12 +698,6 @@ session_notify(struct wl_listener *listener, void *data)
 	}
 }
 
-static void
-fbdev_restore(struct weston_compositor *compositor)
-{
-	weston_launcher_restore(compositor->launcher);
-}
-
 static struct fbdev_backend *
 fbdev_backend_create(struct weston_compositor *compositor,
                      struct weston_fbdev_backend_config *param)
@@ -720,6 +712,7 @@ fbdev_backend_create(struct weston_compositor *compositor,
 		return NULL;
 
 	backend->compositor = compositor;
+	compositor->backend = &backend->base;
 	if (weston_compositor_set_presentation_clock_software(
 							compositor) < 0)
 		goto out_compositor;
@@ -737,13 +730,13 @@ fbdev_backend_create(struct weston_compositor *compositor,
 	compositor->launcher =
 		weston_launcher_connect(compositor, param->tty, "seat0", false);
 	if (!compositor->launcher) {
-		weston_log("fatal: fbdev backend should be run "
-			   "using weston-launch binary or as root\n");
+		weston_log("fatal: fbdev backend should be run using "
+			   "weston-launch binary, or your system should "
+			   "provide the logind D-Bus API.\n");
 		goto out_udev;
 	}
 
 	backend->base.destroy = fbdev_backend_destroy;
-	backend->base.restore = fbdev_restore;
 
 	backend->prev_state = WESTON_COMPOSITOR_ACTIVE;
 
@@ -758,7 +751,6 @@ fbdev_backend_create(struct weston_compositor *compositor,
 	udev_input_init(&backend->input, compositor, backend->udev,
 			seat_id, param->configure_device);
 
-	compositor->backend = &backend->base;
 	return backend;
 
 out_launcher:

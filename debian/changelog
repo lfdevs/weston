@@ -1,3 +1,15 @@
+weston (4.0.0-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Rename packages for soname bump.
+  * Update symbols.
+  * Update Vcs-* for salsa.
+  * Make libweston-4-dev priority optional.
+  * Update copyright.
+  * Enable systemd notify support. Closes: #886919.
+
+ -- Emilio Pozuelo Monfort <pochu@debian.org>  Sat, 19 May 2018 13:47:15 +0200
+
 weston (3.0.0-1) unstable; urgency=medium
 
   [ Timo Aaltonen ]

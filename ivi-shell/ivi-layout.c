@@ -27,7 +27,7 @@
  * Implementation of ivi-layout library. The actual view on ivi_screen is
  * not updated until ivi_layout_commit_changes is called. An overview from
  * calling API for updating properties of ivi_surface/ivi_layer to asking
- * compositor to compose them by using weston_compositor_schedule_repaint,
+ * compositor to compose them by using weston_view_schedule_repaint,
  * 0/ initialize this library by ivi_layout_init_with_compositor
  *    with (struct weston_compositor *ec) from ivi-shell.
  * 1/ When an API for updating properties of ivi_surface/ivi_layer, it updates
@@ -51,8 +51,8 @@
  * 4/ According properties, set transformation by using weston_matrix and
  *    weston_view per ivi_surfaces and ivi_layers in while loop.
  * 5/ Set damage and trigger transform by using weston_view_geometry_dirty.
- * 6/ Notify update of properties.
- * 7/ Trigger composition by weston_compositor_schedule_repaint.
+ * 6/ Schedule repaint for each view by using weston_view_schedule_repaint.
+ * 7/ Notify update of properties.
  *
  */
 #include "config.h"
@@ -577,13 +577,13 @@ update_prop(struct ivi_layout_view *ivi_view)
 			       &ivi_view->transform.link);
 
 		weston_view_set_transform_parent(ivi_view->view, NULL);
+		weston_view_geometry_dirty(ivi_view->view);
+		weston_view_update_transform(ivi_view->view);
 	}
 
 	ivisurf->update_count++;
 
-	weston_view_geometry_dirty(ivi_view->view);
-
-	weston_surface_damage(ivisurf->surface);
+	weston_view_schedule_repaint(ivi_view->view);
 }
 
 static void
@@ -617,7 +617,7 @@ commit_changes(struct ivi_layout *layout)
 			* the weston_view below this ivi_view. Otherwise content
 			* of this ivi_view will stay visible.
 			*/
-			if ((ivilayer->prop.event_mask | ivisurf->prop.event_mask) &&
+			if ((ivilayer->prop.event_mask | ivisurf->prop.event_mask) &
 			    IVI_NOTIFICATION_VISIBILITY)
 				weston_view_damage_below(ivi_view->view);
 
@@ -822,7 +822,6 @@ commit_screen_list(struct ivi_layout *layout)
 				weston_layer_entry_insert(&layout->layout_layer.view_list,
 							  &ivi_view->view->layer_link);
 
-				ivi_view->view->output = iviscrn->output;
 				ivi_view->ivisurf->surface->is_mapped = true;
 				ivi_view->view->is_mapped = true;
 			}
@@ -1539,6 +1538,11 @@ ivi_layout_screen_add_layer(struct weston_output *output,
 
 	iviscrn = get_screen_from_output(output);
 
+	/*if layer is already assigned to screen make order of it dirty
+	 * we are going to remove it (in commit_screen_list)*/
+	if (addlayer->on_screen)
+		addlayer->on_screen->order.dirty = 1;
+
 	wl_list_remove(&addlayer->pending.link);
 	wl_list_insert(&iviscrn->pending.layer_list, &addlayer->pending.link);
 
@@ -1752,7 +1756,6 @@ ivi_layout_commit_changes(void)
 
 	commit_changes(layout);
 	send_prop(layout);
-	weston_compositor_schedule_repaint(layout->compositor);
 
 	return IVI_SUCCEEDED;
 }
@@ -1906,6 +1909,8 @@ ivi_layout_surface_create(struct weston_surface *wl_surface,
 	return ivisurf;
 }
 
+static struct ivi_layout_interface ivi_layout_interface;
+
 void
 ivi_layout_init_with_compositor(struct weston_compositor *ec)
 {
@@ -1934,6 +1939,10 @@ ivi_layout_init_with_compositor(struct weston_compositor *ec)
 
 	layout->transitions = ivi_layout_transition_set_create(ec);
 	wl_list_init(&layout->pending_transition_list);
+
+	weston_plugin_api_register(ec, IVI_LAYOUT_API_NAME,
+				   &ivi_layout_interface,
+				   sizeof(struct ivi_layout_interface));
 }
 
 static struct ivi_layout_interface ivi_layout_interface = {
@@ -2006,43 +2015,3 @@ static struct ivi_layout_interface ivi_layout_interface = {
 	.surface_get_size		= ivi_layout_surface_get_size,
 	.surface_dump			= ivi_layout_surface_dump,
 };
-
-int
-load_controller_modules(struct weston_compositor *compositor, const char *modules,
-			int *argc, char *argv[])
-{
-	const char *p, *end;
-	char buffer[256];
-	int (*controller_module_init)(struct weston_compositor *compositor,
-				      int *argc, char *argv[],
-				      const struct ivi_layout_interface *interface,
-				      size_t interface_version);
-
-	if (modules == NULL)
-		return 0;
-
-	p = modules;
-	while (*p) {
-		end = strchrnul(p, ',');
-		snprintf(buffer, sizeof buffer, "%.*s", (int)(end - p), p);
-
-		controller_module_init =
-			wet_load_module_entrypoint(buffer,
-						   "controller_module_init");
-		if (!controller_module_init)
-			return -1;
-
-		if (controller_module_init(compositor, argc, argv,
-					   &ivi_layout_interface,
-				sizeof(struct ivi_layout_interface)) != 0) {
-			weston_log("ivi-shell: Initialization of controller module fails");
-			return -1;
-		}
-
-		p = end;
-		while (*p == ',')
-			p++;
-	}
-
-	return 0;
-}

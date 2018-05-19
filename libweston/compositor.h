@@ -101,7 +101,8 @@ struct weston_mode {
 
 struct weston_animation {
 	void (*frame)(struct weston_animation *animation,
-		      struct weston_output *output, uint32_t msecs);
+		      struct weston_output *output,
+		      const struct timespec *time);
 	int frame_counter;
 	struct wl_list link;
 };
@@ -119,7 +120,7 @@ struct weston_spring {
 	double target;
 	double previous;
 	double min, max;
-	uint32_t timestamp;
+	struct timespec timestamp;
 	uint32_t clip;
 };
 
@@ -192,7 +193,7 @@ struct weston_output {
 	struct wl_signal frame_signal;
 	struct wl_signal destroy_signal;
 	int move_x, move_y;
-	uint32_t frame_time; /* presentation timestamp in milliseconds */
+	struct timespec frame_time; /* presentation timestamp */
 	uint64_t msc;        /* media stream counter */
 	int disable_planes;
 	int destroying;
@@ -248,7 +249,7 @@ enum weston_pointer_motion_mask {
 
 struct weston_pointer_motion_event {
 	uint32_t mask;
-	uint64_t time_usec;
+	struct timespec time;
 	double x;
 	double y;
 	double dx;
@@ -267,12 +268,14 @@ struct weston_pointer_axis_event {
 struct weston_pointer_grab;
 struct weston_pointer_grab_interface {
 	void (*focus)(struct weston_pointer_grab *grab);
-	void (*motion)(struct weston_pointer_grab *grab, uint32_t time,
+	void (*motion)(struct weston_pointer_grab *grab,
+		       const struct timespec *time,
 		       struct weston_pointer_motion_event *event);
 	void (*button)(struct weston_pointer_grab *grab,
-		       uint32_t time, uint32_t button, uint32_t state);
+		       const struct timespec *time,
+		       uint32_t button, uint32_t state);
 	void (*axis)(struct weston_pointer_grab *grab,
-		     uint32_t time,
+		     const struct timespec *time,
 		     struct weston_pointer_axis_event *event);
 	void (*axis_source)(struct weston_pointer_grab *grab, uint32_t source);
 	void (*frame)(struct weston_pointer_grab *grab);
@@ -286,8 +289,8 @@ struct weston_pointer_grab {
 
 struct weston_keyboard_grab;
 struct weston_keyboard_grab_interface {
-	void (*key)(struct weston_keyboard_grab *grab, uint32_t time,
-		    uint32_t key, uint32_t state);
+	void (*key)(struct weston_keyboard_grab *grab,
+		    const struct timespec *time, uint32_t key, uint32_t state);
 	void (*modifiers)(struct weston_keyboard_grab *grab, uint32_t serial,
 			  uint32_t mods_depressed, uint32_t mods_latched,
 			  uint32_t mods_locked, uint32_t group);
@@ -302,15 +305,15 @@ struct weston_keyboard_grab {
 struct weston_touch_grab;
 struct weston_touch_grab_interface {
 	void (*down)(struct weston_touch_grab *grab,
-			uint32_t time,
+			const struct timespec *time,
 			int touch_id,
 			wl_fixed_t sx,
 			wl_fixed_t sy);
 	void (*up)(struct weston_touch_grab *grab,
-			uint32_t time,
+			const struct timespec *time,
 			int touch_id);
 	void (*motion)(struct weston_touch_grab *grab,
-			uint32_t time,
+			const struct timespec *time,
 			int touch_id,
 			wl_fixed_t sx,
 			wl_fixed_t sy);
@@ -381,13 +384,15 @@ struct weston_pointer {
 	wl_fixed_t grab_x, grab_y;
 	uint32_t grab_button;
 	uint32_t grab_serial;
-	uint32_t grab_time;
+	struct timespec grab_time;
 
 	wl_fixed_t x, y;
 	wl_fixed_t sx, sy;
 	uint32_t button_count;
 
 	struct wl_listener output_destroy_listener;
+
+	struct wl_list timestamps_list;
 };
 
 
@@ -409,7 +414,9 @@ struct weston_touch {
 	int grab_touch_id;
 	wl_fixed_t grab_x, grab_y;
 	uint32_t grab_serial;
-	uint32_t grab_time;
+	struct timespec grab_time;
+
+	struct wl_list timestamps_list;
 };
 
 void
@@ -422,16 +429,18 @@ weston_pointer_create(struct weston_seat *seat);
 void
 weston_pointer_destroy(struct weston_pointer *pointer);
 void
-weston_pointer_send_motion(struct weston_pointer *pointer, uint32_t time,
+weston_pointer_send_motion(struct weston_pointer *pointer,
+			   const struct timespec *time,
 			   struct weston_pointer_motion_event *event);
 bool
 weston_pointer_has_focus_resource(struct weston_pointer *pointer);
 void
 weston_pointer_send_button(struct weston_pointer *pointer,
-			   uint32_t time, uint32_t button, uint32_t state_w);
+			   const struct timespec *time,
+			   uint32_t button, uint32_t state_w);
 void
 weston_pointer_send_axis(struct weston_pointer *pointer,
-			 uint32_t time,
+			 const struct timespec *time,
 			 struct weston_pointer_axis_event *event);
 void
 weston_pointer_send_axis_source(struct weston_pointer *pointer,
@@ -487,7 +496,7 @@ bool
 weston_keyboard_has_focus_resource(struct weston_keyboard *keyboard);
 void
 weston_keyboard_send_key(struct weston_keyboard *keyboard,
-			 uint32_t time, uint32_t key,
+			 const struct timespec *time, uint32_t key,
 			 enum wl_keyboard_key_state state);
 void
 weston_keyboard_send_modifiers(struct weston_keyboard *keyboard,
@@ -511,13 +520,15 @@ weston_touch_end_grab(struct weston_touch *touch);
 bool
 weston_touch_has_focus_resource(struct weston_touch *touch);
 void
-weston_touch_send_down(struct weston_touch *touch, uint32_t time,
+weston_touch_send_down(struct weston_touch *touch, const struct timespec *time,
 		       int touch_id, wl_fixed_t x, wl_fixed_t y);
 void
-weston_touch_send_up(struct weston_touch *touch, uint32_t time, int touch_id);
+weston_touch_send_up(struct weston_touch *touch, const struct timespec *time,
+		     int touch_id);
 void
-weston_touch_send_motion(struct weston_touch *touch, uint32_t time,
-			 int touch_id, wl_fixed_t x, wl_fixed_t y);
+weston_touch_send_motion(struct weston_touch *touch,
+			 const struct timespec *time, int touch_id,
+			 wl_fixed_t x, wl_fixed_t y);
 void
 weston_touch_send_frame(struct weston_touch *touch);
 
@@ -578,7 +589,7 @@ struct weston_keyboard {
 	struct weston_keyboard_grab default_grab;
 	uint32_t grab_key;
 	uint32_t grab_serial;
-	uint32_t grab_time;
+	struct timespec grab_time;
 
 	struct wl_array keys;
 
@@ -598,6 +609,8 @@ struct weston_keyboard {
 		enum weston_led leds;
 	} xkb_state;
 	struct xkb_keymap *pending_keymap;
+
+	struct wl_list timestamps_list;
 };
 
 struct weston_seat {
@@ -748,10 +761,12 @@ struct weston_renderer {
 	bool (*import_dmabuf)(struct weston_compositor *ec,
 			      struct linux_dmabuf_buffer *buffer);
 
-	bool (*query_dmabuf_formats)(struct weston_compositor *ec,
+	/** On error sets num_formats to zero */
+	void (*query_dmabuf_formats)(struct weston_compositor *ec,
 				int **formats, int *num_formats);
 
-	bool (*query_dmabuf_modifiers)(struct weston_compositor *ec,
+	/** On error sets num_modifiers to zero */
+	void (*query_dmabuf_modifiers)(struct weston_compositor *ec,
 				int format, uint64_t **modifiers,
 				int *num_modifiers);
 };
@@ -811,7 +826,6 @@ struct weston_backend_config {
 
 struct weston_backend {
 	void (*destroy)(struct weston_compositor *compositor);
-	void (*restore)(struct weston_compositor *compositor);
 
 	/** Begin a repaint sequence
 	 *
@@ -1352,7 +1366,7 @@ void
 weston_spring_init(struct weston_spring *spring,
 		   double k, double current, double target);
 void
-weston_spring_update(struct weston_spring *spring, uint32_t msec);
+weston_spring_update(struct weston_spring *spring, const struct timespec *time);
 int
 weston_spring_done(struct weston_spring *spring);
 
@@ -1362,16 +1376,16 @@ weston_view_activate(struct weston_view *view,
 		     uint32_t flags);
 
 void
-notify_motion(struct weston_seat *seat, uint32_t time,
+notify_motion(struct weston_seat *seat, const struct timespec *time,
 	      struct weston_pointer_motion_event *event);
 void
-notify_motion_absolute(struct weston_seat *seat, uint32_t time,
+notify_motion_absolute(struct weston_seat *seat, const struct timespec *time,
 		       double x, double y);
 void
-notify_button(struct weston_seat *seat, uint32_t time, int32_t button,
-	      enum wl_pointer_button_state state);
+notify_button(struct weston_seat *seat, const struct timespec *time,
+	      int32_t button, enum wl_pointer_button_state state);
 void
-notify_axis(struct weston_seat *seat, uint32_t time,
+notify_axis(struct weston_seat *seat, const struct timespec *time,
 	    struct weston_pointer_axis_event *event);
 void
 notify_axis_source(struct weston_seat *seat, uint32_t source);
@@ -1380,7 +1394,7 @@ void
 notify_pointer_frame(struct weston_seat *seat);
 
 void
-notify_key(struct weston_seat *seat, uint32_t time, uint32_t key,
+notify_key(struct weston_seat *seat, const struct timespec *time, uint32_t key,
 	   enum wl_keyboard_key_state state,
 	   enum weston_key_state_update update_state);
 void
@@ -1397,8 +1411,8 @@ void
 notify_keyboard_focus_out(struct weston_seat *seat);
 
 void
-notify_touch(struct weston_seat *seat, uint32_t time, int touch_id,
-	     double x, double y, int touch_type);
+notify_touch(struct weston_seat *seat, const struct timespec *time,
+	     int touch_id, double x, double y, int touch_type);
 void
 notify_touch_frame(struct weston_seat *seat);
 
@@ -1470,7 +1484,8 @@ weston_compositor_pick_view(struct weston_compositor *compositor,
 
 struct weston_binding;
 typedef void (*weston_key_binding_handler_t)(struct weston_keyboard *keyboard,
-					     uint32_t time, uint32_t key,
+					     const struct timespec *time,
+					     uint32_t key,
 					     void *data);
 struct weston_binding *
 weston_compositor_add_key_binding(struct weston_compositor *compositor,
@@ -1489,7 +1504,8 @@ weston_compositor_add_modifier_binding(struct weston_compositor *compositor,
 				       void *data);
 
 typedef void (*weston_button_binding_handler_t)(struct weston_pointer *pointer,
-						uint32_t time, uint32_t button,
+						const struct timespec *time,
+						uint32_t button,
 						void *data);
 struct weston_binding *
 weston_compositor_add_button_binding(struct weston_compositor *compositor,
@@ -1499,7 +1515,7 @@ weston_compositor_add_button_binding(struct weston_compositor *compositor,
 				     void *data);
 
 typedef void (*weston_touch_binding_handler_t)(struct weston_touch *touch,
-					       uint32_t time,
+					       const struct timespec *time,
 					       void *data);
 struct weston_binding *
 weston_compositor_add_touch_binding(struct weston_compositor *compositor,
@@ -1508,7 +1524,7 @@ weston_compositor_add_touch_binding(struct weston_compositor *compositor,
 				    void *data);
 
 typedef void (*weston_axis_binding_handler_t)(struct weston_pointer *pointer,
-					      uint32_t time,
+					      const struct timespec *time,
 					      struct weston_pointer_axis_event *event,
 					      void *data);
 struct weston_binding *
@@ -1535,7 +1551,7 @@ weston_binding_list_destroy_all(struct wl_list *list);
 void
 weston_compositor_run_key_binding(struct weston_compositor *compositor,
 				  struct weston_keyboard *keyboard,
-				  uint32_t time,
+				  const struct timespec *time,
 				  uint32_t key,
 				  enum wl_keyboard_key_state state);
 
@@ -1546,20 +1562,24 @@ weston_compositor_run_modifier_binding(struct weston_compositor *compositor,
 				       enum wl_keyboard_key_state state);
 void
 weston_compositor_run_button_binding(struct weston_compositor *compositor,
-				     struct weston_pointer *pointer, uint32_t time,
+				     struct weston_pointer *pointer,
+				     const struct timespec *time,
 				     uint32_t button,
 				     enum wl_pointer_button_state value);
 void
 weston_compositor_run_touch_binding(struct weston_compositor *compositor,
-				    struct weston_touch *touch, uint32_t time,
+				    struct weston_touch *touch,
+				    const struct timespec *time,
 				    int touch_type);
 int
 weston_compositor_run_axis_binding(struct weston_compositor *compositor,
-				   struct weston_pointer *pointer, uint32_t time,
+				   struct weston_pointer *pointer,
+				   const struct timespec *time,
 				   struct weston_pointer_axis_event *event);
 int
 weston_compositor_run_debug_binding(struct weston_compositor *compositor,
-				    struct weston_keyboard *keyboard, uint32_t time,
+				    struct weston_keyboard *keyboard,
+				    const struct timespec *time,
 				    uint32_t key,
 				    enum wl_keyboard_key_state state);
 
@@ -1661,8 +1681,8 @@ void
 weston_buffer_reference(struct weston_buffer_reference *ref,
 			struct weston_buffer *buffer);
 
-uint32_t
-weston_compositor_get_time(void);
+void
+weston_compositor_get_time(struct timespec *time);
 
 void
 weston_compositor_destroy(struct weston_compositor *ec);
@@ -1717,7 +1737,7 @@ void
 weston_output_move(struct weston_output *output, int x, int y);
 
 void
-weston_output_destroy(struct weston_output *output);
+weston_output_release(struct weston_output *output);
 void
 weston_output_transform_coordinate(struct weston_output *output,
 				   double device_x, double device_y,
@@ -1926,7 +1946,8 @@ weston_output_set_transform(struct weston_output *output,
 
 void
 weston_output_init(struct weston_output *output,
-		   struct weston_compositor *compositor);
+		   struct weston_compositor *compositor,
+		   const char *name);
 
 void
 weston_compositor_add_pending_output(struct weston_output *output,

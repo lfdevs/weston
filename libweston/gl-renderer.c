@@ -39,6 +39,16 @@
 #include <assert.h>
 #include <linux/input.h>
 #include <drm_fourcc.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+
+#ifdef HAVE_LINUX_SYNC_FILE_H
+#include <linux/sync_file.h>
+#else
+#include "weston-sync-file.h"
+#endif
+
+#include "timeline.h"
 
 #include "gl-renderer.h"
 #include "vertex-clipping.h"
@@ -47,7 +57,14 @@
 
 #include "shared/helpers.h"
 #include "shared/platform.h"
+#include "shared/timespec-util.h"
 #include "weston-egl-ext.h"
+
+#define GR_GL_VERSION(major, minor) \
+	(((uint32_t)(major) << 16) | (uint32_t)(minor))
+
+#define GR_GL_VERSION_INVALID \
+	GR_GL_VERSION(0, 0)
 
 struct gl_shader {
 	GLuint program;
@@ -87,6 +104,9 @@ struct gl_output_state {
 	enum gl_border_status border_status;
 
 	struct weston_matrix output_matrix;
+
+	/* struct timeline_render_point::link */
+	struct wl_list timeline_render_point_list;
 };
 
 enum buffer_type {
@@ -185,6 +205,8 @@ struct gl_renderer {
 
 	EGLSurface dummy_surface;
 
+	uint32_t gl_version;
+
 	struct wl_array vertices;
 	struct wl_array vtxcnt;
 
@@ -200,6 +222,8 @@ struct gl_renderer {
 	PFNEGLUNBINDWAYLANDDISPLAYWL unbind_display;
 	PFNEGLQUERYWAYLANDBUFFERWL query_buffer;
 	int has_bind_display;
+
+	int has_context_priority;
 
 	int has_egl_image_external;
 
@@ -231,6 +255,25 @@ struct gl_renderer {
 	int has_dmabuf_import_modifiers;
 	PFNEGLQUERYDMABUFFORMATSEXTPROC query_dmabuf_formats;
 	PFNEGLQUERYDMABUFMODIFIERSEXTPROC query_dmabuf_modifiers;
+
+	int has_native_fence_sync;
+	PFNEGLCREATESYNCKHRPROC create_sync;
+	PFNEGLDESTROYSYNCKHRPROC destroy_sync;
+	PFNEGLDUPNATIVEFENCEFDANDROIDPROC dup_native_fence_fd;
+};
+
+enum timeline_render_point_type {
+	TIMELINE_RENDER_POINT_TYPE_BEGIN,
+	TIMELINE_RENDER_POINT_TYPE_END
+};
+
+struct timeline_render_point {
+	struct wl_list link; /* gl_output_state::timeline_render_point_list */
+
+	enum timeline_render_point_type type;
+	int fd;
+	struct weston_output *output;
+	struct wl_event_source *event_source;
 };
 
 static PFNEGLGETPLATFORMDISPLAYEXTPROC get_platform_display = NULL;
@@ -267,6 +310,115 @@ static inline struct gl_renderer *
 get_renderer(struct weston_compositor *ec)
 {
 	return (struct gl_renderer *)ec->renderer;
+}
+
+static int
+linux_sync_file_read_timestamp(int fd, uint64_t *ts)
+{
+	struct sync_file_info file_info = { { 0 } };
+	struct sync_fence_info fence_info = { { 0 } };
+
+	assert(ts != NULL);
+
+	file_info.sync_fence_info = (uint64_t)(uintptr_t)&fence_info;
+	file_info.num_fences = 1;
+
+	if (ioctl(fd, SYNC_IOC_FILE_INFO, &file_info) < 0)
+		return -1;
+
+	*ts = fence_info.timestamp_ns;
+
+	return 0;
+}
+
+static void
+timeline_render_point_destroy(struct timeline_render_point *trp)
+{
+	wl_list_remove(&trp->link);
+	wl_event_source_remove(trp->event_source);
+	close(trp->fd);
+	free(trp);
+}
+
+static int
+timeline_render_point_handler(int fd, uint32_t mask, void *data)
+{
+	struct timeline_render_point *trp = data;
+	const char *tp_name = trp->type == TIMELINE_RENDER_POINT_TYPE_BEGIN ?
+			      "renderer_gpu_begin" : "renderer_gpu_end";
+
+	if (mask & WL_EVENT_READABLE) {
+		uint64_t ts;
+
+		if (linux_sync_file_read_timestamp(trp->fd, &ts) == 0) {
+			struct timespec tspec = { 0 };
+
+			timespec_add_nsec(&tspec, &tspec, ts);
+
+			TL_POINT(tp_name, TLP_GPU(&tspec),
+				 TLP_OUTPUT(trp->output), TLP_END);
+		}
+	}
+
+	timeline_render_point_destroy(trp);
+
+	return 0;
+}
+
+static EGLSyncKHR
+timeline_create_render_sync(struct gl_renderer *gr)
+{
+	static const EGLint attribs[] = { EGL_NONE };
+
+	if (!weston_timeline_enabled_ || !gr->has_native_fence_sync)
+		return EGL_NO_SYNC_KHR;
+
+	return gr->create_sync(gr->egl_display, EGL_SYNC_NATIVE_FENCE_ANDROID,
+			       attribs);
+}
+
+static void
+timeline_submit_render_sync(struct gl_renderer *gr,
+			    struct weston_compositor *ec,
+			    struct weston_output *output,
+			    EGLSyncKHR sync,
+			    enum timeline_render_point_type type)
+{
+	struct gl_output_state *go;
+	struct wl_event_loop *loop;
+	int fd;
+	struct timeline_render_point *trp;
+
+	if (!weston_timeline_enabled_ ||
+	    !gr->has_native_fence_sync ||
+	    sync == EGL_NO_SYNC_KHR)
+		return;
+
+	go = get_output_state(output);
+	loop = wl_display_get_event_loop(ec->wl_display);
+
+	fd = gr->dup_native_fence_fd(gr->egl_display, sync);
+	if (fd == EGL_NO_NATIVE_FENCE_FD_ANDROID)
+		goto out;
+
+	trp = zalloc(sizeof *trp);
+	if (trp == NULL) {
+		close(fd);
+		goto out;
+	}
+
+	trp->type = type;
+	trp->fd = fd;
+	trp->output = output;
+	trp->event_source = wl_event_loop_add_fd(loop, fd,
+						 WL_EVENT_READABLE,
+						 timeline_render_point_handler,
+						 trp);
+
+	wl_list_insert(&go->timeline_render_point_list, &trp->link);
+
+out:
+	gr->destroy_sync(gr->egl_display, sync);
 }
 
 static struct egl_image*
@@ -337,6 +489,7 @@ dmabuf_image_destroy(struct dmabuf_image *image)
 		linux_dmabuf_buffer_set_user_data(image->dmabuf, NULL, NULL);
 
 	wl_list_remove(&image->link);
+	free(image);
 }
 
 static const char *
@@ -1100,9 +1253,12 @@ gl_renderer_repaint_output(struct weston_output *output,
 	pixman_box32_t *rects;
 	pixman_region32_t buffer_damage, total_damage;
 	enum gl_border_status border_damage = BORDER_STATUS_CLEAN;
+	EGLSyncKHR begin_render_sync, end_render_sync;
 
 	if (use_output(output) < 0)
 		return;
+
+	begin_render_sync = timeline_create_render_sync(gr);
 
 	/* Calculate the viewport */
 	glViewport(go->borders[GL_RENDERER_BORDER_LEFT].width,
@@ -1152,6 +1308,8 @@ gl_renderer_repaint_output(struct weston_output *output,
 	pixman_region32_copy(&output->previous_damage, output_damage);
 	wl_signal_emit(&output->frame_signal, output);
 
+	end_render_sync = timeline_create_render_sync(gr);
+
 	if (gr->swap_buffers_with_damage) {
 		pixman_region32_init(&buffer_damage);
 		weston_transformed_region(output->width, output->height,
@@ -1197,6 +1355,14 @@ gl_renderer_repaint_output(struct weston_output *output,
 	}
 
 	go->border_status = BORDER_STATUS_CLEAN;
+
+	/* We have to submit the render sync objects after swap buffers, since
+	 * the objects get assigned a valid sync file fd only after a gl flush.
+	 */
+	timeline_submit_render_sync(gr, compositor, output, begin_render_sync,
+				    TIMELINE_RENDER_POINT_TYPE_BEGIN);
+	timeline_submit_render_sync(gr, compositor, output, end_render_sync,
+				    TIMELINE_RENDER_POINT_TYPE_END);
 }
 
 static int
@@ -1230,6 +1396,18 @@ gl_renderer_read_pixels(struct weston_output *output,
 		     GL_UNSIGNED_BYTE, pixels);
 
 	return 0;
+}
+
+static GLenum gl_format_from_internal(GLenum internal_format)
+{
+	switch (internal_format) {
+	case GL_R8_EXT:
+		return GL_RED_EXT;
+	case GL_RG8_EXT:
+		return GL_RG_EXT;
+	default:
+		return internal_format;
+	}
 }
 
 static void
@@ -1280,7 +1458,7 @@ gl_renderer_flush_damage(struct weston_surface *surface)
 				     gs->pitch / gs->hsub[j],
 				     buffer->height / gs->vsub[j],
 				     0,
-				     gs->gl_format[j],
+				     gl_format_from_internal(gs->gl_format[j]),
 				     gs->gl_pixel_type,
 				     data + gs->offset[j]);
 		}
@@ -1289,20 +1467,20 @@ gl_renderer_flush_damage(struct weston_surface *surface)
 		goto done;
 	}
 
-	glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT, gs->pitch);
-
 	if (gs->needs_full_upload) {
 		glPixelStorei(GL_UNPACK_SKIP_PIXELS_EXT, 0);
 		glPixelStorei(GL_UNPACK_SKIP_ROWS_EXT, 0);
 		wl_shm_buffer_begin_access(buffer->shm_buffer);
 		for (j = 0; j < gs->num_textures; j++) {
 			glBindTexture(GL_TEXTURE_2D, gs->textures[j]);
+			glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT,
+				      gs->pitch / gs->hsub[j]);
 			glTexImage2D(GL_TEXTURE_2D, 0,
 				     gs->gl_format[j],
 				     gs->pitch / gs->hsub[j],
 				     buffer->height / gs->vsub[j],
 				     0,
-				     gs->gl_format[j],
+				     gl_format_from_internal(gs->gl_format[j]),
 				     gs->gl_pixel_type,
 				     data + gs->offset[j]);
 		}
@@ -1317,16 +1495,20 @@ gl_renderer_flush_damage(struct weston_surface *surface)
 
 		r = weston_surface_to_buffer_rect(surface, rectangles[i]);
 
-		glPixelStorei(GL_UNPACK_SKIP_PIXELS_EXT, r.x1);
-		glPixelStorei(GL_UNPACK_SKIP_ROWS_EXT, r.y1);
 		for (j = 0; j < gs->num_textures; j++) {
 			glBindTexture(GL_TEXTURE_2D, gs->textures[j]);
+			glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT,
+				      gs->pitch / gs->hsub[j]);
+			glPixelStorei(GL_UNPACK_SKIP_PIXELS_EXT,
+				      r.x1 / gs->hsub[j]);
+			glPixelStorei(GL_UNPACK_SKIP_ROWS_EXT,
+				      r.y1 / gs->hsub[j]);
 			glTexSubImage2D(GL_TEXTURE_2D, 0,
 					r.x1 / gs->hsub[j],
 					r.y1 / gs->vsub[j],
 					(r.x2 - r.x1) / gs->hsub[j],
 					(r.y2 - r.y1) / gs->vsub[j],
-					gs->gl_format[j],
+					gl_format_from_internal(gs->gl_format[j]),
 					gs->gl_pixel_type,
 					data + gs->offset[j]);
 		}
@@ -1425,7 +1607,6 @@ gl_renderer_attach_shm(struct weston_surface *es, struct weston_buffer *buffer,
 		}
 		break;
 	case WL_SHM_FORMAT_NV12:
-		gs->shader = &gr->texture_shader_y_xuxv;
 		pitch = wl_shm_buffer_get_stride(shm_buffer);
 		gl_pixel_type = GL_UNSIGNED_BYTE;
 		num_planes = 2;
@@ -1434,9 +1615,11 @@ gl_renderer_attach_shm(struct weston_surface *es, struct weston_buffer *buffer,
 		gs->hsub[1] = 2;
 		gs->vsub[1] = 2;
 		if (gr->has_gl_texture_rg) {
+			gs->shader = &gr->texture_shader_y_uv;
 			gl_format[0] = GL_R8_EXT;
 			gl_format[1] = GL_RG8_EXT;
 		} else {
+			gs->shader = &gr->texture_shader_y_xuxv;
 			gl_format[0] = GL_LUMINANCE;
 			gl_format[1] = GL_LUMINANCE_ALPHA;
 		}
@@ -1567,7 +1750,7 @@ gl_renderer_attach_egl(struct weston_surface *es, struct weston_buffer *buffer,
 static void
 gl_renderer_destroy_dmabuf(struct linux_dmabuf_buffer *dmabuf)
 {
-	struct dmabuf_image *image = dmabuf->user_data;
+	struct dmabuf_image *image = linux_dmabuf_buffer_get_user_data(dmabuf);
 
 	dmabuf_image_destroy(image);
 }
@@ -1579,6 +1762,7 @@ import_simple_dmabuf(struct gl_renderer *gr,
 	struct egl_image *image;
 	EGLint attribs[50];
 	int atti = 0;
+	bool has_modifier;
 
 	/* This requires the Mesa commit in
 	 * Mesa 10.3 (08264e5dad4df448e7718e782ad9077902089a07) or
@@ -1595,6 +1779,14 @@ import_simple_dmabuf(struct gl_renderer *gr,
 	attribs[atti++] = EGL_LINUX_DRM_FOURCC_EXT;
 	attribs[atti++] = attributes->format;
 
+	if (attributes->modifier[0] != DRM_FORMAT_MOD_INVALID) {
+		if (!gr->has_dmabuf_import_modifiers)
+			return NULL;
+		has_modifier = true;
+	} else {
+		has_modifier = false;
+	}
+
 	if (attributes->n_planes > 0) {
 		attribs[atti++] = EGL_DMA_BUF_PLANE0_FD_EXT;
 		attribs[atti++] = attributes->fd[0];
@@ -1602,7 +1794,7 @@ import_simple_dmabuf(struct gl_renderer *gr,
 		attribs[atti++] = attributes->offset[0];
 		attribs[atti++] = EGL_DMA_BUF_PLANE0_PITCH_EXT;
 		attribs[atti++] = attributes->stride[0];
-		if (gr->has_dmabuf_import_modifiers) {
+		if (has_modifier) {
 			attribs[atti++] = EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT;
 			attribs[atti++] = attributes->modifier[0] & 0xFFFFFFFF;
 			attribs[atti++] = EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT;
@@ -1617,7 +1809,7 @@ import_simple_dmabuf(struct gl_renderer *gr,
 		attribs[atti++] = attributes->offset[1];
 		attribs[atti++] = EGL_DMA_BUF_PLANE1_PITCH_EXT;
 		attribs[atti++] = attributes->stride[1];
-		if (gr->has_dmabuf_import_modifiers) {
+		if (has_modifier) {
 			attribs[atti++] = EGL_DMA_BUF_PLANE1_MODIFIER_LO_EXT;
 			attribs[atti++] = attributes->modifier[1] & 0xFFFFFFFF;
 			attribs[atti++] = EGL_DMA_BUF_PLANE1_MODIFIER_HI_EXT;
@@ -1632,7 +1824,7 @@ import_simple_dmabuf(struct gl_renderer *gr,
 		attribs[atti++] = attributes->offset[2];
 		attribs[atti++] = EGL_DMA_BUF_PLANE2_PITCH_EXT;
 		attribs[atti++] = attributes->stride[2];
-		if (gr->has_dmabuf_import_modifiers) {
+		if (has_modifier) {
 			attribs[atti++] = EGL_DMA_BUF_PLANE2_MODIFIER_LO_EXT;
 			attribs[atti++] = attributes->modifier[2] & 0xFFFFFFFF;
 			attribs[atti++] = EGL_DMA_BUF_PLANE2_MODIFIER_HI_EXT;
@@ -1901,38 +2093,52 @@ import_dmabuf(struct gl_renderer *gr,
 	return image;
 }
 
-static bool
+static void
 gl_renderer_query_dmabuf_formats(struct weston_compositor *wc,
 				int **formats, int *num_formats)
 {
 	struct gl_renderer *gr = get_renderer(wc);
+	static const int fallback_formats[] = {
+		DRM_FORMAT_ARGB8888,
+		DRM_FORMAT_XRGB8888,
+		DRM_FORMAT_YUYV,
+		DRM_FORMAT_NV12,
+		DRM_FORMAT_YUV420,
+		DRM_FORMAT_YUV444,
+	};
+	bool fallback = false;
 	EGLint num;
 
 	assert(gr->has_dmabuf_import);
 
 	if (!gr->has_dmabuf_import_modifiers ||
 	    !gr->query_dmabuf_formats(gr->egl_display, 0, NULL, &num)) {
-		*num_formats = 0;
-		return false;
+		num = gr->has_gl_texture_rg ? ARRAY_LENGTH(fallback_formats) : 2;
+		fallback = true;
 	}
 
 	*formats = calloc(num, sizeof(int));
 	if (*formats == NULL) {
 		*num_formats = 0;
-		return false;
+		return;
 	}
-	if (!gr->query_dmabuf_formats(gr->egl_display, num, *formats,
-			(EGLint*) &num)) {
+
+	if (fallback) {
+		memcpy(*formats, fallback_formats, num * sizeof(int));
+		*num_formats = num;
+		return;
+	}
+
+	if (!gr->query_dmabuf_formats(gr->egl_display, num, *formats, &num)) {
 		*num_formats = 0;
 		free(*formats);
-		return false;
+		return;
 	}
 
 	*num_formats = num;
-	return true;
 }
 
-static bool
+static void
 gl_renderer_query_dmabuf_modifiers(struct weston_compositor *wc, int format,
 					uint64_t **modifiers,
 					int *num_modifiers)
@@ -1946,23 +2152,22 @@ gl_renderer_query_dmabuf_modifiers(struct weston_compositor *wc, int format,
 		!gr->query_dmabuf_modifiers(gr->egl_display, format, 0, NULL,
 					    NULL, &num)) {
 		*num_modifiers = 0;
-		return false;
+		return;
 	}
 
 	*modifiers = calloc(num, sizeof(uint64_t));
 	if (*modifiers == NULL) {
 		*num_modifiers = 0;
-		return false;
+		return;
 	}
 	if (!gr->query_dmabuf_modifiers(gr->egl_display, format,
 				num, *modifiers, NULL, &num)) {
 		*num_modifiers = 0;
 		free(*modifiers);
-		return false;
+		return;
 	}
 
 	*num_modifiers = num;
-	return true;
 }
 
 static bool
@@ -1977,7 +2182,7 @@ gl_renderer_import_dmabuf(struct weston_compositor *ec,
 
 	for (i = 0; i < dmabuf->attributes.n_planes; i++) {
 		/* return if EGL doesn't support import modifiers */
-		if (dmabuf->attributes.modifier[i] != 0)
+		if (dmabuf->attributes.modifier[i] != DRM_FORMAT_MOD_INVALID)
 			if (!gr->has_dmabuf_import_modifiers)
 				return false;
 
@@ -2011,6 +2216,7 @@ import_known_dmabuf(struct gl_renderer *gr,
 		image->images[0] = import_simple_dmabuf(gr, &image->dmabuf->attributes);
 		if (!image->images[0])
 			return false;
+		image->num_images = 1;
 		break;
 
 	case IMPORT_TYPE_GL_CONVERSION:
@@ -2821,6 +3027,8 @@ gl_renderer_output_create(struct weston_output *output,
 	for (i = 0; i < BUFFER_DAMAGE_COUNT; i++)
 		pixman_region32_init(&go->buffer_damage[i]);
 
+	wl_list_init(&go->timeline_render_point_list);
+
 	output->renderer_state = go;
 
 	return 0;
@@ -2861,6 +3069,7 @@ gl_renderer_output_destroy(struct weston_output *output)
 {
 	struct gl_renderer *gr = get_renderer(output->compositor);
 	struct gl_output_state *go = get_output_state(output);
+	struct timeline_render_point *trp, *tmp;
 	int i;
 
 	for (i = 0; i < 2; i++)
@@ -2871,6 +3080,13 @@ gl_renderer_output_destroy(struct weston_output *output)
 		       EGL_NO_CONTEXT);
 
 	weston_platform_destroy_egl_surface(gr->egl_display, go->egl_surface);
+
+	if (!wl_list_empty(&go->timeline_render_point_list))
+		weston_log("warning: discarding pending timeline render"
+			   "objects at output destruction");
+
+	wl_list_for_each_safe(trp, tmp, &go->timeline_render_point_list, link)
+		timeline_render_point_destroy(trp);
 
 	free(go);
 }
@@ -2976,6 +3192,9 @@ gl_renderer_setup_egl_extensions(struct weston_compositor *ec)
 		return -1;
 	}
 
+	if (weston_check_egl_extension(extensions, "EGL_IMG_context_priority"))
+		gr->has_context_priority = 1;
+
 	if (weston_check_egl_extension(extensions, "EGL_WL_bind_wayland_display"))
 		gr->has_bind_display = 1;
 	if (gr->has_bind_display) {
@@ -3024,8 +3243,19 @@ gl_renderer_setup_egl_extensions(struct weston_compositor *ec)
 		gr->has_dmabuf_import_modifiers = 1;
 	}
 
-	if (weston_check_egl_extension(extensions, "GL_EXT_texture_rg"))
-		gr->has_gl_texture_rg = 1;
+	if (weston_check_egl_extension(extensions, "EGL_KHR_fence_sync") &&
+	    weston_check_egl_extension(extensions, "EGL_ANDROID_native_fence_sync")) {
+		gr->create_sync =
+			(void *) eglGetProcAddress("eglCreateSyncKHR");
+		gr->destroy_sync =
+			(void *) eglGetProcAddress("eglDestroySyncKHR");
+		gr->dup_native_fence_fd =
+			(void *) eglGetProcAddress("eglDupNativeFenceFDANDROID");
+		gr->has_native_fence_sync = 1;
+	} else {
+		weston_log("warning: Disabling render GPU timeline due to "
+			   "missing EGL_ANDROID_native_fence_sync extension\n");
+	}
 
 	renderer_setup_egl_client_extensions(gr);
 
@@ -3345,7 +3575,8 @@ compile_shaders(struct weston_compositor *ec)
 }
 
 static void
-fragment_debug_binding(struct weston_keyboard *keyboard, uint32_t time,
+fragment_debug_binding(struct weston_keyboard *keyboard,
+		       const struct timespec *time,
 		       uint32_t key, void *data)
 {
 	struct weston_compositor *ec = data;
@@ -3371,7 +3602,8 @@ fragment_debug_binding(struct weston_keyboard *keyboard, uint32_t time,
 }
 
 static void
-fan_debug_repaint_binding(struct weston_keyboard *keyboard, uint32_t time,
+fan_debug_repaint_binding(struct weston_keyboard *keyboard,
+			  const struct timespec *time,
 			  uint32_t key, void *data)
 {
 	struct weston_compositor *compositor = data;
@@ -3379,6 +3611,22 @@ fan_debug_repaint_binding(struct weston_keyboard *keyboard, uint32_t time,
 
 	gr->fan_debug = !gr->fan_debug;
 	weston_compositor_damage_all(compositor);
+}
+
+static uint32_t
+get_gl_version(void)
+{
+	const char *version;
+	int major, minor;
+
+	version = (const char *) glGetString(GL_VERSION);
+	if (version &&
+	    (sscanf(version, "%d.%d", &major, &minor) == 2 ||
+	     sscanf(version, "OpenGL ES %d.%d", &major, &minor) == 2)) {
+		return GR_GL_VERSION(major, minor);
+	}
+
+	return GR_GL_VERSION_INVALID;
 }
 
 static int
@@ -3389,10 +3637,10 @@ gl_renderer_setup(struct weston_compositor *ec, EGLSurface egl_surface)
 	EGLConfig context_config;
 	EGLBoolean ret;
 
-	static const EGLint context_attribs[] = {
-		EGL_CONTEXT_CLIENT_VERSION, 2,
-		EGL_NONE
+	EGLint context_attribs[16] = {
+		EGL_CONTEXT_CLIENT_VERSION, 0,
 	};
+	unsigned int nattr = 2;
 
 	if (!eglBindAPI(EGL_OPENGL_ES_API)) {
 		weston_log("failed to bind EGL_OPENGL_ES_API\n");
@@ -3400,17 +3648,54 @@ gl_renderer_setup(struct weston_compositor *ec, EGLSurface egl_surface)
 		return -1;
 	}
 
+	/*
+	 * Being the compositor we require minimum output latency,
+	 * so request a high priority context for ourselves - that should
+	 * reschedule all of our rendering and its dependencies to be completed
+	 * first. If the driver doesn't permit us to create a high priority
+	 * context, it will fallback to the default priority (MEDIUM).
+	 */
+	if (gr->has_context_priority) {
+		context_attribs[nattr++] = EGL_CONTEXT_PRIORITY_LEVEL_IMG;
+		context_attribs[nattr++] = EGL_CONTEXT_PRIORITY_HIGH_IMG;
+	}
+
+	assert(nattr < ARRAY_LENGTH(context_attribs));
+	context_attribs[nattr] = EGL_NONE;
+
 	context_config = gr->egl_config;
 
 	if (gr->has_configless_context)
 		context_config = EGL_NO_CONFIG_KHR;
 
+	/* try to create an OpenGLES 3 context first */
+	context_attribs[1] = 3;
 	gr->egl_context = eglCreateContext(gr->egl_display, context_config,
 					   EGL_NO_CONTEXT, context_attribs);
 	if (gr->egl_context == NULL) {
-		weston_log("failed to create context\n");
-		gl_renderer_print_egl_error_state();
-		return -1;
+		/* and then fallback to OpenGLES 2 */
+		context_attribs[1] = 2;
+		gr->egl_context = eglCreateContext(gr->egl_display,
+						   context_config,
+						   EGL_NO_CONTEXT,
+						   context_attribs);
+		if (gr->egl_context == NULL) {
+			weston_log("failed to create context\n");
+			gl_renderer_print_egl_error_state();
+			return -1;
+		}
+	}
+
+	if (gr->has_context_priority) {
+		EGLint value = EGL_CONTEXT_PRIORITY_MEDIUM_IMG;
+
+		eglQueryContext(gr->egl_display, gr->egl_context,
+				EGL_CONTEXT_PRIORITY_LEVEL_IMG, &value);
+
+		if (value != EGL_CONTEXT_PRIORITY_HIGH_IMG) {
+			weston_log("Failed to obtain a high priority context.\n");
+			/* Not an error, continue on as normal */
+		}
 	}
 
 	ret = eglMakeCurrent(gr->egl_display, egl_surface,
@@ -3419,6 +3704,13 @@ gl_renderer_setup(struct weston_compositor *ec, EGLSurface egl_surface)
 		weston_log("Failed to make EGL context current.\n");
 		gl_renderer_print_egl_error_state();
 		return -1;
+	}
+
+	gr->gl_version = get_gl_version();
+	if (gr->gl_version == GR_GL_VERSION_INVALID) {
+		weston_log("warning: failed to detect GLES version, "
+			   "defaulting to 2.0.\n");
+		gr->gl_version = GR_GL_VERSION(2, 0);
 	}
 
 	log_egl_gl_info(gr->egl_display);
@@ -3442,8 +3734,13 @@ gl_renderer_setup(struct weston_compositor *ec, EGLSurface egl_surface)
 	else
 		ec->read_format = PIXMAN_a8b8g8r8;
 
-	if (weston_check_egl_extension(extensions, "GL_EXT_unpack_subimage"))
+	if (gr->gl_version >= GR_GL_VERSION(3, 0) ||
+	    weston_check_egl_extension(extensions, "GL_EXT_unpack_subimage"))
 		gr->has_unpack_subimage = 1;
+
+	if (gr->gl_version >= GR_GL_VERSION(3, 0) ||
+	    weston_check_egl_extension(extensions, "GL_EXT_texture_rg"))
+		gr->has_gl_texture_rg = 1;
 
 	if (weston_check_egl_extension(extensions, "GL_OES_EGL_image_external"))
 		gr->has_egl_image_external = 1;

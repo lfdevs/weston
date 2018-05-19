@@ -1,5 +1,5 @@
 /*
- * Copyright © 2012 Intel Corporation
+ * Copyright © 2017 Collabora, Ltd.
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -23,39 +23,24 @@
  * SOFTWARE.
  */
 
+#ifndef INPUT_TIMESTAMPS_HELPER_H
+#define INPUT_TIMESTAMPS_HELPER_H
+
 #include "config.h"
 
-#include <linux/input.h>
+struct client;
+struct input_timestamps;
 
-#include "weston-test-client-helper.h"
+struct input_timestamps *
+input_timestamps_create_for_keyboard(struct client *client);
 
-TEST(simple_button_test)
-{
-	struct client *client;
-	struct pointer *pointer;
+struct input_timestamps *
+input_timestamps_create_for_pointer(struct client *client);
 
-	client = create_client_and_test_surface(100, 100, 100, 100);
-	assert(client);
+struct input_timestamps *
+input_timestamps_create_for_touch(struct client *client);
 
-	pointer = client->input->pointer;
+void
+input_timestamps_destroy(struct input_timestamps *input_ts);
 
-	assert(pointer->button == 0);
-	assert(pointer->state == 0);
-
-	weston_test_move_pointer(client->test->weston_test, 150, 150);
-	client_roundtrip(client);
-	assert(pointer->x == 50);
-	assert(pointer->y == 50);
-
-	weston_test_send_button(client->test->weston_test, BTN_LEFT,
-			    WL_POINTER_BUTTON_STATE_PRESSED);
-	client_roundtrip(client);
-	assert(pointer->button == BTN_LEFT);
-	assert(pointer->state == WL_POINTER_BUTTON_STATE_PRESSED);
-
-	weston_test_send_button(client->test->weston_test, BTN_LEFT,
-			    WL_POINTER_BUTTON_STATE_RELEASED);
-	client_roundtrip(client);
-	assert(pointer->button == BTN_LEFT);
-	assert(pointer->state == WL_POINTER_BUTTON_STATE_RELEASED);
-}
+#endif /* INPUT_TIMESTAMPS_HELPER_H */

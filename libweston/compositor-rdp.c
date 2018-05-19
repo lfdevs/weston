@@ -76,7 +76,12 @@
 #include <freerdp/locale/keyboard.h>
 #include <winpr/input.h>
 
+#if FREERDP_VERSION_MAJOR >= 2
+#include <winpr/ssl.h>
+#endif
+
 #include "shared/helpers.h"
+#include "shared/timespec-util.h"
 #include "compositor.h"
 #include "compositor-rdp.h"
 #include "pixman-renderer.h"
@@ -484,7 +489,6 @@ rdp_output_set_size(struct weston_output *base,
 	assert(!output->base.current_mode);
 
 	wl_list_init(&output->peers);
-	wl_list_init(&output->base.mode_list);
 
 	initMode.flags = WL_OUTPUT_MODE_CURRENT | WL_OUTPUT_MODE_PREFERRED;
 	initMode.width = width;
@@ -567,7 +571,7 @@ rdp_output_destroy(struct weston_output *base)
 	struct rdp_output *output = to_rdp_output(base);
 
 	rdp_output_disable(&output->base);
-	weston_output_destroy(&output->base);
+	weston_output_release(&output->base);
 
 	free(output);
 }
@@ -581,20 +585,15 @@ rdp_backend_create_output(struct weston_compositor *compositor)
 	if (output == NULL)
 		return -1;
 
-	output->base.name =  strdup("rdp");
+	weston_output_init(&output->base, compositor, "rdp");
+
 	output->base.destroy = rdp_output_destroy;
 	output->base.disable = rdp_output_disable;
 	output->base.enable = rdp_output_enable;
 
-	weston_output_init(&output->base, compositor);
 	weston_compositor_add_pending_output(&output->base, compositor);
 
 	return 0;
-}
-
-static void
-rdp_restore(struct weston_compositor *ec)
-{
 }
 
 static void
@@ -1013,7 +1012,8 @@ xf_peer_activate(freerdp_peer* client)
 	return TRUE;
 }
 
-static BOOL xf_peer_post_connect(freerdp_peer *client)
+static BOOL
+xf_peer_post_connect(freerdp_peer *client)
 {
 	return TRUE;
 }
@@ -1025,11 +1025,13 @@ xf_mouseEvent(rdpInput *input, UINT16 flags, UINT16 x, UINT16 y)
 	struct rdp_output *output;
 	uint32_t button = 0;
 	bool need_frame = false;
+	struct timespec time;
 
 	if (flags & PTR_FLAGS_MOVE) {
 		output = peerContext->rdpBackend->output;
 		if (x < output->base.width && y < output->base.height) {
-			notify_motion_absolute(peerContext->item.seat, weston_compositor_get_time(),
+			weston_compositor_get_time(&time);
+			notify_motion_absolute(peerContext->item.seat, &time,
 					x, y);
 			need_frame = true;
 		}
@@ -1043,7 +1045,8 @@ xf_mouseEvent(rdpInput *input, UINT16 flags, UINT16 x, UINT16 y)
 		button = BTN_MIDDLE;
 
 	if (button) {
-		notify_button(peerContext->item.seat, weston_compositor_get_time(), button,
+		weston_compositor_get_time(&time);
+		notify_button(peerContext->item.seat, &time, button,
 			(flags & PTR_FLAGS_DOWN) ? WL_POINTER_BUTTON_STATE_PRESSED : WL_POINTER_BUTTON_STATE_RELEASED
 		);
 		need_frame = true;
@@ -1059,7 +1062,7 @@ xf_mouseEvent(rdpInput *input, UINT16 flags, UINT16 x, UINT16 y)
 		 *
 		 * https://blogs.msdn.microsoft.com/oldnewthing/20130123-00/?p=5473 explains the 120 value
 		 */
-		value = (flags & 0xff) / 120.0;
+		value = -(flags & 0xff) / 120.0;
 		if (flags & PTR_FLAGS_WHEEL_NEGATIVE)
 			value = -value;
 
@@ -1068,8 +1071,9 @@ xf_mouseEvent(rdpInput *input, UINT16 flags, UINT16 x, UINT16 y)
 		weston_event.discrete = (int)value;
 		weston_event.has_discrete = true;
 
-		notify_axis(peerContext->item.seat, weston_compositor_get_time(),
-			    &weston_event);
+		weston_compositor_get_time(&time);
+
+		notify_axis(peerContext->item.seat, &time, &weston_event);
 		need_frame = true;
 	}
 
@@ -1084,11 +1088,12 @@ xf_extendedMouseEvent(rdpInput *input, UINT16 flags, UINT16 x, UINT16 y)
 {
 	RdpPeerContext *peerContext = (RdpPeerContext *)input->context;
 	struct rdp_output *output;
+	struct timespec time;
 
 	output = peerContext->rdpBackend->output;
 	if (x < output->base.width && y < output->base.height) {
-		notify_motion_absolute(peerContext->item.seat, weston_compositor_get_time(),
-				x, y);
+		weston_compositor_get_time(&time);
+		notify_motion_absolute(peerContext->item.seat, &time, x, y);
 	}
 
 	FREERDP_CB_RETURN(TRUE);
@@ -1125,6 +1130,7 @@ xf_input_keyboard_event(rdpInput *input, UINT16 flags, UINT16 code)
 	enum wl_keyboard_key_state keyState;
 	RdpPeerContext *peerContext = (RdpPeerContext *)input->context;
 	int notify = 0;
+	struct timespec time;
 
 	if (!(peerContext->item.flags & RDP_PEER_ACTIVATED))
 		FREERDP_CB_RETURN(TRUE);
@@ -1150,7 +1156,8 @@ xf_input_keyboard_event(rdpInput *input, UINT16 flags, UINT16 code)
 
 		/*weston_log("code=%x ext=%d vk_code=%x scan_code=%x\n", code, (flags & KBD_FLAGS_EXTENDED) ? 1 : 0,
 				vk_code, scan_code);*/
-		notify_key(peerContext->item.seat, weston_compositor_get_time(),
+		weston_compositor_get_time(&time);
+		notify_key(peerContext->item.seat, &time,
 					scan_code - 8, keyState, STATE_UPDATE_AUTOMATIC);
 	}
 
@@ -1166,7 +1173,7 @@ xf_input_unicode_keyboard_event(rdpInput *input, UINT16 flags, UINT16 code)
 
 
 static FREERDP_CB_RET_TYPE
-xf_suppress_output(rdpContext *context, BYTE allow, RECTANGLE_16 *area)
+xf_suppress_output(rdpContext *context, BYTE allow, const RECTANGLE_16 *area)
 {
 	RdpPeerContext *peerContext = (RdpPeerContext *)context;
 
@@ -1227,7 +1234,7 @@ rdp_peer_init(freerdp_peer *client, struct rdp_backend *b)
 	client->PostConnect = xf_peer_post_connect;
 	client->Activate = xf_peer_activate;
 
-	client->update->SuppressOutput = xf_suppress_output;
+	client->update->SuppressOutput = (pSuppressOutput)xf_suppress_output;
 
 	input = client->input;
 	input->SynchronizeEvent = xf_input_synchronize_event;
@@ -1291,9 +1298,10 @@ rdp_backend_create(struct weston_compositor *compositor,
 
 	b->compositor = compositor;
 	b->base.destroy = rdp_destroy;
-	b->base.restore = rdp_restore;
 	b->rdp_key = config->rdp_key ? strdup(config->rdp_key) : NULL;
 	b->no_clients_resize = config->no_clients_resize;
+
+	compositor->backend = &b->base;
 
 	/* activate TLS only if certificate/key are available */
 	if (config->server_cert && config->server_key) {
@@ -1341,8 +1349,6 @@ rdp_backend_create(struct weston_compositor *compositor,
 			goto err_output;
 	}
 
-	compositor->backend = &b->base;
-
 	ret = weston_plugin_api_register(compositor, WESTON_RDP_OUTPUT_API_NAME,
 					 &api, sizeof(api));
 
@@ -1356,7 +1362,7 @@ rdp_backend_create(struct weston_compositor *compositor,
 err_listener:
 	freerdp_listener_free(b->listener);
 err_output:
-	weston_output_destroy(&b->output->base);
+	weston_output_release(&b->output->base);
 err_compositor:
 	weston_compositor_shutdown(compositor);
 err_free_strings:
@@ -1387,6 +1393,9 @@ weston_backend_init(struct weston_compositor *compositor,
 	struct weston_rdp_backend_config config = {{ 0, }};
 	int major, minor, revision;
 
+#if FREERDP_VERSION_MAJOR >= 2
+	winpr_InitializeSSL(0);
+#endif
 	freerdp_get_version(&major, &minor, &revision);
 	weston_log("using FreeRDP version %d.%d.%d\n", major, minor, revision);
 
