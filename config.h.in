@@ -45,8 +45,14 @@
 /* Define to 1 if you have the <dlfcn.h> header file. */
 #undef HAVE_DLFCN_H
 
+/* libdrm supports modifiers */
+#undef HAVE_DRM_ADDFB2_MODIFIERS
+
 /* libdrm supports atomic API */
 #undef HAVE_DRM_ATOMIC
+
+/* libdrm supports modifier advertisement */
+#undef HAVE_DRM_FORMATS_BLOB
 
 /* Define to 1 if you have the <execinfo.h> header file. */
 #undef HAVE_EXECINFO_H
@@ -54,8 +60,11 @@
 /* Define to 1 if you have the <freerdp/version.h> header file. */
 #undef HAVE_FREERDP_VERSION_H
 
-/* gbm supports dmabuf import */
+/* gbm supports import with modifiers */
 #undef HAVE_GBM_FD_IMPORT
+
+/* GBM supports modifiers */
+#undef HAVE_GBM_MODIFIERS
 
 /* Define to 1 if you have the `initgroups' function. */
 #undef HAVE_INITGROUPS
@@ -68,6 +77,9 @@
 
 /* Have lcms support */
 #undef HAVE_LCMS
+
+/* Build etnaviv dmabuf client */
+#undef HAVE_LIBDRM_ETNAVIV
 
 /* Build freedreno dmabuf client */
 #undef HAVE_LIBDRM_FREEDRENO
@@ -104,6 +116,9 @@
 
 /* Define to 1 if you have the <string.h> header file. */
 #undef HAVE_STRING_H
+
+/* SURFACE_BITS_CMD has bmp field */
+#undef HAVE_SURFACE_BITS_BMP
 
 /* Have systemd-login */
 #undef HAVE_SYSTEMD_LOGIN

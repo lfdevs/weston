@@ -1,18 +1,18 @@
-m4_define([weston_major_version], [4])
+m4_define([weston_major_version], [5])
 m4_define([weston_minor_version], [0])
 m4_define([weston_micro_version], [0])
 m4_define([weston_version],
           [weston_major_version.weston_minor_version.weston_micro_version])
-m4_define([libweston_major_version], [4])
+m4_define([libweston_major_version], [5])
 m4_define([libweston_minor_version], [0])
 m4_define([libweston_patch_version], [0])
 
 AC_PREREQ([2.64])
 AC_INIT([weston],
         [weston_version],
-        [https://bugs.freedesktop.org/enter_bug.cgi?product=Wayland&component=weston&version=weston_version],
+        [https://gitlab.freedesktop.org/wayland/weston/issues/],
         [weston],
-        [http://wayland.freedesktop.org])
+        [https://wayland.freedesktop.org])
 
 WAYLAND_PREREQ_VERSION="1.12.0"
 
@@ -113,7 +113,7 @@ AC_CHECK_FUNCS([mkostemp strchrnul initgroups posix_fallocate])
 
 # check for libdrm as a build-time dependency only
 # libdrm 2.4.30 introduced drm_fourcc.h.
-PKG_CHECK_MODULES(LIBDRM, [libdrm >= 2.4.30], [], [AC_MSG_ERROR([
+PKG_CHECK_MODULES(LIBDRM, [libdrm >= 2.4.68], [], [AC_MSG_ERROR([
      libdrm is a hard build-time dependency for libweston core,
      but a sufficient version was not found. However, libdrm
      is not a runtime dependency unless you have features
@@ -206,12 +206,21 @@ AM_CONDITIONAL(ENABLE_DRM_COMPOSITOR, test x$enable_drm_compositor = xyes)
 if test x$enable_drm_compositor = xyes; then
   AC_DEFINE([BUILD_DRM_COMPOSITOR], [1], [Build the DRM compositor])
   PKG_CHECK_MODULES(DRM_COMPOSITOR, [libudev >= 136 libdrm >= 2.4.30 gbm])
+  PKG_CHECK_MODULES(DRM_COMPOSITOR_MODIFIERS, [libdrm >= 2.4.71],
+		    [AC_DEFINE([HAVE_DRM_ADDFB2_MODIFIERS], 1, [libdrm supports modifiers])],
+		    [AC_MSG_WARN([libdrm does not support AddFB2 with modifiers])])
   PKG_CHECK_MODULES(DRM_COMPOSITOR_ATOMIC, [libdrm >= 2.4.78],
 		    [AC_DEFINE([HAVE_DRM_ATOMIC], 1, [libdrm supports atomic API])],
 		    [AC_MSG_WARN([libdrm does not support atomic modesetting, will omit that capability])])
-  PKG_CHECK_MODULES(DRM_COMPOSITOR_GBM, [gbm >= 10.2],
-		    [AC_DEFINE([HAVE_GBM_FD_IMPORT], 1, [gbm supports dmabuf import])],
-		    [AC_MSG_WARN([gbm does not support dmabuf import, will omit that capability])])
+  PKG_CHECK_MODULES(DRM_COMPOSITOR_FORMATS_BLOB, [libdrm >= 2.4.83],
+		    [AC_DEFINE([HAVE_DRM_FORMATS_BLOB], 1, [libdrm supports modifier advertisement])],
+		    [AC_MSG_WARN([libdrm does not support modifier advertisement])])
+  PKG_CHECK_MODULES(DRM_COMPOSITOR_GBM_MODIFIERS, [gbm >= 17.1],
+		    [AC_DEFINE([HAVE_GBM_MODIFIERS], 1, [GBM supports modifiers])],
+		    [AC_MSG_WARN([GBM does not support modifiers])])
+  PKG_CHECK_MODULES(DRM_COMPOSITOR_GBM, [gbm >= 17.2],
+		    [AC_DEFINE([HAVE_GBM_FD_IMPORT], 1, [gbm supports import with modifiers])],
+		    [AC_MSG_WARN([GBM does not support dmabuf import, will omit that capability])])
 fi
 
 
@@ -264,10 +273,17 @@ if test x$enable_rdp_compositor = xyes; then
     [],
     [PKG_CHECK_MODULES(RDP_COMPOSITOR, [freerdp >= 1.1.0],[])]
   )
-
   SAVED_CPPFLAGS="$CPPFLAGS"
   CPPFLAGS="$CPPFLAGS $RDP_COMPOSITOR_CFLAGS"
+
   AC_CHECK_HEADERS([freerdp/version.h])
+  AC_CHECK_MEMBER([SURFACE_BITS_COMMAND.bmp],
+	[AC_DEFINE([HAVE_SURFACE_BITS_BMP], [1], [SURFACE_BITS_CMD has bmp field])],
+	[],
+	[[#include <freerdp/update.h>]]
+  )
+
+
   CPPFLAGS="$SAVED_CPPFLAGS"
 fi
 
@@ -384,7 +400,7 @@ AC_ARG_ENABLE(simple-dmabuf-drm-client,
                              [do not build the simple dmabuf drm client]),,
               enable_simple_dmabuf_drm_client="auto")
 if ! test "x$enable_simple_dmabuf_drm_client" = "xno"; then
-  PKG_CHECK_MODULES(SIMPLE_DMABUF_DRM_CLIENT, [wayland-client libdrm egl], [have_simple_dmabuf_libs=yes],
+  PKG_CHECK_MODULES(SIMPLE_DMABUF_DRM_CLIENT, [wayland-client libdrm], [have_simple_dmabuf_libs=yes],
 		    [have_simple_dmabuf_libs=no])
 
   PKG_CHECK_MODULES(LIBDRM_PLATFORM_FREEDRENO, [libdrm_freedreno],
@@ -393,11 +409,14 @@ if ! test "x$enable_simple_dmabuf_drm_client" = "xno"; then
   PKG_CHECK_MODULES(LIBDRM_PLATFORM_INTEL, [libdrm_intel],
       AC_DEFINE([HAVE_LIBDRM_INTEL], [1], [Build intel dmabuf client]) have_simple_dmabuf_drm_client=yes,
       [true])
+  PKG_CHECK_MODULES(LIBDRM_PLATFORM_ETNAVIV, [libdrm_etnaviv],
+      AC_DEFINE([HAVE_LIBDRM_ETNAVIV], [1], [Build etnaviv dmabuf client]) have_simple_dmabuf_drm_client=yes,
+      [true])
 
   if test "x$have_simple_dmabuf_drm_client" != "xyes" -o \
 	  "x$have_simple_dmabuf_libs" = "xno" && \
      test "x$enable_simple_dmabuf_drm_client" = "xyes"; then
-    AC_MSG_ERROR([DRM dmabuf client explicitly enabled, but libdrm_intel or libdrm_freedreno not found])
+    AC_MSG_ERROR([DRM dmabuf client explicitly enabled, but none of libdrm_{intel,freedreno,etnaviv} found])
   fi
 
   if test "x$have_simple_dmabuf_drm_client" = "xyes" -a "x$have_simple_dmabuf_libs" = "xyes"; then

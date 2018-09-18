@@ -1,0 +1,9 @@
+usr/lib/*/libweston-5.so.*
+usr/lib/*/libweston-desktop-5.so.*
+usr/lib/*/libweston-5/drm-backend.so
+usr/lib/*/libweston-5/fbdev-backend.so
+usr/lib/*/libweston-5/gl-renderer.so
+usr/lib/*/libweston-5/headless-backend.so
+usr/lib/*/libweston-5/wayland-backend.so
+usr/lib/*/libweston-5/x11-backend.so
+usr/lib/*/libweston-5/xwayland.so

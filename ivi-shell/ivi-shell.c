@@ -358,8 +358,12 @@ shell_destroy(struct wl_listener *listener, void *data)
 		container_of(listener, struct ivi_shell, destroy_listener);
 	struct ivi_shell_surface *ivisurf, *next;
 
+	wl_list_remove(&shell->destroy_listener.link);
+
 	text_backend_destroy(shell->text_backend);
 	input_panel_destroy(shell);
+
+	wl_list_remove(&shell->wake_listener.link);
 
 	wl_list_for_each_safe(ivisurf, next, &shell->ivi_surface_list, link) {
 		wl_list_remove(&ivisurf->link);
@@ -367,6 +371,17 @@ shell_destroy(struct wl_listener *listener, void *data)
 	}
 
 	free(shell);
+}
+
+/*
+ * Called through the compositor's wake signal.
+ */
+static void
+wake_handler(struct wl_listener *listener, void *data)
+{
+	struct weston_compositor *compositor = data;
+
+	weston_compositor_damage_all(compositor);
 }
 
 static void
@@ -479,6 +494,9 @@ wet_shell_init(struct weston_compositor *compositor,
 
 	shell->destroy_listener.notify = shell_destroy;
 	wl_signal_add(&compositor->destroy_signal, &shell->destroy_listener);
+
+	shell->wake_listener.notify = wake_handler;
+	wl_signal_add(&compositor->wake_signal, &shell->wake_listener);
 
 	if (input_panel_setup(shell) < 0)
 		goto out;

@@ -124,7 +124,7 @@ directory are:
 .TP 7
 .BI "backend=" headless-backend.so
 overrides defaults backend. Available backend modules in the
-.IR "__weston_modules_dir__"
+.IR "__libweston_modules_dir__"
 directory are:
 .PP
 .RS 10
@@ -200,8 +200,47 @@ Available configuration are:
 .TP 7
 .BI "enable_tap=" true
 enables tap to click on touchpad devices
+.TP 7
+.BI "touchscreen_calibrator=" true
+Advertise the touchscreen calibrator interface to all clients. This is a
+potential denial-of-service attack vector, so it should only be enabled on
+trusted userspace. Boolean, defaults to
+.BR false .
+
+The interface is required for running touchscreen calibrator applications. It
+provides the application raw touch events, bypassing the normal touch handling.
+It also allows the application to upload a new calibration into the compositor.
+
+Even though this option is listed in the libinput section, it does affect all
+Weston configurations regardless of the used backend. If the backend does not
+use libinput, the interface can still be advertised, but it will not list any
+devices.
+.TP 7
+.BI "calibration_helper=" /bin/echo
+An optional calibration helper program to permanently save a new touchscreen
+calibration. String, defaults to unset.
+
+The given program will be executed with seven arguments when a calibrator
+application requests the server to take a new calibration matrix into use.
+The program is executed synchronously and will therefore block Weston for its
+duration. If the program exit status is non-zero, Weston will not apply the
+new calibration. If the helper is unset or the program exit status is zero,
+Weston will use the new calibration immediately.
+
+The program is invoked as:
+.PP
+.RS 10
+.I calibration_helper syspath m1 m2 m3 m4 m5 m6
+.RE
 .RS
 .PP
+.RI "where " syspath
+is the udev sys path for the device and
+.IR m1 "  through " m6
+are the calibration matrix elements in libinput's
+.BR LIBINPUT_CALIBRATION_MATRIX " udev property format."
+The sys path is an absolute path and starts with the sys mount point.
+.RE
 
 .SH "SHELL SECTION"
 The
@@ -367,31 +406,11 @@ for more details.
 sets the output mode (string). The mode parameter is handled differently
 depending on the backend. On the X11 backend, it just sets the WIDTHxHEIGHT of
 the weston window.
-The DRM backend accepts different modes:
-.PP
-.RS 10
-.nf
-.BR "WIDTHxHEIGHT    " "Resolution size width and height in pixels"
-.BR "preferred       " "Uses the preferred mode"
-.BR "current         " "Uses the current crt controller mode"
-.BR "off             " "Disables the output"
-.fi
-.RE
-.RS
-.PP
-Optionally, a user may specify a modeline, such as:
-.PP
-.nf
-.in +4n
-.nf
-173.00  1920 2048 2248 2576  1080 1083 1088 1120 -hsync +vsync
-.fi
-.in
-.PP
-It consists of the refresh rate in Hz, horizontal and vertical resolution,
-options for horizontal and vertical synchronisation. The program
-.B "cvt(1)"
-can provide suitable modeline string.
+The DRM backend accepts different modes, along with an option of a modeline string.
+
+See
+.B "weston-drm(7)"
+for examples of modes-formats supported by DRM backend.
 .RE
 .TP 7
 .BI "transform=" normal
@@ -429,7 +448,7 @@ denoting the scaling multiplier for the output.
 .RE
 .TP 7
 .BI "seat=" name
-The logical seat name that that this output should be associated with. If this
+The logical seat name that this output should be associated with. If this
 is set then the seat's input will be confined to the output that has the seat
 set on it. The expectation is that this functionality will be used in a
 multiheaded environment with a single compositor for multiple output and input
@@ -438,7 +457,7 @@ present. This seat can be constrained like any other.
 .RE
 .SH "INPUT-METHOD SECTION"
 .TP 7
-.BI "path=" "/usr/libexec/weston-keyboard"
+.BI "path=" "__weston_libexecdir__/weston-keyboard"
 sets the path of the on screen keyboard input method (string).
 .RE
 .RE
@@ -521,13 +540,13 @@ The terminal shell (string). Sets the $TERM variable.
 .RE
 .SH "XWAYLAND SECTION"
 .TP 7
-.BI "path=" "/usr/bin/Xwayland"
+.BI "path=" "__xserver_path__"
 sets the path to the xserver to run (string).
 .RE
 .RE
 .SH "SCREEN-SHARE SECTION"
 .TP 7
-.BI "command=" "/usr/bin/weston --backend=rdp-backend.so \
+.BI "command=" "__weston_bindir__/weston --backend=rdp-backend.so \
 --shell=fullscreen-shell.so --no-clients-resize"
 sets the command to start a fullscreen-shell server for screen sharing (string).
 .RE

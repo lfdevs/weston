@@ -13,7 +13,7 @@ override_dh_install:
 	dh_install --fail-missing -X.la
 
 override_dh_makeshlibs:
-	dh_makeshlibs -Xlibweston-4/ -- -c4
+	dh_makeshlibs -Xlibweston-5/ -- -c4
 
 override_dh_fixperms:
 	dh_fixperms -Xusr/bin/weston-launch

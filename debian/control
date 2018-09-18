@@ -21,23 +21,24 @@ Build-Depends:
  libwayland-dev (>= 1.11.91),
  libxcb1-dev,
  libxcb-composite0-dev,
+ libxcb-shape0-dev,
  libxcb-xfixes0-dev,
  libxcb-xkb-dev,
  libx11-xcb-dev,
  libx11-dev,
  libudev-dev (>= 136),
- libgbm-dev (>= 10.2),
+ libdrm-dev (>= 2.4.83),
+ libgbm-dev (>= 17.2),
  libxkbcommon-dev (>= 0.3.0),
  libcairo2-dev (>= 1.10.0),
  libpango1.0-dev,
  libgdk-pixbuf2.0-dev,
  libxcursor-dev,
- libmtdev-dev,
  libpam0g-dev,
  libvpx-dev,
  libsystemd-dev,
  libinput-dev (>= 0.8.0),
- wayland-protocols (>= 1.7),
+ wayland-protocols (>= 1.13),
 Standards-Version: 3.9.8
 Homepage: http://wayland.freedesktop.org/
 Vcs-Git: https://salsa.debian.org/xorg-team/wayland/weston.git
@@ -61,7 +62,7 @@ Description: reference implementation of a wayland compositor
  and fast compositor and is suitable for many embedded and mobile use
  cases.
 
-Package: libweston-4-0
+Package: libweston-5-0
 Section: libs
 Architecture: linux-any
 Depends:
@@ -78,11 +79,11 @@ Description: reference implementation of a wayland compositor (shared libs)
  .
  This package includes the libweston shared libraries.
 
-Package: libweston-4-dev
+Package: libweston-5-dev
 Section: libdevel
 Architecture: linux-any
 Depends:
- libweston-4-0 (= ${binary:Version}),
+ libweston-5-0 (= ${binary:Version}),
  libwayland-dev,
  libpixman-1-dev,
  libxkbcommon-dev,

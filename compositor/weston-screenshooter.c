@@ -66,7 +66,7 @@ screenshooter_shoot(struct wl_client *client,
 		    struct wl_resource *buffer_resource)
 {
 	struct weston_output *output =
-		weston_output_from_resource(output_resource);
+		weston_head_from_resource(output_resource)->output;
 	struct weston_buffer *buffer =
 		weston_buffer_from_resource(buffer_resource);
 
@@ -117,12 +117,10 @@ screenshooter_binding(struct weston_keyboard *keyboard,
 {
 	struct screenshooter *shooter = data;
 	char *screenshooter_exe;
-	int ret;
 
-	ret = asprintf(&screenshooter_exe, "%s/%s",
-		       weston_config_get_libexec_dir(),
-		       "/weston-screenshooter");
-	if (ret < 0) {
+
+	screenshooter_exe = wet_get_binary_path("weston-screenshooter");
+	if (!screenshooter_exe) {
 		weston_log("Could not construct screenshooter path.\n");
 		return;
 	}
@@ -163,6 +161,8 @@ screenshooter_destroy(struct wl_listener *listener, void *data)
 {
 	struct screenshooter *shooter =
 		container_of(listener, struct screenshooter, destroy_listener);
+
+	wl_list_remove(&shooter->destroy_listener.link);
 
 	wl_global_destroy(shooter->global);
 	free(shooter);

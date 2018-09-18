@@ -1,3 +1,14 @@
+weston (5.0.0-1) unstable; urgency=medium
+
+  * Update build dependencies.
+  * Update the watch file for the new upstream website layout.
+  * New upstream release.
+  * Bump libdrm-dev and libgbm-dev build dependencies.
+  * Rename packages for soname bump.
+  * Update symbols file.
+
+ -- Emilio Pozuelo Monfort <pochu@debian.org>  Tue, 18 Sep 2018 12:16:49 +0200
+
 weston (4.0.0-1) unstable; urgency=medium
 
   * New upstream release.

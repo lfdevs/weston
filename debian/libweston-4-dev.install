@@ -1,5 +1,0 @@
-usr/include/libweston-4
-usr/lib/*/libweston-4.so
-usr/lib/*/libweston-desktop-4.so
-usr/lib/*/pkgconfig/libweston-4.pc
-usr/lib/*/pkgconfig/libweston-desktop-4.pc

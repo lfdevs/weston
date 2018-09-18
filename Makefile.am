@@ -24,10 +24,8 @@ weston.ini : $(srcdir)/weston.ini.in
 ivi-shell/weston.ini : $(srcdir)/ivi-shell/weston.ini.in
 	$(AM_V_GEN)$(MKDIR_P) $(dir $@) && $(SED) \
 		-e 's|@bindir[@]|$(bindir)|g' \
-		-e 's|@abs_top_builddir[@]|$(abs_top_builddir)|g' \
-		-e 's|@abs_top_srcdir[@]|$(abs_top_srcdir)|g' \
 		-e 's|@libexecdir[@]|$(libexecdir)|g' \
-		-e 's|@plugin_prefix[@]||g' \
+		-e 's|@westondatadir[@]|$(westondatadir)|g' \
 		$< > $@
 
 all-local : weston.ini ivi-shell/weston.ini
@@ -81,6 +79,7 @@ libweston_@LIBWESTON_MAJOR@_la_SOURCES =			\
 	libweston/input.c				\
 	libweston/data-device.c				\
 	libweston/screenshooter.c			\
+	libweston/touch-calibration.c			\
 	libweston/clipboard.c				\
 	libweston/zoom.c				\
 	libweston/bindings.c				\
@@ -168,7 +167,9 @@ nodist_libweston_@LIBWESTON_MAJOR@_la_SOURCES =				\
 	protocol/pointer-constraints-unstable-v1-protocol.c		\
 	protocol/pointer-constraints-unstable-v1-server-protocol.h      \
 	protocol/input-timestamps-unstable-v1-protocol.c		\
-	protocol/input-timestamps-unstable-v1-server-protocol.h
+	protocol/input-timestamps-unstable-v1-server-protocol.h		\
+	protocol/weston-touch-calibration-protocol.c			\
+	protocol/weston-touch-calibration-server-protocol.h
 
 BUILT_SOURCES += $(nodist_libweston_@LIBWESTON_MAJOR@_la_SOURCES)
 
@@ -543,6 +544,7 @@ demo_clients =					\
 	weston-fullscreen			\
 	weston-stacking				\
 	weston-calibrator			\
+	weston-touch-calibrator			\
 	weston-scaler
 
 if INSTALL_DEMO_CLIENTS
@@ -629,6 +631,7 @@ nodist_weston_simple_dmabuf_drm_SOURCES =		\
 weston_simple_dmabuf_drm_CFLAGS = $(AM_CFLAGS) $(SIMPLE_DMABUF_DRM_CLIENT_CFLAGS)
 weston_simple_dmabuf_drm_LDADD = $(SIMPLE_DMABUF_DRM_CLIENT_LIBS) \
 	$(LIBDRM_PLATFORM_FREEDRENO_LIBS) \
+	$(LIBDRM_PLATFORM_ETNAVIV_LIBS)   \
 	$(LIBDRM_PLATFORM_INTEL_LIBS)     \
 	libshared.la
 endif
@@ -781,6 +784,17 @@ weston_calibrator_SOURCES = 				\
 weston_calibrator_LDADD = libtoytoolkit.la
 weston_calibrator_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
+weston_touch_calibrator_SOURCES = 			\
+	clients/touch-calibrator.c			\
+	shared/helpers.h				\
+	shared/matrix.c					\
+	shared/matrix.h
+nodist_weston_touch_calibrator_SOURCES =		\
+	protocol/weston-touch-calibration-protocol.c	\
+	protocol/weston-touch-calibration-client-protocol.h
+weston_touch_calibrator_LDADD = libtoytoolkit.la
+weston_touch_calibrator_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
+
 if BUILD_SUBSURFACES_CLIENT
 demo_clients += weston-subsurfaces
 weston_subsurfaces_SOURCES = 			\
@@ -824,11 +838,13 @@ weston_simple_im_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 weston_info_SOURCES = 					\
 	clients/weston-info.c				\
 	shared/helpers.h
-nodist_weston_info_SOURCES =				\
-	protocol/presentation-time-protocol.c		\
-	protocol/presentation-time-client-protocol.h	\
-	protocol/linux-dmabuf-unstable-v1-protocol.c	\
-	protocol/linux-dmabuf-unstable-v1-client-protocol.h
+nodist_weston_info_SOURCES =					\
+	protocol/presentation-time-protocol.c			\
+	protocol/presentation-time-client-protocol.h		\
+	protocol/linux-dmabuf-unstable-v1-protocol.c		\
+	protocol/linux-dmabuf-unstable-v1-client-protocol.h	\
+	protocol/tablet-unstable-v2-protocol.c			\
+	protocol/tablet-unstable-v2-client-protocol.h
 weston_info_LDADD = $(WESTON_INFO_LIBS) libshared.la
 weston_info_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 
@@ -866,6 +882,8 @@ endif
 BUILT_SOURCES +=					\
 	protocol/weston-screenshooter-protocol.c			\
 	protocol/weston-screenshooter-client-protocol.h			\
+	protocol/weston-touch-calibration-protocol.c			\
+	protocol/weston-touch-calibration-client-protocol.h		\
 	protocol/text-cursor-position-client-protocol.h	\
 	protocol/text-cursor-position-protocol.c	\
 	protocol/text-input-unstable-v1-protocol.c			\
@@ -888,6 +906,8 @@ BUILT_SOURCES +=					\
 	protocol/ivi-application-client-protocol.h	\
 	protocol/linux-dmabuf-unstable-v1-protocol.c	\
 	protocol/linux-dmabuf-unstable-v1-client-protocol.h		\
+	protocol/tablet-unstable-v2-protocol.c		\
+	protocol/tablet-unstable-v2-client-protocol.h			\
 	protocol/input-timestamps-unstable-v1-protocol.c		\
 	protocol/input-timestamps-unstable-v1-client-protocol.h
 
@@ -1455,13 +1475,13 @@ ivi_layout_internal_test_la_LIBADD = $(test_module_libadd)
 ivi_layout_internal_test_la_LDFLAGS = $(test_module_ldflags)
 ivi_layout_internal_test_la_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS)
 ivi_layout_internal_test_la_SOURCES =			\
-	tests/ivi_layout-internal-test.c
+	tests/ivi-layout-internal-test.c
 
 ivi_layout_test_la_LIBADD = $(test_module_libadd)
 ivi_layout_test_la_LDFLAGS = $(test_module_ldflags)
 ivi_layout_test_la_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS)
 ivi_layout_test_la_SOURCES =			\
-	tests/ivi_layout-test-plugin.c		\
+	tests/ivi-layout-test-plugin.c		\
 	tests/ivi-test.h			\
 	shared/helpers.h
 nodist_ivi_layout_test_la_SOURCES =		\
@@ -1478,17 +1498,17 @@ nodist_ivi_shell_app_weston_SOURCES =		\
 ivi_shell_app_weston_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
 ivi_shell_app_weston_LDADD = libtest-client.la
 
-noinst_PROGRAMS += ivi-layout.ivi
+noinst_PROGRAMS += ivi-layout-test-client.ivi
 
-ivi_layout_ivi_SOURCES =			\
-	tests/ivi_layout-test.c 		\
+ivi_layout_test_client_ivi_SOURCES =			\
+	tests/ivi-layout-test-client.c 		\
 	tests/ivi-test.h			\
 	shared/helpers.h
-nodist_ivi_layout_ivi_SOURCES = 		\
+nodist_ivi_layout_test_client_ivi_SOURCES = 		\
 	protocol/ivi-application-protocol.c	\
 	protocol/ivi-application-client-protocol.h
-ivi_layout_ivi_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
-ivi_layout_ivi_LDADD = libtest-client.la
+ivi_layout_test_client_ivi_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
+ivi_layout_test_client_ivi_LDADD = libtest-client.la
 endif
 
 if BUILD_SETBACKLIGHT
@@ -1540,6 +1560,7 @@ EXTRA_DIST +=					\
 	protocol/weston-screenshooter.xml	\
 	protocol/text-cursor-position.xml	\
 	protocol/weston-test.xml		\
+	protocol/weston-touch-calibration.xml	\
 	protocol/ivi-application.xml		\
 	protocol/ivi-hmi-controller.xml
 
@@ -1572,8 +1593,12 @@ endif
 
 MAN_SUBSTS =								\
 	-e 's|__weston_native_backend__|$(WESTON_NATIVE_BACKEND)|g'	\
-	-e 's|__weston_modules_dir__|$(pkglibdir)|g'			\
+	-e 's|__weston_modules_dir__|$(moduledir)|g'			\
+	-e 's|__libweston_modules_dir__|$(libweston_moduledir)|g'	\
 	-e 's|__weston_shell_client__|$(WESTON_SHELL_CLIENT)|g'		\
+	-e 's|__weston_libexecdir__|$(libexecdir)|g' 			\
+	-e 's|__weston_bindir__|$(bindir)|g' 				\
+	-e 's|__xserver_path__|$(XSERVER_PATH)|g'			\
 	-e 's|__version__|$(PACKAGE_VERSION)|g'
 
 SUFFIXES = .1 .5 .7 .man
@@ -1582,6 +1607,10 @@ SUFFIXES = .1 .5 .7 .man
 	$(AM_V_GEN)$(SED) $(MAN_SUBSTS) < $< > $@
 
 EXTRA_DIST +=					\
+	CONTRIBUTING.md				\
+	README.md				\
+	doc/wayland-screenshot.jpg		\
+	doc/calibration-helper.bash		\
 	man/weston.man				\
 	man/weston-drm.man			\
 	man/weston-rdp.man			\

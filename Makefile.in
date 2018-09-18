@@ -196,7 +196,7 @@ TESTS = $(am__EXEEXT_17) $(am__EXEEXT_18) $(module_tests) \
 @ENABLE_IVI_SHELL_TRUE@	ivi-layout-internal-test.la		\
 @ENABLE_IVI_SHELL_TRUE@	ivi-layout-test.la
 
-@ENABLE_IVI_SHELL_TRUE@am__append_54 = ivi-layout.ivi
+@ENABLE_IVI_SHELL_TRUE@am__append_54 = ivi-layout-test-client.ivi
 @BUILD_SETBACKLIGHT_TRUE@am__append_55 = setbacklight
 @ENABLE_DRM_COMPOSITOR_TRUE@am__append_56 = weston-drm.7
 @ENABLE_RDP_COMPOSITOR_TRUE@am__append_57 = weston-rdp.7
@@ -219,10 +219,10 @@ mkinstalldirs = $(install_sh) -d
 CONFIG_HEADER = config.h
 CONFIG_CLEAN_FILES = doc/doxygen/tools.doxygen \
 	doc/doxygen/tooldev.doxygen libweston/version.h \
-	compositor/weston.pc libweston/libweston-4.pc \
-	libweston/libweston-4-uninstalled.pc \
-	libweston-desktop/libweston-desktop-4.pc \
-	libweston-desktop/libweston-desktop-4-uninstalled.pc
+	compositor/weston.pc libweston/libweston-5.pc \
+	libweston/libweston-5-uninstalled.pc \
+	libweston-desktop/libweston-desktop-5.pc \
+	libweston-desktop/libweston-desktop-5-uninstalled.pc
 CONFIG_CLEAN_VPATH_FILES =
 am__vpath_adj_setup = srcdirstrip=`echo "$(srcdir)" | sed 's|.|.|g'`;
 am__vpath_adj = case $$p in \
@@ -437,8 +437,8 @@ am__DEPENDENCIES_4 = libweston-@LIBWESTON_MAJOR@.la \
 @ENABLE_IVI_SHELL_TRUE@ivi_layout_internal_test_la_DEPENDENCIES =  \
 @ENABLE_IVI_SHELL_TRUE@	$(am__DEPENDENCIES_4)
 am__ivi_layout_internal_test_la_SOURCES_DIST =  \
-	tests/ivi_layout-internal-test.c
-@ENABLE_IVI_SHELL_TRUE@am_ivi_layout_internal_test_la_OBJECTS = tests/ivi_layout_internal_test_la-ivi_layout-internal-test.lo
+	tests/ivi-layout-internal-test.c
+@ENABLE_IVI_SHELL_TRUE@am_ivi_layout_internal_test_la_OBJECTS = tests/ivi_layout_internal_test_la-ivi-layout-internal-test.lo
 ivi_layout_internal_test_la_OBJECTS =  \
 	$(am_ivi_layout_internal_test_la_OBJECTS)
 ivi_layout_internal_test_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
@@ -448,9 +448,9 @@ ivi_layout_internal_test_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 @ENABLE_IVI_SHELL_TRUE@am_ivi_layout_internal_test_la_rpath =
 @ENABLE_IVI_SHELL_TRUE@ivi_layout_test_la_DEPENDENCIES =  \
 @ENABLE_IVI_SHELL_TRUE@	$(am__DEPENDENCIES_4)
-am__ivi_layout_test_la_SOURCES_DIST = tests/ivi_layout-test-plugin.c \
+am__ivi_layout_test_la_SOURCES_DIST = tests/ivi-layout-test-plugin.c \
 	tests/ivi-test.h shared/helpers.h
-@ENABLE_IVI_SHELL_TRUE@am_ivi_layout_test_la_OBJECTS = tests/ivi_layout_test_la-ivi_layout-test-plugin.lo
+@ENABLE_IVI_SHELL_TRUE@am_ivi_layout_test_la_OBJECTS = tests/ivi_layout_test_la-ivi-layout-test-plugin.lo
 @ENABLE_IVI_SHELL_TRUE@nodist_ivi_layout_test_la_OBJECTS = protocol/ivi_layout_test_la-weston-test-protocol.lo
 ivi_layout_test_la_OBJECTS = $(am_ivi_layout_test_la_OBJECTS) \
 	$(nodist_ivi_layout_test_la_OBJECTS)
@@ -582,6 +582,7 @@ am_libweston_@LIBWESTON_MAJOR@_la_OBJECTS =  \
 	libweston/libweston_@LIBWESTON_MAJOR@_la-input.lo \
 	libweston/libweston_@LIBWESTON_MAJOR@_la-data-device.lo \
 	libweston/libweston_@LIBWESTON_MAJOR@_la-screenshooter.lo \
+	libweston/libweston_@LIBWESTON_MAJOR@_la-touch-calibration.lo \
 	libweston/libweston_@LIBWESTON_MAJOR@_la-clipboard.lo \
 	libweston/libweston_@LIBWESTON_MAJOR@_la-zoom.lo \
 	libweston/libweston_@LIBWESTON_MAJOR@_la-bindings.lo \
@@ -602,7 +603,8 @@ nodist_libweston_@LIBWESTON_MAJOR@_la_OBJECTS = protocol/libweston_@LIBWESTON_MA
 	protocol/libweston_@LIBWESTON_MAJOR@_la-linux-dmabuf-unstable-v1-protocol.lo \
 	protocol/libweston_@LIBWESTON_MAJOR@_la-relative-pointer-unstable-v1-protocol.lo \
 	protocol/libweston_@LIBWESTON_MAJOR@_la-pointer-constraints-unstable-v1-protocol.lo \
-	protocol/libweston_@LIBWESTON_MAJOR@_la-input-timestamps-unstable-v1-protocol.lo
+	protocol/libweston_@LIBWESTON_MAJOR@_la-input-timestamps-unstable-v1-protocol.lo \
+	protocol/libweston_@LIBWESTON_MAJOR@_la-weston-touch-calibration-protocol.lo
 libweston_@LIBWESTON_MAJOR@_la_OBJECTS =  \
 	$(am_libweston_@LIBWESTON_MAJOR@_la_OBJECTS) \
 	$(nodist_libweston_@LIBWESTON_MAJOR@_la_OBJECTS)
@@ -828,6 +830,7 @@ xwayland_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 @BUILD_CLIENTS_TRUE@	weston-fullscreen$(EXEEXT) \
 @BUILD_CLIENTS_TRUE@	weston-stacking$(EXEEXT) \
 @BUILD_CLIENTS_TRUE@	weston-calibrator$(EXEEXT) \
+@BUILD_CLIENTS_TRUE@	weston-touch-calibrator$(EXEEXT) \
 @BUILD_CLIENTS_TRUE@	weston-scaler$(EXEEXT) $(am__EXEEXT_3) \
 @BUILD_CLIENTS_TRUE@	$(am__EXEEXT_4) $(am__EXEEXT_5) \
 @BUILD_CLIENTS_TRUE@	$(am__EXEEXT_6) $(am__EXEEXT_7) \
@@ -854,7 +857,8 @@ am__EXEEXT_20 = bad_buffer.weston$(EXEEXT) keyboard.weston$(EXEEXT) \
 	subsurface.weston$(EXEEXT) subsurface-shot.weston$(EXEEXT) \
 	devices.weston$(EXEEXT) touch.weston$(EXEEXT) $(am__EXEEXT_19)
 @ENABLE_IVI_SHELL_TRUE@am__EXEEXT_21 = ivi-shell-app.weston$(EXEEXT)
-@ENABLE_IVI_SHELL_TRUE@am__EXEEXT_22 = ivi-layout.ivi$(EXEEXT)
+@ENABLE_IVI_SHELL_TRUE@am__EXEEXT_22 =  \
+@ENABLE_IVI_SHELL_TRUE@	ivi-layout-test-client.ivi$(EXEEXT)
 @BUILD_SETBACKLIGHT_TRUE@am__EXEEXT_23 = setbacklight$(EXEEXT)
 PROGRAMS = $(bin_PROGRAMS) $(libexec_PROGRAMS) $(noinst_PROGRAMS)
 am_bad_buffer_weston_OBJECTS =  \
@@ -896,18 +900,20 @@ internal_screenshot_weston_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
 	$(internal_screenshot_weston_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
 	$(LDFLAGS) -o $@
-am__ivi_layout_ivi_SOURCES_DIST = tests/ivi_layout-test.c \
-	tests/ivi-test.h shared/helpers.h
-@ENABLE_IVI_SHELL_TRUE@am_ivi_layout_ivi_OBJECTS = tests/ivi_layout_ivi-ivi_layout-test.$(OBJEXT)
-@ENABLE_IVI_SHELL_TRUE@nodist_ivi_layout_ivi_OBJECTS = protocol/ivi_layout_ivi-ivi-application-protocol.$(OBJEXT)
-ivi_layout_ivi_OBJECTS = $(am_ivi_layout_ivi_OBJECTS) \
-	$(nodist_ivi_layout_ivi_OBJECTS)
-@ENABLE_IVI_SHELL_TRUE@ivi_layout_ivi_DEPENDENCIES =  \
+am__ivi_layout_test_client_ivi_SOURCES_DIST =  \
+	tests/ivi-layout-test-client.c tests/ivi-test.h \
+	shared/helpers.h
+@ENABLE_IVI_SHELL_TRUE@am_ivi_layout_test_client_ivi_OBJECTS = tests/ivi_layout_test_client_ivi-ivi-layout-test-client.$(OBJEXT)
+@ENABLE_IVI_SHELL_TRUE@nodist_ivi_layout_test_client_ivi_OBJECTS = protocol/ivi_layout_test_client_ivi-ivi-application-protocol.$(OBJEXT)
+ivi_layout_test_client_ivi_OBJECTS =  \
+	$(am_ivi_layout_test_client_ivi_OBJECTS) \
+	$(nodist_ivi_layout_test_client_ivi_OBJECTS)
+@ENABLE_IVI_SHELL_TRUE@ivi_layout_test_client_ivi_DEPENDENCIES =  \
 @ENABLE_IVI_SHELL_TRUE@	libtest-client.la
-ivi_layout_ivi_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
+ivi_layout_test_client_ivi_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
-	$(ivi_layout_ivi_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o \
-	$@
+	$(ivi_layout_test_client_ivi_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
+	$(LDFLAGS) -o $@
 am__ivi_shell_app_weston_SOURCES_DIST = tests/ivi-shell-app-test.c
 @ENABLE_IVI_SHELL_TRUE@am_ivi_shell_app_weston_OBJECTS = tests/ivi_shell_app_weston-ivi-shell-app-test.$(OBJEXT)
 @ENABLE_IVI_SHELL_TRUE@nodist_ivi_shell_app_weston_OBJECTS = protocol/ivi_shell_app_weston-ivi-application-protocol.$(OBJEXT)
@@ -1169,7 +1175,8 @@ am__weston_info_SOURCES_DIST = clients/weston-info.c shared/helpers.h
 @BUILD_CLIENTS_TRUE@am_weston_info_OBJECTS =  \
 @BUILD_CLIENTS_TRUE@	clients/weston_info-weston-info.$(OBJEXT)
 @BUILD_CLIENTS_TRUE@nodist_weston_info_OBJECTS = protocol/weston_info-presentation-time-protocol.$(OBJEXT) \
-@BUILD_CLIENTS_TRUE@	protocol/weston_info-linux-dmabuf-unstable-v1-protocol.$(OBJEXT)
+@BUILD_CLIENTS_TRUE@	protocol/weston_info-linux-dmabuf-unstable-v1-protocol.$(OBJEXT) \
+@BUILD_CLIENTS_TRUE@	protocol/weston_info-tablet-unstable-v2-protocol.$(OBJEXT)
 weston_info_OBJECTS = $(am_weston_info_OBJECTS) \
 	$(nodist_weston_info_OBJECTS)
 @BUILD_CLIENTS_TRUE@weston_info_DEPENDENCIES = $(am__DEPENDENCIES_1) \
@@ -1308,6 +1315,7 @@ weston_simple_dmabuf_drm_OBJECTS =  \
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_DMABUF_DRM_CLIENT_TRUE@weston_simple_dmabuf_drm_DEPENDENCIES = $(am__DEPENDENCIES_1) \
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_DMABUF_DRM_CLIENT_TRUE@	$(am__DEPENDENCIES_1) \
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_DMABUF_DRM_CLIENT_TRUE@	$(am__DEPENDENCIES_1) \
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_DMABUF_DRM_CLIENT_TRUE@	$(am__DEPENDENCIES_1) \
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_DMABUF_DRM_CLIENT_TRUE@	libshared.la
 weston_simple_dmabuf_drm_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
@@ -1407,6 +1415,20 @@ weston_terminal_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
 	$(weston_terminal_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) \
 	-o $@
+am__weston_touch_calibrator_SOURCES_DIST = clients/touch-calibrator.c \
+	shared/helpers.h shared/matrix.c shared/matrix.h
+@BUILD_CLIENTS_TRUE@am_weston_touch_calibrator_OBJECTS = clients/weston_touch_calibrator-touch-calibrator.$(OBJEXT) \
+@BUILD_CLIENTS_TRUE@	shared/weston_touch_calibrator-matrix.$(OBJEXT)
+@BUILD_CLIENTS_TRUE@nodist_weston_touch_calibrator_OBJECTS = protocol/weston_touch_calibrator-weston-touch-calibration-protocol.$(OBJEXT)
+weston_touch_calibrator_OBJECTS =  \
+	$(am_weston_touch_calibrator_OBJECTS) \
+	$(nodist_weston_touch_calibrator_OBJECTS)
+@BUILD_CLIENTS_TRUE@weston_touch_calibrator_DEPENDENCIES =  \
+@BUILD_CLIENTS_TRUE@	libtoytoolkit.la
+weston_touch_calibrator_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
+	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
+	$(weston_touch_calibrator_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
+	$(LDFLAGS) -o $@
 am__weston_transformed_SOURCES_DIST = clients/transformed.c
 @BUILD_CLIENTS_TRUE@am_weston_transformed_OBJECTS = clients/weston_transformed-transformed.$(OBJEXT)
 weston_transformed_OBJECTS = $(am_weston_transformed_OBJECTS)
@@ -1502,7 +1524,8 @@ SOURCES = $(cms_colord_la_SOURCES) $(cms_static_la_SOURCES) \
 	$(bad_buffer_weston_SOURCES) $(config_parser_test_SOURCES) \
 	$(devices_weston_SOURCES) $(event_weston_SOURCES) \
 	$(internal_screenshot_weston_SOURCES) \
-	$(ivi_layout_ivi_SOURCES) $(nodist_ivi_layout_ivi_SOURCES) \
+	$(ivi_layout_test_client_ivi_SOURCES) \
+	$(nodist_ivi_layout_test_client_ivi_SOURCES) \
 	$(ivi_shell_app_weston_SOURCES) \
 	$(nodist_ivi_shell_app_weston_SOURCES) \
 	$(keyboard_weston_SOURCES) $(matrix_test_SOURCES) \
@@ -1548,8 +1571,10 @@ SOURCES = $(cms_colord_la_SOURCES) $(cms_static_la_SOURCES) \
 	$(nodist_weston_simple_shm_SOURCES) \
 	$(weston_simple_touch_SOURCES) $(weston_smoke_SOURCES) \
 	$(weston_stacking_SOURCES) $(weston_subsurfaces_SOURCES) \
-	$(weston_terminal_SOURCES) $(weston_transformed_SOURCES) \
-	$(xwayland_test_weston_SOURCES) $(zuctest_SOURCES)
+	$(weston_terminal_SOURCES) $(weston_touch_calibrator_SOURCES) \
+	$(nodist_weston_touch_calibrator_SOURCES) \
+	$(weston_transformed_SOURCES) $(xwayland_test_weston_SOURCES) \
+	$(zuctest_SOURCES)
 DIST_SOURCES = $(am__cms_colord_la_SOURCES_DIST) \
 	$(am__cms_static_la_SOURCES_DIST) \
 	$(am__desktop_shell_la_SOURCES_DIST) \
@@ -1581,7 +1606,7 @@ DIST_SOURCES = $(am__cms_colord_la_SOURCES_DIST) \
 	$(am__xwayland_la_SOURCES_DIST) $(bad_buffer_weston_SOURCES) \
 	$(config_parser_test_SOURCES) $(devices_weston_SOURCES) \
 	$(event_weston_SOURCES) $(internal_screenshot_weston_SOURCES) \
-	$(am__ivi_layout_ivi_SOURCES_DIST) \
+	$(am__ivi_layout_test_client_ivi_SOURCES_DIST) \
 	$(am__ivi_shell_app_weston_SOURCES_DIST) \
 	$(keyboard_weston_SOURCES) $(matrix_test_SOURCES) \
 	$(pointer_weston_SOURCES) $(presentation_weston_SOURCES) \
@@ -1625,6 +1650,7 @@ DIST_SOURCES = $(am__cms_colord_la_SOURCES_DIST) \
 	$(am__weston_stacking_SOURCES_DIST) \
 	$(am__weston_subsurfaces_SOURCES_DIST) \
 	$(am__weston_terminal_SOURCES_DIST) \
+	$(am__weston_touch_calibrator_SOURCES_DIST) \
 	$(am__weston_transformed_SOURCES_DIST) \
 	$(am__xwayland_test_weston_SOURCES_DIST) $(zuctest_SOURCES)
 am__can_run_installinfo = \
@@ -1876,10 +1902,9 @@ am__DIST_COMMON = $(srcdir)/Makefile.in $(srcdir)/config.h.in \
 	$(top_srcdir)/libweston-desktop/libweston-desktop.pc.in \
 	$(top_srcdir)/libweston/libweston-uninstalled.pc.in \
 	$(top_srcdir)/libweston/libweston.pc.in \
-	$(top_srcdir)/libweston/version.h.in COPYING README \
-	build-aux/compile build-aux/config.guess build-aux/config.sub \
-	build-aux/depcomp build-aux/install-sh build-aux/ltmain.sh \
-	build-aux/missing
+	$(top_srcdir)/libweston/version.h.in COPYING build-aux/compile \
+	build-aux/config.guess build-aux/config.sub build-aux/depcomp \
+	build-aux/install-sh build-aux/ltmain.sh build-aux/missing
 DISTFILES = $(DIST_COMMON) $(DIST_SOURCES) $(TEXINFOS) $(EXTRA_DIST)
 distdir = $(PACKAGE)-$(VERSION)
 top_distdir = $(distdir)
@@ -1933,9 +1958,15 @@ DOXYGEN = @DOXYGEN@
 DRM_COMPOSITOR_ATOMIC_CFLAGS = @DRM_COMPOSITOR_ATOMIC_CFLAGS@
 DRM_COMPOSITOR_ATOMIC_LIBS = @DRM_COMPOSITOR_ATOMIC_LIBS@
 DRM_COMPOSITOR_CFLAGS = @DRM_COMPOSITOR_CFLAGS@
+DRM_COMPOSITOR_FORMATS_BLOB_CFLAGS = @DRM_COMPOSITOR_FORMATS_BLOB_CFLAGS@
+DRM_COMPOSITOR_FORMATS_BLOB_LIBS = @DRM_COMPOSITOR_FORMATS_BLOB_LIBS@
 DRM_COMPOSITOR_GBM_CFLAGS = @DRM_COMPOSITOR_GBM_CFLAGS@
 DRM_COMPOSITOR_GBM_LIBS = @DRM_COMPOSITOR_GBM_LIBS@
+DRM_COMPOSITOR_GBM_MODIFIERS_CFLAGS = @DRM_COMPOSITOR_GBM_MODIFIERS_CFLAGS@
+DRM_COMPOSITOR_GBM_MODIFIERS_LIBS = @DRM_COMPOSITOR_GBM_MODIFIERS_LIBS@
 DRM_COMPOSITOR_LIBS = @DRM_COMPOSITOR_LIBS@
+DRM_COMPOSITOR_MODIFIERS_CFLAGS = @DRM_COMPOSITOR_MODIFIERS_CFLAGS@
+DRM_COMPOSITOR_MODIFIERS_LIBS = @DRM_COMPOSITOR_MODIFIERS_LIBS@
 DSYMUTIL = @DSYMUTIL@
 DUMPBIN = @DUMPBIN@
 ECHO_C = @ECHO_C@
@@ -1964,6 +1995,8 @@ LD = @LD@
 LDFLAGS = @LDFLAGS@
 LIBDRM_CFLAGS = @LIBDRM_CFLAGS@
 LIBDRM_LIBS = @LIBDRM_LIBS@
+LIBDRM_PLATFORM_ETNAVIV_CFLAGS = @LIBDRM_PLATFORM_ETNAVIV_CFLAGS@
+LIBDRM_PLATFORM_ETNAVIV_LIBS = @LIBDRM_PLATFORM_ETNAVIV_LIBS@
 LIBDRM_PLATFORM_FREEDRENO_CFLAGS = @LIBDRM_PLATFORM_FREEDRENO_CFLAGS@
 LIBDRM_PLATFORM_FREEDRENO_LIBS = @LIBDRM_PLATFORM_FREEDRENO_LIBS@
 LIBDRM_PLATFORM_INTEL_CFLAGS = @LIBDRM_PLATFORM_INTEL_CFLAGS@
@@ -2151,6 +2184,8 @@ BUILT_SOURCES =  \
 	$(nodist_libweston_@LIBWESTON_MAJOR@_la_SOURCES) \
 	$(am__append_32) protocol/weston-screenshooter-protocol.c \
 	protocol/weston-screenshooter-client-protocol.h \
+	protocol/weston-touch-calibration-protocol.c \
+	protocol/weston-touch-calibration-client-protocol.h \
 	protocol/text-cursor-position-client-protocol.h \
 	protocol/text-cursor-position-protocol.c \
 	protocol/text-input-unstable-v1-protocol.c \
@@ -2173,6 +2208,8 @@ BUILT_SOURCES =  \
 	protocol/ivi-application-client-protocol.h \
 	protocol/linux-dmabuf-unstable-v1-protocol.c \
 	protocol/linux-dmabuf-unstable-v1-client-protocol.h \
+	protocol/tablet-unstable-v2-protocol.c \
+	protocol/tablet-unstable-v2-client-protocol.h \
 	protocol/input-timestamps-unstable-v1-protocol.c \
 	protocol/input-timestamps-unstable-v1-client-protocol.h \
 	$(am__append_40) $(am__append_42) $(am__append_44) \
@@ -2194,9 +2231,11 @@ EXTRA_DIST = weston.ini.in ivi-shell/weston.ini.in \
 	tests/weston-tests-env protocol/weston-desktop-shell.xml \
 	protocol/weston-screenshooter.xml \
 	protocol/text-cursor-position.xml protocol/weston-test.xml \
+	protocol/weston-touch-calibration.xml \
 	protocol/ivi-application.xml protocol/ivi-hmi-controller.xml \
-	man/weston.man man/weston-drm.man man/weston-rdp.man \
-	man/weston.ini.man
+	CONTRIBUTING.md README.md doc/wayland-screenshot.jpg \
+	doc/calibration-helper.bash man/weston.man man/weston-drm.man \
+	man/weston-rdp.man man/weston.ini.man
 AM_CFLAGS = $(GCC_CFLAGS)
 AM_CPPFLAGS = \
 	-I$(top_builddir)/libweston		\
@@ -2236,6 +2275,7 @@ libweston_@LIBWESTON_MAJOR@_la_SOURCES = \
 	libweston/input.c				\
 	libweston/data-device.c				\
 	libweston/screenshooter.c			\
+	libweston/touch-calibration.c			\
 	libweston/clipboard.c				\
 	libweston/zoom.c				\
 	libweston/bindings.c				\
@@ -2316,7 +2356,9 @@ nodist_libweston_@LIBWESTON_MAJOR@_la_SOURCES = \
 	protocol/pointer-constraints-unstable-v1-protocol.c		\
 	protocol/pointer-constraints-unstable-v1-server-protocol.h      \
 	protocol/input-timestamps-unstable-v1-protocol.c		\
-	protocol/input-timestamps-unstable-v1-server-protocol.h
+	protocol/input-timestamps-unstable-v1-server-protocol.h		\
+	protocol/weston-touch-calibration-protocol.c			\
+	protocol/weston-touch-calibration-server-protocol.h
 
 weston_LDFLAGS = -export-dynamic
 weston_CPPFLAGS = $(AM_CPPFLAGS) -DIN_WESTON 		\
@@ -2570,11 +2612,11 @@ spring_tool_SOURCES = \
 @BUILD_CLIENTS_TRUE@	weston-clickdot weston-confine \
 @BUILD_CLIENTS_TRUE@	weston-transformed weston-fullscreen \
 @BUILD_CLIENTS_TRUE@	weston-stacking weston-calibrator \
-@BUILD_CLIENTS_TRUE@	weston-scaler $(am__append_27) \
-@BUILD_CLIENTS_TRUE@	$(am__append_28) $(am__append_29) \
-@BUILD_CLIENTS_TRUE@	$(am__append_30) $(am__append_33) \
-@BUILD_CLIENTS_TRUE@	$(am__append_34) $(am__append_35) \
-@BUILD_CLIENTS_TRUE@	$(am__append_36)
+@BUILD_CLIENTS_TRUE@	weston-touch-calibrator weston-scaler \
+@BUILD_CLIENTS_TRUE@	$(am__append_27) $(am__append_28) \
+@BUILD_CLIENTS_TRUE@	$(am__append_29) $(am__append_30) \
+@BUILD_CLIENTS_TRUE@	$(am__append_33) $(am__append_34) \
+@BUILD_CLIENTS_TRUE@	$(am__append_35) $(am__append_36)
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@weston_simple_shm_SOURCES = clients/simple-shm.c
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@nodist_weston_simple_shm_SOURCES = \
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_CLIENTS_TRUE@	protocol/xdg-shell-unstable-v6-protocol.c		\
@@ -2640,6 +2682,7 @@ spring_tool_SOURCES = \
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_DMABUF_DRM_CLIENT_TRUE@weston_simple_dmabuf_drm_CFLAGS = $(AM_CFLAGS) $(SIMPLE_DMABUF_DRM_CLIENT_CFLAGS)
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_DMABUF_DRM_CLIENT_TRUE@weston_simple_dmabuf_drm_LDADD = $(SIMPLE_DMABUF_DRM_CLIENT_LIBS) \
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_DMABUF_DRM_CLIENT_TRUE@	$(LIBDRM_PLATFORM_FREEDRENO_LIBS) \
+@BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_DMABUF_DRM_CLIENT_TRUE@	$(LIBDRM_PLATFORM_ETNAVIV_LIBS)   \
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_DMABUF_DRM_CLIENT_TRUE@	$(LIBDRM_PLATFORM_INTEL_LIBS)     \
 @BUILD_CLIENTS_TRUE@@BUILD_SIMPLE_DMABUF_DRM_CLIENT_TRUE@	libshared.la
 
@@ -2773,6 +2816,18 @@ spring_tool_SOURCES = \
 
 @BUILD_CLIENTS_TRUE@weston_calibrator_LDADD = libtoytoolkit.la
 @BUILD_CLIENTS_TRUE@weston_calibrator_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
+@BUILD_CLIENTS_TRUE@weston_touch_calibrator_SOURCES = \
+@BUILD_CLIENTS_TRUE@	clients/touch-calibrator.c			\
+@BUILD_CLIENTS_TRUE@	shared/helpers.h				\
+@BUILD_CLIENTS_TRUE@	shared/matrix.c					\
+@BUILD_CLIENTS_TRUE@	shared/matrix.h
+
+@BUILD_CLIENTS_TRUE@nodist_weston_touch_calibrator_SOURCES = \
+@BUILD_CLIENTS_TRUE@	protocol/weston-touch-calibration-protocol.c	\
+@BUILD_CLIENTS_TRUE@	protocol/weston-touch-calibration-client-protocol.h
+
+@BUILD_CLIENTS_TRUE@weston_touch_calibrator_LDADD = libtoytoolkit.la
+@BUILD_CLIENTS_TRUE@weston_touch_calibrator_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
 @BUILD_CLIENTS_TRUE@@BUILD_SUBSURFACES_CLIENT_TRUE@weston_subsurfaces_SOURCES = \
 @BUILD_CLIENTS_TRUE@@BUILD_SUBSURFACES_CLIENT_TRUE@	clients/subsurfaces.c			\
 @BUILD_CLIENTS_TRUE@@BUILD_SUBSURFACES_CLIENT_TRUE@	shared/helpers.h
@@ -2814,10 +2869,12 @@ spring_tool_SOURCES = \
 @BUILD_CLIENTS_TRUE@	shared/helpers.h
 
 @BUILD_CLIENTS_TRUE@nodist_weston_info_SOURCES = \
-@BUILD_CLIENTS_TRUE@	protocol/presentation-time-protocol.c		\
-@BUILD_CLIENTS_TRUE@	protocol/presentation-time-client-protocol.h	\
-@BUILD_CLIENTS_TRUE@	protocol/linux-dmabuf-unstable-v1-protocol.c	\
-@BUILD_CLIENTS_TRUE@	protocol/linux-dmabuf-unstable-v1-client-protocol.h
+@BUILD_CLIENTS_TRUE@	protocol/presentation-time-protocol.c			\
+@BUILD_CLIENTS_TRUE@	protocol/presentation-time-client-protocol.h		\
+@BUILD_CLIENTS_TRUE@	protocol/linux-dmabuf-unstable-v1-protocol.c		\
+@BUILD_CLIENTS_TRUE@	protocol/linux-dmabuf-unstable-v1-client-protocol.h	\
+@BUILD_CLIENTS_TRUE@	protocol/tablet-unstable-v2-protocol.c			\
+@BUILD_CLIENTS_TRUE@	protocol/tablet-unstable-v2-client-protocol.h
 
 @BUILD_CLIENTS_TRUE@weston_info_LDADD = $(WESTON_INFO_LIBS) libshared.la
 @BUILD_CLIENTS_TRUE@weston_info_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
@@ -3267,13 +3324,13 @@ matrix_test_LDADD = -lm $(CLOCK_GETTIME_LIBS)
 @ENABLE_IVI_SHELL_TRUE@ivi_layout_internal_test_la_LDFLAGS = $(test_module_ldflags)
 @ENABLE_IVI_SHELL_TRUE@ivi_layout_internal_test_la_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS)
 @ENABLE_IVI_SHELL_TRUE@ivi_layout_internal_test_la_SOURCES = \
-@ENABLE_IVI_SHELL_TRUE@	tests/ivi_layout-internal-test.c
+@ENABLE_IVI_SHELL_TRUE@	tests/ivi-layout-internal-test.c
 
 @ENABLE_IVI_SHELL_TRUE@ivi_layout_test_la_LIBADD = $(test_module_libadd)
 @ENABLE_IVI_SHELL_TRUE@ivi_layout_test_la_LDFLAGS = $(test_module_ldflags)
 @ENABLE_IVI_SHELL_TRUE@ivi_layout_test_la_CFLAGS = $(AM_CFLAGS) $(COMPOSITOR_CFLAGS)
 @ENABLE_IVI_SHELL_TRUE@ivi_layout_test_la_SOURCES = \
-@ENABLE_IVI_SHELL_TRUE@	tests/ivi_layout-test-plugin.c		\
+@ENABLE_IVI_SHELL_TRUE@	tests/ivi-layout-test-plugin.c		\
 @ENABLE_IVI_SHELL_TRUE@	tests/ivi-test.h			\
 @ENABLE_IVI_SHELL_TRUE@	shared/helpers.h
 
@@ -3291,17 +3348,17 @@ matrix_test_LDADD = -lm $(CLOCK_GETTIME_LIBS)
 
 @ENABLE_IVI_SHELL_TRUE@ivi_shell_app_weston_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
 @ENABLE_IVI_SHELL_TRUE@ivi_shell_app_weston_LDADD = libtest-client.la
-@ENABLE_IVI_SHELL_TRUE@ivi_layout_ivi_SOURCES = \
-@ENABLE_IVI_SHELL_TRUE@	tests/ivi_layout-test.c 		\
+@ENABLE_IVI_SHELL_TRUE@ivi_layout_test_client_ivi_SOURCES = \
+@ENABLE_IVI_SHELL_TRUE@	tests/ivi-layout-test-client.c 		\
 @ENABLE_IVI_SHELL_TRUE@	tests/ivi-test.h			\
 @ENABLE_IVI_SHELL_TRUE@	shared/helpers.h
 
-@ENABLE_IVI_SHELL_TRUE@nodist_ivi_layout_ivi_SOURCES = \
+@ENABLE_IVI_SHELL_TRUE@nodist_ivi_layout_test_client_ivi_SOURCES = \
 @ENABLE_IVI_SHELL_TRUE@	protocol/ivi-application-protocol.c	\
 @ENABLE_IVI_SHELL_TRUE@	protocol/ivi-application-client-protocol.h
 
-@ENABLE_IVI_SHELL_TRUE@ivi_layout_ivi_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
-@ENABLE_IVI_SHELL_TRUE@ivi_layout_ivi_LDADD = libtest-client.la
+@ENABLE_IVI_SHELL_TRUE@ivi_layout_test_client_ivi_CFLAGS = $(AM_CFLAGS) $(TEST_CLIENT_CFLAGS)
+@ENABLE_IVI_SHELL_TRUE@ivi_layout_test_client_ivi_LDADD = libtest-client.la
 @BUILD_SETBACKLIGHT_TRUE@setbacklight_SOURCES = \
 @BUILD_SETBACKLIGHT_TRUE@	tests/setbacklight.c			\
 @BUILD_SETBACKLIGHT_TRUE@	libweston/libbacklight.c		\
@@ -3332,8 +3389,12 @@ surface_screenshot_la_SOURCES = tests/surface-screenshot.c
 man_MANS = weston.1 weston.ini.5 $(am__append_56) $(am__append_57)
 MAN_SUBSTS = \
 	-e 's|__weston_native_backend__|$(WESTON_NATIVE_BACKEND)|g'	\
-	-e 's|__weston_modules_dir__|$(pkglibdir)|g'			\
+	-e 's|__weston_modules_dir__|$(moduledir)|g'			\
+	-e 's|__libweston_modules_dir__|$(libweston_moduledir)|g'	\
 	-e 's|__weston_shell_client__|$(WESTON_SHELL_CLIENT)|g'		\
+	-e 's|__weston_libexecdir__|$(libexecdir)|g' 			\
+	-e 's|__weston_bindir__|$(bindir)|g' 				\
+	-e 's|__xserver_path__|$(XSERVER_PATH)|g'			\
 	-e 's|__version__|$(PACKAGE_VERSION)|g'
 
 SUFFIXES = .1 .5 .7 .man
@@ -3403,13 +3464,13 @@ libweston/version.h: $(top_builddir)/config.status $(top_srcdir)/libweston/versi
 	cd $(top_builddir) && $(SHELL) ./config.status $@
 compositor/weston.pc: $(top_builddir)/config.status $(top_srcdir)/compositor/weston.pc.in
 	cd $(top_builddir) && $(SHELL) ./config.status $@
-libweston/libweston-4.pc: $(top_builddir)/config.status $(top_srcdir)/libweston/libweston.pc.in
+libweston/libweston-5.pc: $(top_builddir)/config.status $(top_srcdir)/libweston/libweston.pc.in
 	cd $(top_builddir) && $(SHELL) ./config.status $@
-libweston/libweston-4-uninstalled.pc: $(top_builddir)/config.status $(top_srcdir)/libweston/libweston-uninstalled.pc.in
+libweston/libweston-5-uninstalled.pc: $(top_builddir)/config.status $(top_srcdir)/libweston/libweston-uninstalled.pc.in
 	cd $(top_builddir) && $(SHELL) ./config.status $@
-libweston-desktop/libweston-desktop-4.pc: $(top_builddir)/config.status $(top_srcdir)/libweston-desktop/libweston-desktop.pc.in
+libweston-desktop/libweston-desktop-5.pc: $(top_builddir)/config.status $(top_srcdir)/libweston-desktop/libweston-desktop.pc.in
 	cd $(top_builddir) && $(SHELL) ./config.status $@
-libweston-desktop/libweston-desktop-4-uninstalled.pc: $(top_builddir)/config.status $(top_srcdir)/libweston-desktop/libweston-desktop-uninstalled.pc.in
+libweston-desktop/libweston-desktop-5-uninstalled.pc: $(top_builddir)/config.status $(top_srcdir)/libweston-desktop/libweston-desktop-uninstalled.pc.in
 	cd $(top_builddir) && $(SHELL) ./config.status $@
 
 install-libLTLIBRARIES: $(lib_LTLIBRARIES)
@@ -3646,12 +3707,12 @@ tests/$(am__dirstamp):
 tests/$(DEPDIR)/$(am__dirstamp):
 	@$(MKDIR_P) tests/$(DEPDIR)
 	@: > tests/$(DEPDIR)/$(am__dirstamp)
-tests/ivi_layout_internal_test_la-ivi_layout-internal-test.lo:  \
+tests/ivi_layout_internal_test_la-ivi-layout-internal-test.lo:  \
 	tests/$(am__dirstamp) tests/$(DEPDIR)/$(am__dirstamp)
 
 ivi-layout-internal-test.la: $(ivi_layout_internal_test_la_OBJECTS) $(ivi_layout_internal_test_la_DEPENDENCIES) $(EXTRA_ivi_layout_internal_test_la_DEPENDENCIES) 
 	$(AM_V_CCLD)$(ivi_layout_internal_test_la_LINK) $(am_ivi_layout_internal_test_la_rpath) $(ivi_layout_internal_test_la_OBJECTS) $(ivi_layout_internal_test_la_LIBADD) $(LIBS)
-tests/ivi_layout_test_la-ivi_layout-test-plugin.lo:  \
+tests/ivi_layout_test_la-ivi-layout-test-plugin.lo:  \
 	tests/$(am__dirstamp) tests/$(DEPDIR)/$(am__dirstamp)
 protocol/ivi_layout_test_la-weston-test-protocol.lo:  \
 	protocol/$(am__dirstamp) protocol/$(DEPDIR)/$(am__dirstamp)
@@ -3771,6 +3832,8 @@ libweston/libweston_@LIBWESTON_MAJOR@_la-data-device.lo:  \
 	libweston/$(am__dirstamp) libweston/$(DEPDIR)/$(am__dirstamp)
 libweston/libweston_@LIBWESTON_MAJOR@_la-screenshooter.lo:  \
 	libweston/$(am__dirstamp) libweston/$(DEPDIR)/$(am__dirstamp)
+libweston/libweston_@LIBWESTON_MAJOR@_la-touch-calibration.lo:  \
+	libweston/$(am__dirstamp) libweston/$(DEPDIR)/$(am__dirstamp)
 libweston/libweston_@LIBWESTON_MAJOR@_la-clipboard.lo:  \
 	libweston/$(am__dirstamp) libweston/$(DEPDIR)/$(am__dirstamp)
 libweston/libweston_@LIBWESTON_MAJOR@_la-zoom.lo:  \
@@ -3812,6 +3875,8 @@ protocol/libweston_@LIBWESTON_MAJOR@_la-relative-pointer-unstable-v1-protocol.lo
 protocol/libweston_@LIBWESTON_MAJOR@_la-pointer-constraints-unstable-v1-protocol.lo:  \
 	protocol/$(am__dirstamp) protocol/$(DEPDIR)/$(am__dirstamp)
 protocol/libweston_@LIBWESTON_MAJOR@_la-input-timestamps-unstable-v1-protocol.lo:  \
+	protocol/$(am__dirstamp) protocol/$(DEPDIR)/$(am__dirstamp)
+protocol/libweston_@LIBWESTON_MAJOR@_la-weston-touch-calibration-protocol.lo:  \
 	protocol/$(am__dirstamp) protocol/$(DEPDIR)/$(am__dirstamp)
 
 libweston-@LIBWESTON_MAJOR@.la: $(libweston_@LIBWESTON_MAJOR@_la_OBJECTS) $(libweston_@LIBWESTON_MAJOR@_la_DEPENDENCIES) $(EXTRA_libweston_@LIBWESTON_MAJOR@_la_DEPENDENCIES) 
@@ -4096,14 +4161,14 @@ tests/internal_screenshot_weston-internal-screenshot-test.$(OBJEXT):  \
 internal-screenshot.weston$(EXEEXT): $(internal_screenshot_weston_OBJECTS) $(internal_screenshot_weston_DEPENDENCIES) $(EXTRA_internal_screenshot_weston_DEPENDENCIES) 
 	@rm -f internal-screenshot.weston$(EXEEXT)
 	$(AM_V_CCLD)$(internal_screenshot_weston_LINK) $(internal_screenshot_weston_OBJECTS) $(internal_screenshot_weston_LDADD) $(LIBS)
-tests/ivi_layout_ivi-ivi_layout-test.$(OBJEXT): tests/$(am__dirstamp) \
-	tests/$(DEPDIR)/$(am__dirstamp)
-protocol/ivi_layout_ivi-ivi-application-protocol.$(OBJEXT):  \
+tests/ivi_layout_test_client_ivi-ivi-layout-test-client.$(OBJEXT):  \
+	tests/$(am__dirstamp) tests/$(DEPDIR)/$(am__dirstamp)
+protocol/ivi_layout_test_client_ivi-ivi-application-protocol.$(OBJEXT):  \
 	protocol/$(am__dirstamp) protocol/$(DEPDIR)/$(am__dirstamp)
 
-ivi-layout.ivi$(EXEEXT): $(ivi_layout_ivi_OBJECTS) $(ivi_layout_ivi_DEPENDENCIES) $(EXTRA_ivi_layout_ivi_DEPENDENCIES) 
-	@rm -f ivi-layout.ivi$(EXEEXT)
-	$(AM_V_CCLD)$(ivi_layout_ivi_LINK) $(ivi_layout_ivi_OBJECTS) $(ivi_layout_ivi_LDADD) $(LIBS)
+ivi-layout-test-client.ivi$(EXEEXT): $(ivi_layout_test_client_ivi_OBJECTS) $(ivi_layout_test_client_ivi_DEPENDENCIES) $(EXTRA_ivi_layout_test_client_ivi_DEPENDENCIES) 
+	@rm -f ivi-layout-test-client.ivi$(EXEEXT)
+	$(AM_V_CCLD)$(ivi_layout_test_client_ivi_LINK) $(ivi_layout_test_client_ivi_OBJECTS) $(ivi_layout_test_client_ivi_LDADD) $(LIBS)
 tests/ivi_shell_app_weston-ivi-shell-app-test.$(OBJEXT):  \
 	tests/$(am__dirstamp) tests/$(DEPDIR)/$(am__dirstamp)
 protocol/ivi_shell_app_weston-ivi-application-protocol.$(OBJEXT):  \
@@ -4333,6 +4398,8 @@ protocol/weston_info-presentation-time-protocol.$(OBJEXT):  \
 	protocol/$(am__dirstamp) protocol/$(DEPDIR)/$(am__dirstamp)
 protocol/weston_info-linux-dmabuf-unstable-v1-protocol.$(OBJEXT):  \
 	protocol/$(am__dirstamp) protocol/$(DEPDIR)/$(am__dirstamp)
+protocol/weston_info-tablet-unstable-v2-protocol.$(OBJEXT):  \
+	protocol/$(am__dirstamp) protocol/$(DEPDIR)/$(am__dirstamp)
 
 weston-info$(EXEEXT): $(weston_info_OBJECTS) $(weston_info_DEPENDENCIES) $(EXTRA_weston_info_DEPENDENCIES) 
 	@rm -f weston-info$(EXEEXT)
@@ -4505,6 +4572,16 @@ clients/weston_terminal-terminal.$(OBJEXT): clients/$(am__dirstamp) \
 weston-terminal$(EXEEXT): $(weston_terminal_OBJECTS) $(weston_terminal_DEPENDENCIES) $(EXTRA_weston_terminal_DEPENDENCIES) 
 	@rm -f weston-terminal$(EXEEXT)
 	$(AM_V_CCLD)$(weston_terminal_LINK) $(weston_terminal_OBJECTS) $(weston_terminal_LDADD) $(LIBS)
+clients/weston_touch_calibrator-touch-calibrator.$(OBJEXT):  \
+	clients/$(am__dirstamp) clients/$(DEPDIR)/$(am__dirstamp)
+shared/weston_touch_calibrator-matrix.$(OBJEXT):  \
+	shared/$(am__dirstamp) shared/$(DEPDIR)/$(am__dirstamp)
+protocol/weston_touch_calibrator-weston-touch-calibration-protocol.$(OBJEXT):  \
+	protocol/$(am__dirstamp) protocol/$(DEPDIR)/$(am__dirstamp)
+
+weston-touch-calibrator$(EXEEXT): $(weston_touch_calibrator_OBJECTS) $(weston_touch_calibrator_DEPENDENCIES) $(EXTRA_weston_touch_calibrator_DEPENDENCIES) 
+	@rm -f weston-touch-calibrator$(EXEEXT)
+	$(AM_V_CCLD)$(weston_touch_calibrator_LINK) $(weston_touch_calibrator_OBJECTS) $(weston_touch_calibrator_LDADD) $(LIBS)
 clients/weston_transformed-transformed.$(OBJEXT):  \
 	clients/$(am__dirstamp) clients/$(DEPDIR)/$(am__dirstamp)
 
@@ -4600,6 +4677,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@clients/$(DEPDIR)/weston_stacking-stacking.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@clients/$(DEPDIR)/weston_subsurfaces-subsurfaces.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@clients/$(DEPDIR)/weston_terminal-terminal.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@clients/$(DEPDIR)/weston_touch_calibrator-touch-calibrator.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@clients/$(DEPDIR)/weston_transformed-transformed.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@compositor/$(DEPDIR)/cms_colord_la-cms-colord.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@compositor/$(DEPDIR)/cms_colord_la-cms-helper.Plo@am__quote@
@@ -4657,6 +4735,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@libweston/$(DEPDIR)/libweston_@LIBWESTON_MAJOR@_la-plugin-registry.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@libweston/$(DEPDIR)/libweston_@LIBWESTON_MAJOR@_la-screenshooter.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@libweston/$(DEPDIR)/libweston_@LIBWESTON_MAJOR@_la-timeline.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@libweston/$(DEPDIR)/libweston_@LIBWESTON_MAJOR@_la-touch-calibration.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@libweston/$(DEPDIR)/libweston_@LIBWESTON_MAJOR@_la-zoom.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@libweston/$(DEPDIR)/rdp_backend_la-compositor-rdp.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@libweston/$(DEPDIR)/setbacklight-libbacklight.Po@am__quote@
@@ -4670,7 +4749,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/desktop_shell_la-weston-desktop-shell-protocol.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/fullscreen_shell_la-fullscreen-shell-unstable-v1-protocol.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/hmi_controller_la-ivi-hmi-controller-protocol.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/ivi_layout_ivi-ivi-application-protocol.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/ivi_layout_test_client_ivi-ivi-application-protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/ivi_layout_test_la-weston-test-protocol.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/ivi_shell_app_weston-ivi-application-protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/ivi_shell_la-ivi-application-protocol.Plo@am__quote@
@@ -4692,6 +4771,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/libweston_@LIBWESTON_MAJOR@_la-text-input-unstable-v1-protocol.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/libweston_@LIBWESTON_MAJOR@_la-viewporter-protocol.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/libweston_@LIBWESTON_MAJOR@_la-weston-screenshooter-protocol.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/libweston_@LIBWESTON_MAJOR@_la-weston-touch-calibration-protocol.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/libweston_desktop_@LIBWESTON_MAJOR@_la-xdg-shell-unstable-v6-protocol.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/presentation_weston-presentation-time-protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/screen_share_la-fullscreen-shell-unstable-v1-protocol.Plo@am__quote@
@@ -4704,6 +4784,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_fullscreen-fullscreen-shell-unstable-v1-protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_info-linux-dmabuf-unstable-v1-protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_info-presentation-time-protocol.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_info-tablet-unstable-v2-protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_ivi_shell_user_interface-ivi-application-protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_ivi_shell_user_interface-ivi-hmi-controller-protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_keyboard-input-method-unstable-v1-protocol.Po@am__quote@
@@ -4726,6 +4807,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_simple_shm-ivi-application-protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_simple_shm-xdg-shell-unstable-v6-protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_test_la-weston-test-protocol.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/weston_touch_calibrator-weston-touch-calibration-protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@shared/$(DEPDIR)/libshared_cairo_la-cairo-util.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@shared/$(DEPDIR)/libshared_cairo_la-config-parser.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@shared/$(DEPDIR)/libshared_cairo_la-file-util.Plo@am__quote@
@@ -4743,14 +4825,15 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@shared/$(DEPDIR)/matrix_test-matrix.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@shared/$(DEPDIR)/spring_tool-matrix.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@shared/$(DEPDIR)/weston_calibrator-matrix.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@shared/$(DEPDIR)/weston_touch_calibrator-matrix.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/bad_buffer_weston-bad-buffer-test.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/config_parser_test-config-parser-test.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/devices_weston-devices-test.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/event_weston-event-test.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/internal_screenshot_weston-internal-screenshot-test.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/ivi_layout_internal_test_la-ivi_layout-internal-test.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/ivi_layout_ivi-ivi_layout-test.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/ivi_layout_test_la-ivi_layout-test-plugin.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/ivi_layout_internal_test_la-ivi-layout-internal-test.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/ivi_layout_test_client_ivi-ivi-layout-test-client.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/ivi_layout_test_la-ivi-layout-test-plugin.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/ivi_shell_app_weston-ivi-shell-app-test.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/keyboard_weston-keyboard-test.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tests/$(DEPDIR)/libtest_client_la-input-timestamps-helper.Plo@am__quote@
@@ -4976,19 +5059,19 @@ protocol/hmi_controller_la-ivi-hmi-controller-protocol.lo: protocol/ivi-hmi-cont
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(hmi_controller_la_CFLAGS) $(CFLAGS) -c -o protocol/hmi_controller_la-ivi-hmi-controller-protocol.lo `test -f 'protocol/ivi-hmi-controller-protocol.c' || echo '$(srcdir)/'`protocol/ivi-hmi-controller-protocol.c
 
-tests/ivi_layout_internal_test_la-ivi_layout-internal-test.lo: tests/ivi_layout-internal-test.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_internal_test_la_CFLAGS) $(CFLAGS) -MT tests/ivi_layout_internal_test_la-ivi_layout-internal-test.lo -MD -MP -MF tests/$(DEPDIR)/ivi_layout_internal_test_la-ivi_layout-internal-test.Tpo -c -o tests/ivi_layout_internal_test_la-ivi_layout-internal-test.lo `test -f 'tests/ivi_layout-internal-test.c' || echo '$(srcdir)/'`tests/ivi_layout-internal-test.c
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) tests/$(DEPDIR)/ivi_layout_internal_test_la-ivi_layout-internal-test.Tpo tests/$(DEPDIR)/ivi_layout_internal_test_la-ivi_layout-internal-test.Plo
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='tests/ivi_layout-internal-test.c' object='tests/ivi_layout_internal_test_la-ivi_layout-internal-test.lo' libtool=yes @AMDEPBACKSLASH@
+tests/ivi_layout_internal_test_la-ivi-layout-internal-test.lo: tests/ivi-layout-internal-test.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_internal_test_la_CFLAGS) $(CFLAGS) -MT tests/ivi_layout_internal_test_la-ivi-layout-internal-test.lo -MD -MP -MF tests/$(DEPDIR)/ivi_layout_internal_test_la-ivi-layout-internal-test.Tpo -c -o tests/ivi_layout_internal_test_la-ivi-layout-internal-test.lo `test -f 'tests/ivi-layout-internal-test.c' || echo '$(srcdir)/'`tests/ivi-layout-internal-test.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) tests/$(DEPDIR)/ivi_layout_internal_test_la-ivi-layout-internal-test.Tpo tests/$(DEPDIR)/ivi_layout_internal_test_la-ivi-layout-internal-test.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='tests/ivi-layout-internal-test.c' object='tests/ivi_layout_internal_test_la-ivi-layout-internal-test.lo' libtool=yes @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_internal_test_la_CFLAGS) $(CFLAGS) -c -o tests/ivi_layout_internal_test_la-ivi_layout-internal-test.lo `test -f 'tests/ivi_layout-internal-test.c' || echo '$(srcdir)/'`tests/ivi_layout-internal-test.c
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_internal_test_la_CFLAGS) $(CFLAGS) -c -o tests/ivi_layout_internal_test_la-ivi-layout-internal-test.lo `test -f 'tests/ivi-layout-internal-test.c' || echo '$(srcdir)/'`tests/ivi-layout-internal-test.c
 
-tests/ivi_layout_test_la-ivi_layout-test-plugin.lo: tests/ivi_layout-test-plugin.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_test_la_CFLAGS) $(CFLAGS) -MT tests/ivi_layout_test_la-ivi_layout-test-plugin.lo -MD -MP -MF tests/$(DEPDIR)/ivi_layout_test_la-ivi_layout-test-plugin.Tpo -c -o tests/ivi_layout_test_la-ivi_layout-test-plugin.lo `test -f 'tests/ivi_layout-test-plugin.c' || echo '$(srcdir)/'`tests/ivi_layout-test-plugin.c
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) tests/$(DEPDIR)/ivi_layout_test_la-ivi_layout-test-plugin.Tpo tests/$(DEPDIR)/ivi_layout_test_la-ivi_layout-test-plugin.Plo
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='tests/ivi_layout-test-plugin.c' object='tests/ivi_layout_test_la-ivi_layout-test-plugin.lo' libtool=yes @AMDEPBACKSLASH@
+tests/ivi_layout_test_la-ivi-layout-test-plugin.lo: tests/ivi-layout-test-plugin.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_test_la_CFLAGS) $(CFLAGS) -MT tests/ivi_layout_test_la-ivi-layout-test-plugin.lo -MD -MP -MF tests/$(DEPDIR)/ivi_layout_test_la-ivi-layout-test-plugin.Tpo -c -o tests/ivi_layout_test_la-ivi-layout-test-plugin.lo `test -f 'tests/ivi-layout-test-plugin.c' || echo '$(srcdir)/'`tests/ivi-layout-test-plugin.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) tests/$(DEPDIR)/ivi_layout_test_la-ivi-layout-test-plugin.Tpo tests/$(DEPDIR)/ivi_layout_test_la-ivi-layout-test-plugin.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='tests/ivi-layout-test-plugin.c' object='tests/ivi_layout_test_la-ivi-layout-test-plugin.lo' libtool=yes @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_test_la_CFLAGS) $(CFLAGS) -c -o tests/ivi_layout_test_la-ivi_layout-test-plugin.lo `test -f 'tests/ivi_layout-test-plugin.c' || echo '$(srcdir)/'`tests/ivi_layout-test-plugin.c
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_test_la_CFLAGS) $(CFLAGS) -c -o tests/ivi_layout_test_la-ivi-layout-test-plugin.lo `test -f 'tests/ivi-layout-test-plugin.c' || echo '$(srcdir)/'`tests/ivi-layout-test-plugin.c
 
 protocol/ivi_layout_test_la-weston-test-protocol.lo: protocol/weston-test-protocol.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_test_la_CFLAGS) $(CFLAGS) -MT protocol/ivi_layout_test_la-weston-test-protocol.lo -MD -MP -MF protocol/$(DEPDIR)/ivi_layout_test_la-weston-test-protocol.Tpo -c -o protocol/ivi_layout_test_la-weston-test-protocol.lo `test -f 'protocol/weston-test-protocol.c' || echo '$(srcdir)/'`protocol/weston-test-protocol.c
@@ -5277,6 +5360,13 @@ libweston/libweston_@LIBWESTON_MAJOR@_la-screenshooter.lo: libweston/screenshoot
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libweston_@LIBWESTON_MAJOR@_la_CPPFLAGS) $(CPPFLAGS) $(libweston_@LIBWESTON_MAJOR@_la_CFLAGS) $(CFLAGS) -c -o libweston/libweston_@LIBWESTON_MAJOR@_la-screenshooter.lo `test -f 'libweston/screenshooter.c' || echo '$(srcdir)/'`libweston/screenshooter.c
 
+libweston/libweston_@LIBWESTON_MAJOR@_la-touch-calibration.lo: libweston/touch-calibration.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libweston_@LIBWESTON_MAJOR@_la_CPPFLAGS) $(CPPFLAGS) $(libweston_@LIBWESTON_MAJOR@_la_CFLAGS) $(CFLAGS) -MT libweston/libweston_@LIBWESTON_MAJOR@_la-touch-calibration.lo -MD -MP -MF libweston/$(DEPDIR)/libweston_@LIBWESTON_MAJOR@_la-touch-calibration.Tpo -c -o libweston/libweston_@LIBWESTON_MAJOR@_la-touch-calibration.lo `test -f 'libweston/touch-calibration.c' || echo '$(srcdir)/'`libweston/touch-calibration.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) libweston/$(DEPDIR)/libweston_@LIBWESTON_MAJOR@_la-touch-calibration.Tpo libweston/$(DEPDIR)/libweston_@LIBWESTON_MAJOR@_la-touch-calibration.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='libweston/touch-calibration.c' object='libweston/libweston_@LIBWESTON_MAJOR@_la-touch-calibration.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libweston_@LIBWESTON_MAJOR@_la_CPPFLAGS) $(CPPFLAGS) $(libweston_@LIBWESTON_MAJOR@_la_CFLAGS) $(CFLAGS) -c -o libweston/libweston_@LIBWESTON_MAJOR@_la-touch-calibration.lo `test -f 'libweston/touch-calibration.c' || echo '$(srcdir)/'`libweston/touch-calibration.c
+
 libweston/libweston_@LIBWESTON_MAJOR@_la-clipboard.lo: libweston/clipboard.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libweston_@LIBWESTON_MAJOR@_la_CPPFLAGS) $(CPPFLAGS) $(libweston_@LIBWESTON_MAJOR@_la_CFLAGS) $(CFLAGS) -MT libweston/libweston_@LIBWESTON_MAJOR@_la-clipboard.lo -MD -MP -MF libweston/$(DEPDIR)/libweston_@LIBWESTON_MAJOR@_la-clipboard.Tpo -c -o libweston/libweston_@LIBWESTON_MAJOR@_la-clipboard.lo `test -f 'libweston/clipboard.c' || echo '$(srcdir)/'`libweston/clipboard.c
 @am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) libweston/$(DEPDIR)/libweston_@LIBWESTON_MAJOR@_la-clipboard.Tpo libweston/$(DEPDIR)/libweston_@LIBWESTON_MAJOR@_la-clipboard.Plo
@@ -5423,6 +5513,13 @@ protocol/libweston_@LIBWESTON_MAJOR@_la-input-timestamps-unstable-v1-protocol.lo
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='protocol/input-timestamps-unstable-v1-protocol.c' object='protocol/libweston_@LIBWESTON_MAJOR@_la-input-timestamps-unstable-v1-protocol.lo' libtool=yes @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libweston_@LIBWESTON_MAJOR@_la_CPPFLAGS) $(CPPFLAGS) $(libweston_@LIBWESTON_MAJOR@_la_CFLAGS) $(CFLAGS) -c -o protocol/libweston_@LIBWESTON_MAJOR@_la-input-timestamps-unstable-v1-protocol.lo `test -f 'protocol/input-timestamps-unstable-v1-protocol.c' || echo '$(srcdir)/'`protocol/input-timestamps-unstable-v1-protocol.c
+
+protocol/libweston_@LIBWESTON_MAJOR@_la-weston-touch-calibration-protocol.lo: protocol/weston-touch-calibration-protocol.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libweston_@LIBWESTON_MAJOR@_la_CPPFLAGS) $(CPPFLAGS) $(libweston_@LIBWESTON_MAJOR@_la_CFLAGS) $(CFLAGS) -MT protocol/libweston_@LIBWESTON_MAJOR@_la-weston-touch-calibration-protocol.lo -MD -MP -MF protocol/$(DEPDIR)/libweston_@LIBWESTON_MAJOR@_la-weston-touch-calibration-protocol.Tpo -c -o protocol/libweston_@LIBWESTON_MAJOR@_la-weston-touch-calibration-protocol.lo `test -f 'protocol/weston-touch-calibration-protocol.c' || echo '$(srcdir)/'`protocol/weston-touch-calibration-protocol.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) protocol/$(DEPDIR)/libweston_@LIBWESTON_MAJOR@_la-weston-touch-calibration-protocol.Tpo protocol/$(DEPDIR)/libweston_@LIBWESTON_MAJOR@_la-weston-touch-calibration-protocol.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='protocol/weston-touch-calibration-protocol.c' object='protocol/libweston_@LIBWESTON_MAJOR@_la-weston-touch-calibration-protocol.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libweston_@LIBWESTON_MAJOR@_la_CPPFLAGS) $(CPPFLAGS) $(libweston_@LIBWESTON_MAJOR@_la_CFLAGS) $(CFLAGS) -c -o protocol/libweston_@LIBWESTON_MAJOR@_la-weston-touch-calibration-protocol.lo `test -f 'protocol/weston-touch-calibration-protocol.c' || echo '$(srcdir)/'`protocol/weston-touch-calibration-protocol.c
 
 libweston-desktop/libweston_desktop_@LIBWESTON_MAJOR@_la-client.lo: libweston-desktop/client.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libweston_desktop_@LIBWESTON_MAJOR@_la_CPPFLAGS) $(CPPFLAGS) $(libweston_desktop_@LIBWESTON_MAJOR@_la_CFLAGS) $(CFLAGS) -MT libweston-desktop/libweston_desktop_@LIBWESTON_MAJOR@_la-client.lo -MD -MP -MF libweston-desktop/$(DEPDIR)/libweston_desktop_@LIBWESTON_MAJOR@_la-client.Tpo -c -o libweston-desktop/libweston_desktop_@LIBWESTON_MAJOR@_la-client.lo `test -f 'libweston-desktop/client.c' || echo '$(srcdir)/'`libweston-desktop/client.c
@@ -5725,33 +5822,33 @@ tests/internal_screenshot_weston-internal-screenshot-test.obj: tests/internal-sc
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(internal_screenshot_weston_CFLAGS) $(CFLAGS) -c -o tests/internal_screenshot_weston-internal-screenshot-test.obj `if test -f 'tests/internal-screenshot-test.c'; then $(CYGPATH_W) 'tests/internal-screenshot-test.c'; else $(CYGPATH_W) '$(srcdir)/tests/internal-screenshot-test.c'; fi`
 
-tests/ivi_layout_ivi-ivi_layout-test.o: tests/ivi_layout-test.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_ivi_CFLAGS) $(CFLAGS) -MT tests/ivi_layout_ivi-ivi_layout-test.o -MD -MP -MF tests/$(DEPDIR)/ivi_layout_ivi-ivi_layout-test.Tpo -c -o tests/ivi_layout_ivi-ivi_layout-test.o `test -f 'tests/ivi_layout-test.c' || echo '$(srcdir)/'`tests/ivi_layout-test.c
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) tests/$(DEPDIR)/ivi_layout_ivi-ivi_layout-test.Tpo tests/$(DEPDIR)/ivi_layout_ivi-ivi_layout-test.Po
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='tests/ivi_layout-test.c' object='tests/ivi_layout_ivi-ivi_layout-test.o' libtool=no @AMDEPBACKSLASH@
+tests/ivi_layout_test_client_ivi-ivi-layout-test-client.o: tests/ivi-layout-test-client.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_test_client_ivi_CFLAGS) $(CFLAGS) -MT tests/ivi_layout_test_client_ivi-ivi-layout-test-client.o -MD -MP -MF tests/$(DEPDIR)/ivi_layout_test_client_ivi-ivi-layout-test-client.Tpo -c -o tests/ivi_layout_test_client_ivi-ivi-layout-test-client.o `test -f 'tests/ivi-layout-test-client.c' || echo '$(srcdir)/'`tests/ivi-layout-test-client.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) tests/$(DEPDIR)/ivi_layout_test_client_ivi-ivi-layout-test-client.Tpo tests/$(DEPDIR)/ivi_layout_test_client_ivi-ivi-layout-test-client.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='tests/ivi-layout-test-client.c' object='tests/ivi_layout_test_client_ivi-ivi-layout-test-client.o' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_ivi_CFLAGS) $(CFLAGS) -c -o tests/ivi_layout_ivi-ivi_layout-test.o `test -f 'tests/ivi_layout-test.c' || echo '$(srcdir)/'`tests/ivi_layout-test.c
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_test_client_ivi_CFLAGS) $(CFLAGS) -c -o tests/ivi_layout_test_client_ivi-ivi-layout-test-client.o `test -f 'tests/ivi-layout-test-client.c' || echo '$(srcdir)/'`tests/ivi-layout-test-client.c
 
-tests/ivi_layout_ivi-ivi_layout-test.obj: tests/ivi_layout-test.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_ivi_CFLAGS) $(CFLAGS) -MT tests/ivi_layout_ivi-ivi_layout-test.obj -MD -MP -MF tests/$(DEPDIR)/ivi_layout_ivi-ivi_layout-test.Tpo -c -o tests/ivi_layout_ivi-ivi_layout-test.obj `if test -f 'tests/ivi_layout-test.c'; then $(CYGPATH_W) 'tests/ivi_layout-test.c'; else $(CYGPATH_W) '$(srcdir)/tests/ivi_layout-test.c'; fi`
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) tests/$(DEPDIR)/ivi_layout_ivi-ivi_layout-test.Tpo tests/$(DEPDIR)/ivi_layout_ivi-ivi_layout-test.Po
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='tests/ivi_layout-test.c' object='tests/ivi_layout_ivi-ivi_layout-test.obj' libtool=no @AMDEPBACKSLASH@
+tests/ivi_layout_test_client_ivi-ivi-layout-test-client.obj: tests/ivi-layout-test-client.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_test_client_ivi_CFLAGS) $(CFLAGS) -MT tests/ivi_layout_test_client_ivi-ivi-layout-test-client.obj -MD -MP -MF tests/$(DEPDIR)/ivi_layout_test_client_ivi-ivi-layout-test-client.Tpo -c -o tests/ivi_layout_test_client_ivi-ivi-layout-test-client.obj `if test -f 'tests/ivi-layout-test-client.c'; then $(CYGPATH_W) 'tests/ivi-layout-test-client.c'; else $(CYGPATH_W) '$(srcdir)/tests/ivi-layout-test-client.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) tests/$(DEPDIR)/ivi_layout_test_client_ivi-ivi-layout-test-client.Tpo tests/$(DEPDIR)/ivi_layout_test_client_ivi-ivi-layout-test-client.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='tests/ivi-layout-test-client.c' object='tests/ivi_layout_test_client_ivi-ivi-layout-test-client.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_ivi_CFLAGS) $(CFLAGS) -c -o tests/ivi_layout_ivi-ivi_layout-test.obj `if test -f 'tests/ivi_layout-test.c'; then $(CYGPATH_W) 'tests/ivi_layout-test.c'; else $(CYGPATH_W) '$(srcdir)/tests/ivi_layout-test.c'; fi`
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_test_client_ivi_CFLAGS) $(CFLAGS) -c -o tests/ivi_layout_test_client_ivi-ivi-layout-test-client.obj `if test -f 'tests/ivi-layout-test-client.c'; then $(CYGPATH_W) 'tests/ivi-layout-test-client.c'; else $(CYGPATH_W) '$(srcdir)/tests/ivi-layout-test-client.c'; fi`
 
-protocol/ivi_layout_ivi-ivi-application-protocol.o: protocol/ivi-application-protocol.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_ivi_CFLAGS) $(CFLAGS) -MT protocol/ivi_layout_ivi-ivi-application-protocol.o -MD -MP -MF protocol/$(DEPDIR)/ivi_layout_ivi-ivi-application-protocol.Tpo -c -o protocol/ivi_layout_ivi-ivi-application-protocol.o `test -f 'protocol/ivi-application-protocol.c' || echo '$(srcdir)/'`protocol/ivi-application-protocol.c
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) protocol/$(DEPDIR)/ivi_layout_ivi-ivi-application-protocol.Tpo protocol/$(DEPDIR)/ivi_layout_ivi-ivi-application-protocol.Po
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='protocol/ivi-application-protocol.c' object='protocol/ivi_layout_ivi-ivi-application-protocol.o' libtool=no @AMDEPBACKSLASH@
+protocol/ivi_layout_test_client_ivi-ivi-application-protocol.o: protocol/ivi-application-protocol.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_test_client_ivi_CFLAGS) $(CFLAGS) -MT protocol/ivi_layout_test_client_ivi-ivi-application-protocol.o -MD -MP -MF protocol/$(DEPDIR)/ivi_layout_test_client_ivi-ivi-application-protocol.Tpo -c -o protocol/ivi_layout_test_client_ivi-ivi-application-protocol.o `test -f 'protocol/ivi-application-protocol.c' || echo '$(srcdir)/'`protocol/ivi-application-protocol.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) protocol/$(DEPDIR)/ivi_layout_test_client_ivi-ivi-application-protocol.Tpo protocol/$(DEPDIR)/ivi_layout_test_client_ivi-ivi-application-protocol.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='protocol/ivi-application-protocol.c' object='protocol/ivi_layout_test_client_ivi-ivi-application-protocol.o' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_ivi_CFLAGS) $(CFLAGS) -c -o protocol/ivi_layout_ivi-ivi-application-protocol.o `test -f 'protocol/ivi-application-protocol.c' || echo '$(srcdir)/'`protocol/ivi-application-protocol.c
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_test_client_ivi_CFLAGS) $(CFLAGS) -c -o protocol/ivi_layout_test_client_ivi-ivi-application-protocol.o `test -f 'protocol/ivi-application-protocol.c' || echo '$(srcdir)/'`protocol/ivi-application-protocol.c
 
-protocol/ivi_layout_ivi-ivi-application-protocol.obj: protocol/ivi-application-protocol.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_ivi_CFLAGS) $(CFLAGS) -MT protocol/ivi_layout_ivi-ivi-application-protocol.obj -MD -MP -MF protocol/$(DEPDIR)/ivi_layout_ivi-ivi-application-protocol.Tpo -c -o protocol/ivi_layout_ivi-ivi-application-protocol.obj `if test -f 'protocol/ivi-application-protocol.c'; then $(CYGPATH_W) 'protocol/ivi-application-protocol.c'; else $(CYGPATH_W) '$(srcdir)/protocol/ivi-application-protocol.c'; fi`
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) protocol/$(DEPDIR)/ivi_layout_ivi-ivi-application-protocol.Tpo protocol/$(DEPDIR)/ivi_layout_ivi-ivi-application-protocol.Po
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='protocol/ivi-application-protocol.c' object='protocol/ivi_layout_ivi-ivi-application-protocol.obj' libtool=no @AMDEPBACKSLASH@
+protocol/ivi_layout_test_client_ivi-ivi-application-protocol.obj: protocol/ivi-application-protocol.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_test_client_ivi_CFLAGS) $(CFLAGS) -MT protocol/ivi_layout_test_client_ivi-ivi-application-protocol.obj -MD -MP -MF protocol/$(DEPDIR)/ivi_layout_test_client_ivi-ivi-application-protocol.Tpo -c -o protocol/ivi_layout_test_client_ivi-ivi-application-protocol.obj `if test -f 'protocol/ivi-application-protocol.c'; then $(CYGPATH_W) 'protocol/ivi-application-protocol.c'; else $(CYGPATH_W) '$(srcdir)/protocol/ivi-application-protocol.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) protocol/$(DEPDIR)/ivi_layout_test_client_ivi-ivi-application-protocol.Tpo protocol/$(DEPDIR)/ivi_layout_test_client_ivi-ivi-application-protocol.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='protocol/ivi-application-protocol.c' object='protocol/ivi_layout_test_client_ivi-ivi-application-protocol.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_ivi_CFLAGS) $(CFLAGS) -c -o protocol/ivi_layout_ivi-ivi-application-protocol.obj `if test -f 'protocol/ivi-application-protocol.c'; then $(CYGPATH_W) 'protocol/ivi-application-protocol.c'; else $(CYGPATH_W) '$(srcdir)/protocol/ivi-application-protocol.c'; fi`
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_layout_test_client_ivi_CFLAGS) $(CFLAGS) -c -o protocol/ivi_layout_test_client_ivi-ivi-application-protocol.obj `if test -f 'protocol/ivi-application-protocol.c'; then $(CYGPATH_W) 'protocol/ivi-application-protocol.c'; else $(CYGPATH_W) '$(srcdir)/protocol/ivi-application-protocol.c'; fi`
 
 tests/ivi_shell_app_weston-ivi-shell-app-test.o: tests/ivi-shell-app-test.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ivi_shell_app_weston_CFLAGS) $(CFLAGS) -MT tests/ivi_shell_app_weston-ivi-shell-app-test.o -MD -MP -MF tests/$(DEPDIR)/ivi_shell_app_weston-ivi-shell-app-test.Tpo -c -o tests/ivi_shell_app_weston-ivi-shell-app-test.o `test -f 'tests/ivi-shell-app-test.c' || echo '$(srcdir)/'`tests/ivi-shell-app-test.c
@@ -6439,6 +6536,20 @@ protocol/weston_info-linux-dmabuf-unstable-v1-protocol.obj: protocol/linux-dmabu
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_info_CFLAGS) $(CFLAGS) -c -o protocol/weston_info-linux-dmabuf-unstable-v1-protocol.obj `if test -f 'protocol/linux-dmabuf-unstable-v1-protocol.c'; then $(CYGPATH_W) 'protocol/linux-dmabuf-unstable-v1-protocol.c'; else $(CYGPATH_W) '$(srcdir)/protocol/linux-dmabuf-unstable-v1-protocol.c'; fi`
 
+protocol/weston_info-tablet-unstable-v2-protocol.o: protocol/tablet-unstable-v2-protocol.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_info_CFLAGS) $(CFLAGS) -MT protocol/weston_info-tablet-unstable-v2-protocol.o -MD -MP -MF protocol/$(DEPDIR)/weston_info-tablet-unstable-v2-protocol.Tpo -c -o protocol/weston_info-tablet-unstable-v2-protocol.o `test -f 'protocol/tablet-unstable-v2-protocol.c' || echo '$(srcdir)/'`protocol/tablet-unstable-v2-protocol.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) protocol/$(DEPDIR)/weston_info-tablet-unstable-v2-protocol.Tpo protocol/$(DEPDIR)/weston_info-tablet-unstable-v2-protocol.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='protocol/tablet-unstable-v2-protocol.c' object='protocol/weston_info-tablet-unstable-v2-protocol.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_info_CFLAGS) $(CFLAGS) -c -o protocol/weston_info-tablet-unstable-v2-protocol.o `test -f 'protocol/tablet-unstable-v2-protocol.c' || echo '$(srcdir)/'`protocol/tablet-unstable-v2-protocol.c
+
+protocol/weston_info-tablet-unstable-v2-protocol.obj: protocol/tablet-unstable-v2-protocol.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_info_CFLAGS) $(CFLAGS) -MT protocol/weston_info-tablet-unstable-v2-protocol.obj -MD -MP -MF protocol/$(DEPDIR)/weston_info-tablet-unstable-v2-protocol.Tpo -c -o protocol/weston_info-tablet-unstable-v2-protocol.obj `if test -f 'protocol/tablet-unstable-v2-protocol.c'; then $(CYGPATH_W) 'protocol/tablet-unstable-v2-protocol.c'; else $(CYGPATH_W) '$(srcdir)/protocol/tablet-unstable-v2-protocol.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) protocol/$(DEPDIR)/weston_info-tablet-unstable-v2-protocol.Tpo protocol/$(DEPDIR)/weston_info-tablet-unstable-v2-protocol.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='protocol/tablet-unstable-v2-protocol.c' object='protocol/weston_info-tablet-unstable-v2-protocol.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_info_CFLAGS) $(CFLAGS) -c -o protocol/weston_info-tablet-unstable-v2-protocol.obj `if test -f 'protocol/tablet-unstable-v2-protocol.c'; then $(CYGPATH_W) 'protocol/tablet-unstable-v2-protocol.c'; else $(CYGPATH_W) '$(srcdir)/protocol/tablet-unstable-v2-protocol.c'; fi`
+
 clients/weston_ivi_shell_user_interface-ivi-shell-user-interface.o: clients/ivi-shell-user-interface.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_ivi_shell_user_interface_CFLAGS) $(CFLAGS) -MT clients/weston_ivi_shell_user_interface-ivi-shell-user-interface.o -MD -MP -MF clients/$(DEPDIR)/weston_ivi_shell_user_interface-ivi-shell-user-interface.Tpo -c -o clients/weston_ivi_shell_user_interface-ivi-shell-user-interface.o `test -f 'clients/ivi-shell-user-interface.c' || echo '$(srcdir)/'`clients/ivi-shell-user-interface.c
 @am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) clients/$(DEPDIR)/weston_ivi_shell_user_interface-ivi-shell-user-interface.Tpo clients/$(DEPDIR)/weston_ivi_shell_user_interface-ivi-shell-user-interface.Po
@@ -7026,6 +7137,48 @@ clients/weston_terminal-terminal.obj: clients/terminal.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='clients/terminal.c' object='clients/weston_terminal-terminal.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_terminal_CFLAGS) $(CFLAGS) -c -o clients/weston_terminal-terminal.obj `if test -f 'clients/terminal.c'; then $(CYGPATH_W) 'clients/terminal.c'; else $(CYGPATH_W) '$(srcdir)/clients/terminal.c'; fi`
+
+clients/weston_touch_calibrator-touch-calibrator.o: clients/touch-calibrator.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_touch_calibrator_CFLAGS) $(CFLAGS) -MT clients/weston_touch_calibrator-touch-calibrator.o -MD -MP -MF clients/$(DEPDIR)/weston_touch_calibrator-touch-calibrator.Tpo -c -o clients/weston_touch_calibrator-touch-calibrator.o `test -f 'clients/touch-calibrator.c' || echo '$(srcdir)/'`clients/touch-calibrator.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) clients/$(DEPDIR)/weston_touch_calibrator-touch-calibrator.Tpo clients/$(DEPDIR)/weston_touch_calibrator-touch-calibrator.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='clients/touch-calibrator.c' object='clients/weston_touch_calibrator-touch-calibrator.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_touch_calibrator_CFLAGS) $(CFLAGS) -c -o clients/weston_touch_calibrator-touch-calibrator.o `test -f 'clients/touch-calibrator.c' || echo '$(srcdir)/'`clients/touch-calibrator.c
+
+clients/weston_touch_calibrator-touch-calibrator.obj: clients/touch-calibrator.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_touch_calibrator_CFLAGS) $(CFLAGS) -MT clients/weston_touch_calibrator-touch-calibrator.obj -MD -MP -MF clients/$(DEPDIR)/weston_touch_calibrator-touch-calibrator.Tpo -c -o clients/weston_touch_calibrator-touch-calibrator.obj `if test -f 'clients/touch-calibrator.c'; then $(CYGPATH_W) 'clients/touch-calibrator.c'; else $(CYGPATH_W) '$(srcdir)/clients/touch-calibrator.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) clients/$(DEPDIR)/weston_touch_calibrator-touch-calibrator.Tpo clients/$(DEPDIR)/weston_touch_calibrator-touch-calibrator.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='clients/touch-calibrator.c' object='clients/weston_touch_calibrator-touch-calibrator.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_touch_calibrator_CFLAGS) $(CFLAGS) -c -o clients/weston_touch_calibrator-touch-calibrator.obj `if test -f 'clients/touch-calibrator.c'; then $(CYGPATH_W) 'clients/touch-calibrator.c'; else $(CYGPATH_W) '$(srcdir)/clients/touch-calibrator.c'; fi`
+
+shared/weston_touch_calibrator-matrix.o: shared/matrix.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_touch_calibrator_CFLAGS) $(CFLAGS) -MT shared/weston_touch_calibrator-matrix.o -MD -MP -MF shared/$(DEPDIR)/weston_touch_calibrator-matrix.Tpo -c -o shared/weston_touch_calibrator-matrix.o `test -f 'shared/matrix.c' || echo '$(srcdir)/'`shared/matrix.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) shared/$(DEPDIR)/weston_touch_calibrator-matrix.Tpo shared/$(DEPDIR)/weston_touch_calibrator-matrix.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='shared/matrix.c' object='shared/weston_touch_calibrator-matrix.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_touch_calibrator_CFLAGS) $(CFLAGS) -c -o shared/weston_touch_calibrator-matrix.o `test -f 'shared/matrix.c' || echo '$(srcdir)/'`shared/matrix.c
+
+shared/weston_touch_calibrator-matrix.obj: shared/matrix.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_touch_calibrator_CFLAGS) $(CFLAGS) -MT shared/weston_touch_calibrator-matrix.obj -MD -MP -MF shared/$(DEPDIR)/weston_touch_calibrator-matrix.Tpo -c -o shared/weston_touch_calibrator-matrix.obj `if test -f 'shared/matrix.c'; then $(CYGPATH_W) 'shared/matrix.c'; else $(CYGPATH_W) '$(srcdir)/shared/matrix.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) shared/$(DEPDIR)/weston_touch_calibrator-matrix.Tpo shared/$(DEPDIR)/weston_touch_calibrator-matrix.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='shared/matrix.c' object='shared/weston_touch_calibrator-matrix.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_touch_calibrator_CFLAGS) $(CFLAGS) -c -o shared/weston_touch_calibrator-matrix.obj `if test -f 'shared/matrix.c'; then $(CYGPATH_W) 'shared/matrix.c'; else $(CYGPATH_W) '$(srcdir)/shared/matrix.c'; fi`
+
+protocol/weston_touch_calibrator-weston-touch-calibration-protocol.o: protocol/weston-touch-calibration-protocol.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_touch_calibrator_CFLAGS) $(CFLAGS) -MT protocol/weston_touch_calibrator-weston-touch-calibration-protocol.o -MD -MP -MF protocol/$(DEPDIR)/weston_touch_calibrator-weston-touch-calibration-protocol.Tpo -c -o protocol/weston_touch_calibrator-weston-touch-calibration-protocol.o `test -f 'protocol/weston-touch-calibration-protocol.c' || echo '$(srcdir)/'`protocol/weston-touch-calibration-protocol.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) protocol/$(DEPDIR)/weston_touch_calibrator-weston-touch-calibration-protocol.Tpo protocol/$(DEPDIR)/weston_touch_calibrator-weston-touch-calibration-protocol.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='protocol/weston-touch-calibration-protocol.c' object='protocol/weston_touch_calibrator-weston-touch-calibration-protocol.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_touch_calibrator_CFLAGS) $(CFLAGS) -c -o protocol/weston_touch_calibrator-weston-touch-calibration-protocol.o `test -f 'protocol/weston-touch-calibration-protocol.c' || echo '$(srcdir)/'`protocol/weston-touch-calibration-protocol.c
+
+protocol/weston_touch_calibrator-weston-touch-calibration-protocol.obj: protocol/weston-touch-calibration-protocol.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_touch_calibrator_CFLAGS) $(CFLAGS) -MT protocol/weston_touch_calibrator-weston-touch-calibration-protocol.obj -MD -MP -MF protocol/$(DEPDIR)/weston_touch_calibrator-weston-touch-calibration-protocol.Tpo -c -o protocol/weston_touch_calibrator-weston-touch-calibration-protocol.obj `if test -f 'protocol/weston-touch-calibration-protocol.c'; then $(CYGPATH_W) 'protocol/weston-touch-calibration-protocol.c'; else $(CYGPATH_W) '$(srcdir)/protocol/weston-touch-calibration-protocol.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) protocol/$(DEPDIR)/weston_touch_calibrator-weston-touch-calibration-protocol.Tpo protocol/$(DEPDIR)/weston_touch_calibrator-weston-touch-calibration-protocol.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='protocol/weston-touch-calibration-protocol.c' object='protocol/weston_touch_calibrator-weston-touch-calibration-protocol.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_touch_calibrator_CFLAGS) $(CFLAGS) -c -o protocol/weston_touch_calibrator-weston-touch-calibration-protocol.obj `if test -f 'protocol/weston-touch-calibration-protocol.c'; then $(CYGPATH_W) 'protocol/weston-touch-calibration-protocol.c'; else $(CYGPATH_W) '$(srcdir)/protocol/weston-touch-calibration-protocol.c'; fi`
 
 clients/weston_transformed-transformed.o: clients/transformed.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(weston_transformed_CFLAGS) $(CFLAGS) -MT clients/weston_transformed-transformed.o -MD -MP -MF clients/$(DEPDIR)/weston_transformed-transformed.Tpo -c -o clients/weston_transformed-transformed.o `test -f 'clients/transformed.c' || echo '$(srcdir)/'`clients/transformed.c
@@ -7983,10 +8136,8 @@ weston.ini : $(srcdir)/weston.ini.in
 ivi-shell/weston.ini : $(srcdir)/ivi-shell/weston.ini.in
 	$(AM_V_GEN)$(MKDIR_P) $(dir $@) && $(SED) \
 		-e 's|@bindir[@]|$(bindir)|g' \
-		-e 's|@abs_top_builddir[@]|$(abs_top_builddir)|g' \
-		-e 's|@abs_top_srcdir[@]|$(abs_top_srcdir)|g' \
 		-e 's|@libexecdir[@]|$(libexecdir)|g' \
-		-e 's|@plugin_prefix[@]||g' \
+		-e 's|@westondatadir[@]|$(westondatadir)|g' \
 		$< > $@
 
 all-local : weston.ini ivi-shell/weston.ini
