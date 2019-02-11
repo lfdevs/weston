@@ -14,6 +14,7 @@ Build-Depends:
  libpng-dev,
  libjpeg-dev,
  libcolord-dev (>= 0.1.27),
+ liblcms2-dev,
  mesa-common-dev,
  libglu1-mesa-dev,
  libegl1-mesa-dev (>= 9.0~),
