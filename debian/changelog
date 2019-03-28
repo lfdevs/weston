@@ -1,3 +1,15 @@
+weston (5.0.0-3) unstable; urgency=medium
+
+  * debian/control: add libdbus-1-dev to Build-Depends
+    - Fixes "won't start despite having an active logind session"
+    (Closes: #799325)
+    Thanks Paul Menzel for analysis.
+  * debian/patches/reproducible-build-899358.patch: new patch
+    - Make the build reproducible
+    (Closes: #899358)
+
+ -- Héctor Orón Martínez <zumbi@debian.org>  Thu, 28 Mar 2019 14:11:26 +0100
+
 weston (5.0.0-2) unstable; urgency=medium
 
   [ Emilio Pozuelo Monfort ]

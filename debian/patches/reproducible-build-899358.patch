@@ -1,0 +1,14 @@
+https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=899358
+Index: weston/weston.ini.in
+===================================================================
+--- weston.orig/weston.ini.in	2019-03-28 12:55:11.730324981 +0100
++++ weston/weston.ini.in	2019-03-28 12:58:53.029372855 +0100
+@@ -38,7 +38,7 @@
+ 
+ [launcher]
+ icon=/usr/share/icons/gnome/24x24/apps/arts.png
+-path=@abs_top_builddir@/weston-flower
++path=@libexecdir@/weston-flower
+ 
+ [input-method]
+ path=@libexecdir@/weston-keyboard

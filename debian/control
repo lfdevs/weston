@@ -10,6 +10,7 @@ Build-Depends:
  debhelper (>= 10),
  quilt,
  pkg-config,
+ libdbus-1-dev,
  libpixman-1-dev (>= 0.25.2),
  libpng-dev,
  libjpeg-dev,
