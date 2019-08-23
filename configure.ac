@@ -1,11 +1,11 @@
-m4_define([weston_major_version], [5])
+m4_define([weston_major_version], [6])
 m4_define([weston_minor_version], [0])
-m4_define([weston_micro_version], [0])
+m4_define([weston_micro_version], [1])
 m4_define([weston_version],
           [weston_major_version.weston_minor_version.weston_micro_version])
-m4_define([libweston_major_version], [5])
+m4_define([libweston_major_version], [6])
 m4_define([libweston_minor_version], [0])
-m4_define([libweston_patch_version], [0])
+m4_define([libweston_patch_version], [1])
 
 AC_PREREQ([2.64])
 AC_INIT([weston],
@@ -84,12 +84,30 @@ AC_PROG_SED
 LT_PREREQ([2.2])
 LT_INIT([disable-static])
 
+AC_ARG_ENABLE(autotools,
+	      AS_HELP_STRING([--enable-autotools],
+			     [Allow building with autotools]),,
+	      enable_autotools=no)
+if test "x$enable_autotools" = "xno"; then
+	AC_ERROR([
+	*** Autotools support will be removed after the 6.0.0 release ***
+
+	Please, try the Meson based build and report any problems you might have
+	with it. Instructions and references can be found in README.md.
+	If you still want to continue building with autotools,
+	use --enable-autotools configure option.
+	])
+fi
+
 AC_ARG_VAR([WESTON_NATIVE_BACKEND],
            [Set the native backend to use, if Weston is not running under Wayland nor X11. @<:@default=drm-backend.so@:>@])
 AC_ARG_VAR([WESTON_SHELL_CLIENT],
            [Set the default desktop shell client to load if none is specified in weston.ini. @<:@default=weston-desktop-shell@:>@])
 
 PKG_PROG_PKG_CONFIG()
+
+# Check pthread
+AX_PTHREAD
 
 # Check for dlsym instead of dlopen because ASAN hijacks the latter
 WESTON_SEARCH_LIBS([DL], [dl], [dlsym])
@@ -107,7 +125,6 @@ AC_CHECK_DECL(TFD_CLOEXEC,[],
 AC_CHECK_DECL(CLOCK_MONOTONIC,[],
 	      [AC_MSG_ERROR("CLOCK_MONOTONIC is needed to compile weston")],
 	      [[#include <time.h>]])
-AC_CHECK_HEADERS([execinfo.h])
 
 AC_CHECK_FUNCS([mkostemp strchrnul initgroups posix_fallocate])
 
@@ -146,7 +163,6 @@ AM_CONDITIONAL(ENABLE_EGL, test x$enable_egl = xyes)
 if test x$enable_egl = xyes; then
 	AC_DEFINE([ENABLE_EGL], [1], [Build Weston with EGL support])
 	PKG_CHECK_MODULES(EGL, [egl glesv2])
-        PKG_CHECK_MODULES([EGL_TESTS], [egl glesv2 wayland-client wayland-egl])
 	AC_CHECK_HEADERS([linux/sync_file.h])
 fi
 
@@ -223,11 +239,25 @@ if test x$enable_drm_compositor = xyes; then
 		    [AC_MSG_WARN([GBM does not support dmabuf import, will omit that capability])])
 fi
 
+AC_ARG_ENABLE(remoting, [  --enable-remoting],,
+              enable_remoting=no)
+AM_CONDITIONAL(ENABLE_REMOTING, test x$enable_remoting = xyes)
+if test x$enable_remoting = xyes; then
+  if test x$enable_drm_compositor != xyes; then
+    AC_MSG_WARN([The remoting-plugin.so module requires the DRM backend.])
+  fi
+  PKG_CHECK_MODULES(REMOTING_GST, [gstreamer-1.0 gstreamer-allocators-1.0 gstreamer-app-1.0 gstreamer-video-1.0])
+fi
 
+
+PKG_CHECK_MODULES(LIBEVDEV, [libevdev])
 PKG_CHECK_MODULES(LIBINPUT_BACKEND, [libinput >= 0.8.0])
 PKG_CHECK_MODULES(COMPOSITOR, [$COMPOSITOR_MODULES])
 
-PKG_CHECK_MODULES(WAYLAND_PROTOCOLS, [wayland-protocols >= 1.13],
+# XXX: For minor version 2 of zwp_linux_explicit_synchronization_v1, we
+# actually need a development version after 1.17, but there is no way to
+# express such a requirement at the moment.
+PKG_CHECK_MODULES(WAYLAND_PROTOCOLS, [wayland-protocols >= 1.17],
 		  [ac_wayland_protocols_pkgdatadir=`$PKG_CONFIG --variable=pkgdatadir wayland-protocols`])
 AC_SUBST(WAYLAND_PROTOCOLS_DATADIR, $ac_wayland_protocols_pkgdatadir)
 
@@ -438,6 +468,21 @@ if ! test "x$enable_simple_dmabuf_v4l_client" = "xno"; then
   enable_simple_dmabuf_v4l_client="$have_simple_dmabuf_v4l_client"
 fi
 AM_CONDITIONAL(BUILD_SIMPLE_DMABUF_V4L_CLIENT, test "x$enable_simple_dmabuf_v4l_client" = "xyes")
+
+AC_ARG_ENABLE(simple-dmabuf-egl-client,
+              AS_HELP_STRING([--disable-simple-dmabuf-egl-client],
+                             [do not build the simple dmabuf egl client]),,
+              enable_simple_dmabuf_egl_client="auto")
+if ! test "x$enable_simple_dmabuf_egl_client" = "xno"; then
+  PKG_CHECK_MODULES(SIMPLE_DMABUF_EGL_CLIENT, [wayland-client libdrm gbm egl glesv2],
+		    [have_simple_dmabuf_egl_client=yes], [have_simple_dmabuf_egl_client=no])
+
+  if test "x$have_simple_dmabuf_egl_client" = "xno" -a "x$enable_simple_dmabuf_egl_client" = "xyes"; then
+    AC_MSG_ERROR([EGL dmabuf client explicitly enabled, but libdrm/egl/glev2 couldn't be found])
+  fi
+  enable_simple_dmabuf_egl_client="$have_simple_dmabuf_egl_client"
+fi
+AM_CONDITIONAL(BUILD_SIMPLE_DMABUF_EGL_CLIENT, test "x$enable_simple_dmabuf_egl_client" = "xyes")
 
 AC_ARG_ENABLE(clients, [  --enable-clients],, enable_clients=yes)
 AM_CONDITIONAL(BUILD_CLIENTS, test x$enable_clients = xyes)
@@ -695,6 +740,7 @@ AC_CONFIG_FILES([Makefile libweston/version.h compositor/weston.pc])
 # libweston_abi_version here, and outside [] because of m4 quoting rules
 AC_CONFIG_FILES([libweston/libweston-]libweston_major_version[.pc:libweston/libweston.pc.in])
 AC_CONFIG_FILES([libweston/libweston-]libweston_major_version[-uninstalled.pc:libweston/libweston-uninstalled.pc.in])
+AC_CONFIG_FILES([libweston/libweston-]libweston_major_version[-protocols.pc:libweston/libweston-protocols.pc.in])
 AC_CONFIG_FILES([libweston-desktop/libweston-desktop-]libweston_major_version[.pc:libweston-desktop/libweston-desktop.pc.in])
 AC_CONFIG_FILES([libweston-desktop/libweston-desktop-]libweston_major_version[-uninstalled.pc:libweston-desktop/libweston-desktop-uninstalled.pc.in])
 
@@ -723,6 +769,7 @@ AC_MSG_RESULT([
 	systemd notify support		${enable_systemd_notify}
 
 	DRM Compositor			${enable_drm_compositor}
+	Remoting			${enable_remoting}
 	X11 Compositor			${enable_x11_compositor}
 	Wayland Compositor		${enable_wayland_compositor}
 	Headless Compositor		${enable_headless_compositor}

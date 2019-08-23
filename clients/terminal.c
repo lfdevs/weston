@@ -2207,10 +2207,29 @@ data_source_cancelled(void *data, struct wl_data_source *source)
 	wl_data_source_destroy(source);
 }
 
+static void
+data_source_dnd_drop_performed(void *data, struct wl_data_source *source)
+{
+}
+
+static void
+data_source_dnd_finished(void *data, struct wl_data_source *source)
+{
+}
+
+static void
+data_source_action(void *data,
+		   struct wl_data_source *source, uint32_t dnd_action)
+{
+}
+
 static const struct wl_data_source_listener data_source_listener = {
 	data_source_target,
 	data_source_send,
-	data_source_cancelled
+	data_source_cancelled,
+	data_source_dnd_drop_performed,
+	data_source_dnd_finished,
+	data_source_action
 };
 
 static const char text_mime_type[] = "text/plain;charset=utf-8";
@@ -2610,7 +2629,7 @@ recompute_selection(struct terminal *terminal)
 	int side_margin, top_margin;
 	int start_x, end_x;
 	int cw, ch;
-	union utf8_char *data;
+	union utf8_char *data = NULL;
 
 	cw = terminal->average_width;
 	ch = terminal->extents.height;
@@ -3068,11 +3087,12 @@ terminal_run(struct terminal *terminal, const char *path)
 		setenv("TERM", option_term, 1);
 		setenv("COLORTERM", option_term, 1);
 		if (execl(path, path, NULL)) {
-			printf("exec failed: %m\n");
+			printf("exec failed: %s\n", strerror(errno));
 			exit(EXIT_FAILURE);
 		}
 	} else if (pid < 0) {
-		fprintf(stderr, "failed to fork and create pty (%m).\n");
+		fprintf(stderr, "failed to fork and create pty (%s).\n",
+			strerror(errno));
 		return -1;
 	}
 
@@ -3139,7 +3159,8 @@ int main(int argc, char *argv[])
 
 	d = display_create(&argc, argv);
 	if (d == NULL) {
-		fprintf(stderr, "failed to create display: %m\n");
+		fprintf(stderr, "failed to create display: %s\n",
+			strerror(errno));
 		return -1;
 	}
 

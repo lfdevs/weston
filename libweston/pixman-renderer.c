@@ -49,6 +49,7 @@ struct pixman_surface_state {
 
 	pixman_image_t *image;
 	struct weston_buffer_reference buffer_ref;
+	struct weston_buffer_release_reference buffer_release_ref;
 
 	struct wl_listener buffer_destroy_listener;
 	struct wl_listener surface_destroy_listener;
@@ -625,6 +626,8 @@ pixman_renderer_attach(struct weston_surface *es, struct weston_buffer *buffer)
 	pixman_format_code_t pixman_format;
 
 	weston_buffer_reference(&ps->buffer_ref, buffer);
+	weston_buffer_release_reference(&ps->buffer_release_ref,
+					es->buffer_release_ref.buffer_release);
 
 	if (ps->buffer_destroy_listener.notify) {
 		wl_list_remove(&ps->buffer_destroy_listener.link);
@@ -644,22 +647,30 @@ pixman_renderer_attach(struct weston_surface *es, struct weston_buffer *buffer)
 	if (! shm_buffer) {
 		weston_log("Pixman renderer supports only SHM buffers\n");
 		weston_buffer_reference(&ps->buffer_ref, NULL);
+		weston_buffer_release_reference(&ps->buffer_release_ref, NULL);
 		return;
 	}
 
 	switch (wl_shm_buffer_get_format(shm_buffer)) {
 	case WL_SHM_FORMAT_XRGB8888:
 		pixman_format = PIXMAN_x8r8g8b8;
+		es->is_opaque = true;
 		break;
 	case WL_SHM_FORMAT_ARGB8888:
 		pixman_format = PIXMAN_a8r8g8b8;
+		es->is_opaque = false;
 		break;
 	case WL_SHM_FORMAT_RGB565:
 		pixman_format = PIXMAN_r5g6b5;
+		es->is_opaque = true;
 		break;
 	default:
-		weston_log("Unsupported SHM buffer format\n");
+		weston_log("Unsupported SHM buffer format 0x%x\n",
+			wl_shm_buffer_get_format(shm_buffer));
 		weston_buffer_reference(&ps->buffer_ref, NULL);
+		weston_buffer_release_reference(&ps->buffer_release_ref, NULL);
+                weston_buffer_send_server_error(buffer,
+			"disconnecting due to unhandled buffer type");
 		return;
 	break;
 	}
@@ -696,6 +707,7 @@ pixman_renderer_surface_state_destroy(struct pixman_surface_state *ps)
 		ps->image = NULL;
 	}
 	weston_buffer_reference(&ps->buffer_ref, NULL);
+	weston_buffer_release_reference(&ps->buffer_release_ref, NULL);
 	free(ps);
 }
 

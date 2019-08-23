@@ -196,6 +196,7 @@ struct weston_head {
 
 	char *name;			/**< head name, e.g. connector name */
 	bool connected;			/**< is physically connected */
+	bool non_desktop;		/**< non-desktop display, e.g. HMD */
 };
 
 struct weston_output {
@@ -426,6 +427,7 @@ struct weston_data_source {
 	struct weston_seat *seat;
 	bool accepted;
 	bool actions_set;
+	bool set_selection;
 	uint32_t dnd_actions;
 	enum wl_data_device_manager_dnd_action current_dnd_action;
 	enum wl_data_device_manager_dnd_action compositor_action;
@@ -941,6 +943,9 @@ enum weston_capability {
 
 	/* renderer supports weston_view_set_mask() clipping */
 	WESTON_CAP_VIEW_CLIP_MASK		= 0x0010,
+
+	/* renderer supports explicit synchronization */
+	WESTON_CAP_EXPLICIT_SYNC		= 0x0020,
 };
 
 /* Configuration struct for a backend.
@@ -1048,6 +1053,7 @@ struct weston_touch_calibrator;
 
 struct weston_desktop_xwayland;
 struct weston_desktop_xwayland_interface;
+struct weston_debug_compositor;
 
 struct weston_compositor {
 	struct wl_signal destroy_signal;
@@ -1160,6 +1166,9 @@ struct weston_compositor {
 	weston_touch_calibration_save_func touch_calibration_save;
 	struct weston_layer calibrator_layer;
 	struct weston_touch_calibrator *touch_calibrator;
+
+	struct weston_debug_compositor *weston_debug;
+	struct weston_debug_scope *debug_scene;
 };
 
 struct weston_buffer {
@@ -1205,6 +1214,24 @@ struct weston_buffer_viewport {
 	} surface;
 
 	int changed;
+};
+
+struct weston_buffer_release {
+	/* The associated zwp_linux_buffer_release_v1 resource. */
+	struct wl_resource *resource;
+	/* How many weston_buffer_release_reference objects point to this
+	 * object. */
+	uint32_t ref_count;
+	/* The fence fd, if any, associated with this release. If the fence fd
+	 * is -1 then this is considered an immediate release. */
+	int fence_fd;
+};
+
+struct weston_buffer_release_reference {
+	struct weston_buffer_release *buffer_release;
+	/* Listener for the destruction of the wl_resource associated with the
+	 * referenced buffer_release object. */
+	struct wl_listener destroy_listener;
 };
 
 struct weston_region {
@@ -1357,6 +1384,12 @@ struct weston_surface_state {
 	/* wp_viewport.set_source */
 	/* wp_viewport.set_destination */
 	struct weston_buffer_viewport buffer_viewport;
+
+	/* zwp_surface_synchronization_v1.set_acquire_fence */
+	int acquire_fence_fd;
+
+	/* zwp_surface_synchronization_v1.get_release */
+	struct weston_buffer_release_reference buffer_release_ref;
 };
 
 struct weston_surface_activation_data {
@@ -1477,9 +1510,15 @@ struct weston_surface {
 	struct weston_timeline_object timeline;
 
 	bool is_mapped;
+	bool is_opaque;
 
 	/* An list of per seat pointer constraints. */
 	struct wl_list pointer_constraints;
+
+	/* zwp_surface_synchronization_v1 resource for this surface */
+	struct wl_resource *synchronization_resource;
+	int acquire_fence_fd;
+	struct weston_buffer_release_reference buffer_release_ref;
 };
 
 struct weston_subsurface {
@@ -1682,6 +1721,9 @@ weston_layer_set_mask(struct weston_layer *layer, int x, int y, int width, int h
 void
 weston_layer_set_mask_infinite(struct weston_layer *layer);
 
+bool
+weston_layer_mask_is_infinite(struct weston_layer *layer);
+
 void
 weston_plane_init(struct weston_plane *plane,
 			struct weston_compositor *ec,
@@ -1860,6 +1902,9 @@ weston_view_set_mask_infinite(struct weston_view *view);
 bool
 weston_view_is_mapped(struct weston_view *view);
 
+bool
+weston_view_is_opaque(struct weston_view *ev, pixman_region32_t *region);
+
 void
 weston_view_schedule_repaint(struct weston_view *view);
 
@@ -1925,7 +1970,18 @@ weston_buffer_reference(struct weston_buffer_reference *ref,
 			struct weston_buffer *buffer);
 
 void
+weston_buffer_release_reference(struct weston_buffer_release_reference *ref,
+				struct weston_buffer_release *buf_release);
+
+void
+weston_buffer_release_move(struct weston_buffer_release_reference *dest,
+			   struct weston_buffer_release_reference *src);
+
+void
 weston_compositor_get_time(struct timespec *time);
+
+char *
+weston_compositor_print_scene_graph(struct weston_compositor *ec);
 
 void
 weston_compositor_destroy(struct weston_compositor *ec);
@@ -2209,6 +2265,9 @@ weston_head_set_monitor_strings(struct weston_head *head,
 				const char *serialno);
 
 void
+weston_head_set_non_desktop(struct weston_head *head, bool non_desktop);
+
+void
 weston_head_set_physical_size(struct weston_head *head,
 			      int32_t mm_width, int32_t mm_height);
 
@@ -2230,6 +2289,9 @@ weston_head_is_enabled(struct weston_head *head);
 
 bool
 weston_head_is_device_changed(struct weston_head *head);
+
+bool
+weston_head_is_non_desktop(struct weston_head *head);
 
 void
 weston_head_reset_device_changed(struct weston_head *head);
@@ -2317,6 +2379,16 @@ weston_output_get_first_head(struct weston_output *output);
 int
 weston_compositor_enable_touch_calibrator(struct weston_compositor *compositor,
 				weston_touch_calibration_save_func save);
+
+int
+weston_debug_compositor_create(struct weston_compositor *compositor);
+
+void
+weston_debug_compositor_destroy(struct weston_compositor *compositor);
+
+void
+weston_buffer_send_server_error(struct weston_buffer *buffer,
+				      const char *msg);
 
 #ifdef  __cplusplus
 }

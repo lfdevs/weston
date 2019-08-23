@@ -1,10 +1,12 @@
-libweston-5.so.0 libweston-5-0 #MINVER#
-* Build-Depends-Package: libweston-5-dev
+libweston-6.so.0 libweston-6-0 #MINVER#
+* Build-Depends-Package: libweston-6-dev
  linux_dmabuf_buffer_get@Base 1.12.0
  linux_dmabuf_buffer_get_user_data@Base 1.12.0
  linux_dmabuf_buffer_send_server_error@Base 1.12.0
  linux_dmabuf_buffer_set_user_data@Base 1.12.0
  linux_dmabuf_setup@Base 1.12.0
+ linux_explicit_synchronization_send_server_error@Base 6.0
+ linux_explicit_synchronization_setup@Base 6.0
  noop_renderer_init@Base 1.12.0
  notify_axis@Base 1.12.0
  notify_axis_source@Base 1.12.0
@@ -24,6 +26,8 @@ libweston-5.so.0 libweston-5-0 #MINVER#
  notify_touch_frame@Base 1.12.0
  notify_touch_normalized@Base 5.0.0
  pixel_format_get_info@Base 3.0.0
+ pixel_format_get_info_by_drm_name@Base 6.0
+ pixel_format_get_info_shm@Base 6.0
  pixel_format_get_opaque_substitute@Base 3.0.0
  pixel_format_get_plane_count@Base 3.0.0
  pixel_format_height_for_plane@Base 3.0.0
@@ -34,13 +38,16 @@ libweston-5.so.0 libweston-5-0 #MINVER#
  pixman_renderer_output_destroy@Base 1.12.0
  pixman_renderer_output_set_buffer@Base 1.12.0
  pixman_renderer_output_set_hw_extra_damage@Base 5.0.0
- text_cursor_position_interface@Base 1.12.0
  weston_binding_destroy@Base 1.12.0
  weston_buffer_from_resource@Base 1.12.0
  weston_buffer_reference@Base 1.12.0
+ weston_buffer_release_move@Base 6.0
+ weston_buffer_release_reference@Base 6.0
+ weston_buffer_send_server_error@Base 6.0
  weston_compositor_add_axis_binding@Base 1.12.0
  weston_compositor_add_button_binding@Base 1.12.0
  weston_compositor_add_debug_binding@Base 1.12.0
+ weston_compositor_add_debug_scope@Base 6.0
  weston_compositor_add_head@Base 5.0.0
  weston_compositor_add_heads_changed_listener@Base 5.0.0
  weston_compositor_add_key_binding@Base 1.12.0
@@ -52,6 +59,7 @@ libweston-5.so.0 libweston-5-0 #MINVER#
  weston_compositor_create_output_with_head@Base 5.0.0
  weston_compositor_damage_all@Base 1.12.0
  weston_compositor_destroy@Base 1.12.0
+ weston_compositor_enable_debug_protocol@Base 6.0
  weston_compositor_enable_touch_calibrator@Base 5.0.0
  weston_compositor_exit@Base 1.12.0
  weston_compositor_exit_with_code@Base 1.12.0
@@ -60,11 +68,13 @@ libweston-5.so.0 libweston-5-0 #MINVER#
  weston_compositor_get_time@Base 1.12.0
  weston_compositor_get_user_data@Base 1.12.0
  weston_compositor_import_dmabuf@Base 1.12.0
+ weston_compositor_is_debug_protocol_enabled@Base 6.0
  weston_compositor_iterate_heads@Base 5.0.0
  weston_compositor_load_backend@Base 1.12.0
  weston_compositor_load_xwayland@Base 1.12.0
  weston_compositor_offscreen@Base 1.12.0
  weston_compositor_pick_view@Base 1.12.0
+ weston_compositor_print_scene_graph@Base 6.0
  weston_compositor_read_presentation_clock@Base 1.12.0
  weston_compositor_schedule_repaint@Base 1.12.0
  weston_compositor_set_default_pointer_grab@Base 1.12.0
@@ -75,14 +85,26 @@ libweston-5.so.0 libweston-5-0 #MINVER#
  weston_compositor_sleep@Base 1.12.0
  weston_compositor_stack_plane@Base 1.12.0
  weston_compositor_wake@Base 1.12.0
+ weston_config_get_name_from_env@Base 6.0
  weston_config_get_section@Base 1.12.0
  weston_config_next_section@Base 3.0.0
+ weston_config_parse@Base 6.0
  weston_config_section_get_bool@Base 1.12.0
  weston_config_section_get_color@Base 1.12.0
  weston_config_section_get_double@Base 1.12.0
  weston_config_section_get_int@Base 1.12.0
  weston_config_section_get_string@Base 1.12.0
  weston_config_section_get_uint@Base 1.12.0
+ weston_debug_scope_destroy@Base 6.0
+ weston_debug_scope_is_enabled@Base 6.0
+ weston_debug_scope_printf@Base 6.0
+ weston_debug_scope_timestamp@Base 6.0
+ weston_debug_scope_vprintf@Base 6.0
+ weston_debug_scope_write@Base 6.0
+ weston_debug_stream_complete@Base 6.0
+ weston_debug_stream_printf@Base 6.0
+ weston_debug_stream_vprintf@Base 6.0
+ weston_debug_stream_write@Base 6.0
  weston_environment_get_fd@Base 1.12.0
  weston_fade_run@Base 1.12.0
  weston_fade_update@Base 1.12.0
@@ -96,11 +118,13 @@ libweston-5.so.0 libweston-5-0 #MINVER#
  weston_head_is_connected@Base 5.0.0
  weston_head_is_device_changed@Base 5.0.0
  weston_head_is_enabled@Base 5.0.0
+ weston_head_is_non_desktop@Base 6.0
  weston_head_release@Base 5.0.0
  weston_head_reset_device_changed@Base 5.0.0
  weston_head_set_connection_status@Base 5.0.0
  weston_head_set_internal@Base 5.0.0
  weston_head_set_monitor_strings@Base 5.0.0
+ weston_head_set_non_desktop@Base 6.0
  weston_head_set_physical_size@Base 5.0.0
  weston_head_set_subpixel@Base 5.0.0
  weston_install_debug_key_binding@Base 1.12.0
@@ -115,6 +139,7 @@ libweston-5.so.0 libweston-5-0 #MINVER#
  weston_layer_entry_insert@Base 1.12.0
  weston_layer_entry_remove@Base 1.12.0
  weston_layer_init@Base 1.12.0
+ weston_layer_mask_is_infinite@Base 6.0
  weston_layer_set_mask@Base 1.12.0
  weston_layer_set_mask_infinite@Base 1.12.0
  weston_layer_set_position@Base 3.0.0
@@ -177,7 +202,6 @@ libweston-5.so.0 libweston-5-0 #MINVER#
  weston_pointer_start_grab@Base 1.12.0
  weston_recorder_start@Base 1.12.0
  weston_recorder_stop@Base 1.12.0
- weston_screenshooter_interface@Base 1.12.0
  weston_screenshooter_shoot@Base 1.12.0
  weston_seat_get_keyboard@Base 1.12.0
  weston_seat_get_pointer@Base 1.12.0
@@ -220,9 +244,6 @@ libweston-5.so.0 libweston-5-0 #MINVER#
  weston_surface_unmap@Base 1.12.0
  weston_timeline_enabled_@Base 1.12.0
  weston_timeline_point@Base 1.12.0
- weston_touch_calibration_interface@Base 5.0.0
- weston_touch_calibrator_interface@Base 5.0.0
- weston_touch_coordinate_interface@Base 5.0.0
  weston_touch_create_touch_device@Base 5.0.0
  weston_touch_device_can_calibrate@Base 5.0.0
  weston_touch_device_destroy@Base 5.0.0
@@ -249,6 +270,7 @@ libweston-5.so.0 libweston-5-0 #MINVER#
  weston_view_from_global_float@Base 1.12.0
  weston_view_geometry_dirty@Base 1.12.0
  weston_view_is_mapped@Base 1.12.0
+ weston_view_is_opaque@Base 6.0
  weston_view_move_to_plane@Base 1.12.0
  weston_view_schedule_repaint@Base 1.12.0
  weston_view_set_mask@Base 1.12.0
@@ -265,27 +287,8 @@ libweston-5.so.0 libweston-5-0 #MINVER#
  weston_zoom_run@Base 1.12.0
  wl_data_device_manager_init@Base 1.12.0
  wl_data_device_set_keyboard_focus@Base 1.12.0
- wp_presentation_feedback_interface@Base 1.12.0
- wp_presentation_interface@Base 1.12.0
- wp_viewport_interface@Base 1.12.0
- wp_viewporter_interface@Base 1.12.0
- zwp_confined_pointer_v1_interface@Base 1.12.0
- zwp_input_method_context_v1_interface@Base 1.12.0
- zwp_input_method_v1_interface@Base 1.12.0
- zwp_input_panel_surface_v1_interface@Base 1.12.0
- zwp_input_panel_v1_interface@Base 1.12.0
- zwp_input_timestamps_manager_v1_interface@Base 4.0.0
- zwp_input_timestamps_v1_interface@Base 4.0.0
- zwp_linux_buffer_params_v1_interface@Base 1.12.0
- zwp_linux_dmabuf_v1_interface@Base 1.12.0
- zwp_locked_pointer_v1_interface@Base 1.12.0
- zwp_pointer_constraints_v1_interface@Base 1.12.0
- zwp_relative_pointer_manager_v1_interface@Base 1.12.0
- zwp_relative_pointer_v1_interface@Base 1.12.0
- zwp_text_input_manager_v1_interface@Base 1.12.0
- zwp_text_input_v1_interface@Base 1.12.0
-libweston-desktop-5.so.0 libweston-5-0 #MINVER#
-* Build-Depends-Package: libweston-5-dev
+libweston-desktop-6.so.0 libweston-6-0 #MINVER#
+* Build-Depends-Package: libweston-6-dev
  weston_desktop_client_for_each_surface@Base 1.12.0
  weston_desktop_client_get_client@Base 1.12.0
  weston_desktop_client_ping@Base 1.12.0
@@ -318,8 +321,3 @@ libweston-desktop-5.so.0 libweston-5-0 #MINVER#
  weston_seat_break_desktop_grabs@Base 1.12.0
  weston_surface_get_desktop_surface@Base 1.12.0
  weston_surface_is_desktop_surface@Base 1.12.0
- zxdg_popup_v6_interface@Base 1.12.0
- zxdg_positioner_v6_interface@Base 1.12.0
- zxdg_shell_v6_interface@Base 1.12.0
- zxdg_surface_v6_interface@Base 1.12.0
- zxdg_toplevel_v6_interface@Base 1.12.0

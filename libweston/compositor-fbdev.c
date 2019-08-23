@@ -234,8 +234,8 @@ calculate_pixman_format(struct fb_var_screeninfo *vinfo,
 	    vinfo->blue.msb_right != 0)
 		return 0;
 
-	/* Work out the format type from the offsets. We only support RGBA and
-	 * ARGB at the moment. */
+	/* Work out the format type from the offsets. We only support RGBA, ARGB
+	 * and ABGR at the moment. */
 	type = PIXMAN_TYPE_OTHER;
 
 	if ((vinfo->transp.offset >= vinfo->red.offset ||
@@ -247,6 +247,10 @@ calculate_pixman_format(struct fb_var_screeninfo *vinfo,
 	         vinfo->green.offset >= vinfo->blue.offset &&
 	         vinfo->blue.offset >= vinfo->transp.offset)
 		type = PIXMAN_TYPE_RGBA;
+	else if (vinfo->transp.offset >= vinfo->blue.offset &&
+	         vinfo->blue.offset >= vinfo->green.offset &&
+	         vinfo->green.offset >= vinfo->red.offset)
+		type = PIXMAN_TYPE_ABGR;
 
 	if (type == PIXMAN_TYPE_OTHER)
 		return 0;
@@ -358,6 +362,27 @@ fbdev_set_screen_info(int fd, struct fbdev_screeninfo *info)
 	return 1;
 }
 
+static int
+fbdev_wakeup_screen(int fd, struct fbdev_screeninfo *info)
+{
+	struct fb_var_screeninfo varinfo;
+
+	/* Grab the current screen information. */
+	if (ioctl(fd, FBIOGET_VSCREENINFO, &varinfo) < 0) {
+		return -1;
+	}
+
+	/* force the framebuffer to wake up */
+	varinfo.activate = FB_ACTIVATE_NOW | FB_ACTIVATE_FORCE;
+
+	/* Set the device's screen information. */
+	if (ioctl(fd, FBIOPUT_VSCREENINFO, &varinfo) < 0) {
+		return -1;
+	}
+
+	return 1;
+}
+
 /* Returns an FD for the frame buffer device. */
 static int
 fbdev_frame_buffer_open(const char *fb_dev,
@@ -386,8 +411,8 @@ fbdev_frame_buffer_open(const char *fb_dev,
 
 	/* Attempt to wake up the framebuffer device, needed for secondary
 	 * framebuffer devices */
-	if (fbdev_set_screen_info(fd, screen_info) < 0) {
-		weston_log("Failed to set mode settings. "
+	if (fbdev_wakeup_screen(fd, screen_info) < 0) {
+		weston_log("Failed to activate framebuffer display. "
 		           "Attempting to open output anyway.\n");
 	}
 

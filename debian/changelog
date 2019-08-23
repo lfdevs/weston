@@ -1,3 +1,11 @@
+weston (6.0.1-1) unstable; urgency=medium
+
+  [ Rohan Garg ]
+  * New upstream release
+  * Workaround having a libdir and includedir in weston-protocols.pc
+
+ -- Héctor Orón Martínez <zumbi@debian.org>  Fri, 23 Aug 2019 15:05:17 +0200
+
 weston (5.0.0-3) unstable; urgency=medium
 
   * debian/control: add libdbus-1-dev to Build-Depends

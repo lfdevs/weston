@@ -468,7 +468,7 @@ shell_configuration(struct desktop_shell *shell)
 
 	section = weston_config_get_section(wet_get_config(shell->compositor),
 					    "shell", NULL, NULL);
-	client = wet_get_binary_path(WESTON_SHELL_CLIENT);
+	client = wet_get_libexec_path(WESTON_SHELL_CLIENT);
 	weston_config_section_get_string(section, "client", &s, client);
 	free(client);
 	shell->client = s;
@@ -663,6 +663,10 @@ focus_state_surface_destroy(struct wl_listener *listener, void *data)
 		next = get_default_view(main_surface);
 
 	if (next) {
+		if (state->keyboard_focus) {
+			wl_list_remove(&state->surface_destroy_listener.link);
+			wl_list_init(&state->surface_destroy_listener.link);
+		}
 		state->keyboard_focus = NULL;
 		activate(state->shell, next, state->seat,
 			 WESTON_ACTIVATE_FLAG_CONFIGURE);
@@ -961,18 +965,31 @@ get_output_height(struct weston_output *output)
 	return abs(output->region.extents.y1 - output->region.extents.y2);
 }
 
+static struct weston_transform *
+view_get_transform(struct weston_view *view)
+{
+	struct focus_surface *fsurf = NULL;
+	struct shell_surface *shsurf = NULL;
+
+	if (is_focus_view(view)) {
+		fsurf = get_focus_surface(view->surface);
+		return &fsurf->workspace_transform;
+	}
+
+	shsurf = get_shell_surface(view->surface);
+	if (shsurf)
+		return &shsurf->workspace_transform;
+
+	return NULL;
+}
+
 static void
 view_translate(struct workspace *ws, struct weston_view *view, double d)
 {
-	struct weston_transform *transform;
+	struct weston_transform *transform = view_get_transform(view);
 
-	if (is_focus_view(view)) {
-		struct focus_surface *fsurf = get_focus_surface(view->surface);
-		transform = &fsurf->workspace_transform;
-	} else {
-		struct shell_surface *shsurf = get_shell_surface(view->surface);
-		transform = &shsurf->workspace_transform;
-	}
+	if (!transform)
+		return;
 
 	if (wl_list_empty(&transform->link))
 		wl_list_insert(view->geometry.transformation_list.prev,
@@ -1044,13 +1061,9 @@ workspace_deactivate_transforms(struct workspace *ws)
 	struct weston_transform *transform;
 
 	wl_list_for_each(view, &ws->layer.view_list.link, layer_link.link) {
-		if (is_focus_view(view)) {
-			struct focus_surface *fsurf = get_focus_surface(view->surface);
-			transform = &fsurf->workspace_transform;
-		} else {
-			struct shell_surface *shsurf = get_shell_surface(view->surface);
-			transform = &shsurf->workspace_transform;
-		}
+		transform = view_get_transform(view);
+		if (!transform)
+			continue;
 
 		if (!wl_list_empty(&transform->link)) {
 			wl_list_remove(&transform->link);
@@ -1108,7 +1121,7 @@ animate_workspace_change_frame(struct weston_animation *animation,
 		else
 			timespec_add_msec(&shell->workspaces.anim_timestamp,
 				time,
-				/* Invers of movement function 'y' below. */
+				/* Inverse of movement function 'y' below. */
 				-(asin(1.0 - shell->workspaces.anim_current) *
 				  DEFAULT_WORKSPACE_CHANGE_ANIMATION_LENGTH *
 				  M_2_PI));
@@ -1645,12 +1658,16 @@ resize_grab_button(struct weston_pointer_grab *grab,
 	struct weston_resize_grab *resize = (struct weston_resize_grab *) grab;
 	struct weston_pointer *pointer = grab->pointer;
 	enum wl_pointer_button_state state = state_w;
-	struct weston_desktop_surface *desktop_surface =
-		resize->base.shsurf->desktop_surface;
 
 	if (pointer->button_count == 0 &&
 	    state == WL_POINTER_BUTTON_STATE_RELEASED) {
-		weston_desktop_surface_set_resizing(desktop_surface, false);
+		if (resize->base.shsurf != NULL) {
+			struct weston_desktop_surface *desktop_surface =
+				resize->base.shsurf->desktop_surface;
+			weston_desktop_surface_set_resizing(desktop_surface,
+							    false);
+		}
+
 		shell_grab_end(&resize->base);
 		free(grab);
 	}
@@ -1660,10 +1677,13 @@ static void
 resize_grab_cancel(struct weston_pointer_grab *grab)
 {
 	struct weston_resize_grab *resize = (struct weston_resize_grab *) grab;
-	struct weston_desktop_surface *desktop_surface =
-		resize->base.shsurf->desktop_surface;
 
-	weston_desktop_surface_set_resizing(desktop_surface, false);
+	if (resize->base.shsurf != NULL) {
+		struct weston_desktop_surface *desktop_surface =
+			resize->base.shsurf->desktop_surface;
+		weston_desktop_surface_set_resizing(desktop_surface, false);
+	}
+
 	shell_grab_end(&resize->base);
 	free(grab);
 }
@@ -2203,7 +2223,7 @@ get_focused_output(struct weston_compositor *compositor)
 
 		/* Priority has touch focus, then pointer and
 		 * then keyboard focus. We should probably have
-		 * three for loops and check frist for touch,
+		 * three for loops and check first for touch,
 		 * then for pointer, etc. but unless somebody has some
 		 * objections, I think this is sufficient. */
 		if (touch && touch->focus)
@@ -3527,7 +3547,7 @@ terminate_binding(struct weston_keyboard *keyboard, const struct timespec *time,
 {
 	struct weston_compositor *compositor = data;
 
-	wl_display_terminate(compositor->wl_display);
+	weston_compositor_exit(compositor);
 }
 
 static void
@@ -3539,14 +3559,15 @@ rotate_grab_motion(struct weston_pointer_grab *grab,
 		container_of(grab, struct rotate_grab, base.grab);
 	struct weston_pointer *pointer = grab->pointer;
 	struct shell_surface *shsurf = rotate->base.shsurf;
-	struct weston_surface *surface =
-		weston_desktop_surface_get_surface(shsurf->desktop_surface);
+	struct weston_surface *surface;
 	float cx, cy, dx, dy, cposx, cposy, dposx, dposy, r;
 
 	weston_pointer_move(pointer, event);
 
 	if (!shsurf)
 		return;
+
+	surface = weston_desktop_surface_get_surface(shsurf->desktop_surface);
 
 	cx = 0.5f * surface->width;
 	cy = 0.5f * surface->height;
@@ -4280,7 +4301,8 @@ check_desktop_shell_crash_too_early(struct desktop_shell *shell)
 		weston_log("Error: %s apparently cannot run at all.\n",
 			   shell->client);
 		weston_log_continue(STAMP_SPACE "Quitting...");
-		wl_display_terminate(shell->compositor->wl_display);
+		weston_compositor_exit_with_code(shell->compositor,
+						 EXIT_FAILURE);
 
 		return true;
 	}
