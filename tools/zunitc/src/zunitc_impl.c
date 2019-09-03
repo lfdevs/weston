@@ -46,9 +46,9 @@
 #include "zuc_event_listener.h"
 #include "zuc_junit_reporter.h"
 
-#include "shared/config-parser.h"
+#include <libweston/config-parser.h>
 #include "shared/helpers.h"
-#include "shared/zalloc.h"
+#include <libweston/zalloc.h>
 
 /*
  * If CLOCK_MONOTONIC is present on the system it will give us reliable

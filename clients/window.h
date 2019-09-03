@@ -31,8 +31,8 @@
 #include <xkbcommon/xkbcommon.h>
 #include <wayland-client.h>
 #include <cairo.h>
-#include "shared/config-parser.h"
-#include "shared/zalloc.h"
+#include <libweston/config-parser.h>
+#include <libweston/zalloc.h>
 #include "shared/platform.h"
 
 struct window;

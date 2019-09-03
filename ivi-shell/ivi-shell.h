@@ -29,8 +29,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "compositor.h"
-#include "libweston-desktop/libweston-desktop.h"
+#include <libweston/libweston.h>
+#include <libweston-desktop/libweston-desktop.h>
 
 struct ivi_shell
 {

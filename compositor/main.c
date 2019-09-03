@@ -47,25 +47,28 @@
 #include <linux/limits.h>
 
 #include "weston.h"
-#include "compositor.h"
+#include <libweston/libweston.h>
 #include "../shared/os-compatibility.h"
 #include "../shared/helpers.h"
 #include "../shared/string-helpers.h"
 #include "git-version.h"
-#include "version.h"
+#include <libweston/version.h>
 #include "weston.h"
 
-#include "compositor-drm.h"
-#include "compositor-headless.h"
-#include "compositor-rdp.h"
-#include "compositor-fbdev.h"
-#include "compositor-x11.h"
-#include "compositor-wayland.h"
-#include "windowed-output-api.h"
-#include "weston-debug.h"
+#include <libweston/backend-drm.h>
+#include <libweston/backend-headless.h>
+#include <libweston/backend-rdp.h>
+#include <libweston/backend-fbdev.h>
+#include <libweston/backend-x11.h>
+#include <libweston/backend-wayland.h>
+#include <libweston/windowed-output-api.h>
+#include <libweston/weston-log.h>
 #include "../remoting/remoting-plugin.h"
+#include "../pipewire/pipewire-plugin.h"
 
 #define WINDOW_TITLE "Weston Compositor"
+/* flight recorder size (in bytes) */
+#define DEFAULT_FLIGHT_REC_SIZE (5 * 1024 * 1024)
 
 struct wet_output_config {
 	int width;
@@ -122,51 +125,50 @@ struct wet_compositor {
 };
 
 static FILE *weston_logfile = NULL;
-static struct weston_debug_scope *log_scope;
-static struct weston_debug_scope *protocol_scope;
-
+static struct weston_log_scope *log_scope;
+static struct weston_log_scope *protocol_scope;
 static int cached_tm_mday = -1;
 
-static int weston_log_timestamp(void)
+static char *
+weston_log_timestamp(char *buf, size_t len)
 {
 	struct timeval tv;
 	struct tm *brokendown_time;
-	char string[128];
+	char datestr[128];
+	char timestr[128];
 
 	gettimeofday(&tv, NULL);
 
 	brokendown_time = localtime(&tv.tv_sec);
-	if (brokendown_time == NULL)
-		return fprintf(weston_logfile, "[(NULL)localtime] ");
+	if (brokendown_time == NULL) {
+		snprintf(buf, len, "%s", "[(NULL)localtime] ");
+		return buf;
+	}
 
+	memset(datestr, 0, sizeof(datestr));
 	if (brokendown_time->tm_mday != cached_tm_mday) {
-		strftime(string, sizeof string, "%Y-%m-%d %Z", brokendown_time);
-		fprintf(weston_logfile, "Date: %s\n", string);
-
+		strftime(datestr, sizeof(datestr), "Date: %Y-%m-%d %Z\n",
+			 brokendown_time);
 		cached_tm_mday = brokendown_time->tm_mday;
 	}
 
-	strftime(string, sizeof string, "%H:%M:%S", brokendown_time);
+	strftime(timestr, sizeof(timestr), "%H:%M:%S", brokendown_time);
+	/* if datestr is empty it prints only timestr*/
+	snprintf(buf, len, "%s[%s.%03li]", datestr,
+		 timestr, (tv.tv_usec / 1000));
 
-	return fprintf(weston_logfile, "[%s.%03li] ", string, tv.tv_usec/1000);
+	return buf;
 }
 
 static void
 custom_handler(const char *fmt, va_list arg)
 {
 	char timestr[128];
-	va_list arg2;
 
-	va_copy(arg2, arg);
-	weston_log_timestamp();
-	fprintf(weston_logfile, "libwayland: ");
-	vfprintf(weston_logfile, fmt, arg2);
-	va_end(arg2);
-
-	weston_debug_scope_printf(log_scope, "%s libwayland: ",
-			weston_debug_scope_timestamp(log_scope,
-			timestr, sizeof timestr));
-	weston_debug_scope_vprintf(log_scope, fmt, arg);
+	weston_log_scope_printf(log_scope, "%s libwayland: ",
+				weston_log_timestamp(timestr,
+				sizeof(timestr)));
+	weston_log_scope_vprintf(log_scope, fmt, arg);
 }
 
 static void
@@ -197,36 +199,23 @@ weston_log_file_close(void)
 static int
 vlog(const char *fmt, va_list ap)
 {
-	int l;
 	char timestr[128];
-	va_list ap2;
+	int len = 0;
 
-	va_copy(ap2, ap);
-
-	if (weston_debug_scope_is_enabled(log_scope)) {
-		weston_debug_scope_printf(log_scope, "%s ",
-				weston_debug_scope_timestamp(log_scope,
-				timestr, sizeof timestr));
-		weston_debug_scope_vprintf(log_scope, fmt, ap);
+	if (weston_log_scope_is_enabled(log_scope)) {
+		len = weston_log_scope_printf(log_scope, "%s ",
+					      weston_log_timestamp(timestr,
+					      sizeof timestr));
+		len += weston_log_scope_vprintf(log_scope, fmt, ap);
 	}
 
-	l = weston_log_timestamp();
-	l += vfprintf(weston_logfile, fmt, ap2);
-	va_end(ap2);
-
-	return l;
+	return len;
 }
 
 static int
 vlog_continue(const char *fmt, va_list argp)
 {
-	va_list argp2;
-
-	va_copy(argp2, argp);
-	weston_debug_scope_vprintf(log_scope, fmt, argp2);
-	va_end(argp2);
-
-	return vfprintf(weston_logfile, fmt, argp);
+	return weston_log_scope_vprintf(log_scope, fmt, argp);
 }
 
 static const char *
@@ -264,14 +253,14 @@ protocol_log_fn(void *user_data,
 	int i;
 	char type;
 
-	if (!weston_debug_scope_is_enabled(protocol_scope))
+	if (!weston_log_scope_is_enabled(protocol_scope))
 		return;
 
 	fp = open_memstream(&logstr, &logsize);
 	if (!fp)
 		return;
 
-	weston_debug_scope_timestamp(protocol_scope,
+	weston_log_scope_timestamp(protocol_scope,
 			timestr, sizeof timestr);
 	fprintf(fp, "%s ", timestr);
 	fprintf(fp, "client %p %s ", wl_resource_get_client(res),
@@ -334,7 +323,7 @@ protocol_log_fn(void *user_data,
 	fprintf(fp, ")\n");
 
 	if (fclose(fp) == 0)
-		weston_debug_scope_write(protocol_scope, logstr, logsize);
+		weston_log_scope_write(protocol_scope, logstr, logsize);
 
 	free(logstr);
 }
@@ -656,6 +645,12 @@ usage(int error_code)
 		"  --no-config\t\tDo not read weston.ini\n"
 		"  --wait-for-debugger\tRaise SIGSTOP on start-up\n"
 		"  --debug\t\tEnable debug extension\n"
+		"  -l, --logger-scopes=SCOPE\n\t\t\tSpecify log scopes to "
+			"subscribe to.\n\t\t\tCan specify multiple scopes, "
+			"each followed by comma\n"
+		"  -f, --flight-rec-scopes=SCOPE\n\t\t\tSpecify log scopes to "
+			"subscribe to.\n\t\t\tCan specify multiple scopes, "
+			"each followed by comma\n"
 		"  -h, --help\t\tThis help message\n\n");
 
 #if defined(BUILD_DRM_COMPOSITOR)
@@ -1232,6 +1227,18 @@ wet_output_set_transform(struct weston_output *output,
 	weston_output_set_transform(output, transform);
 }
 
+static void
+allow_content_protection(struct weston_output *output,
+			struct weston_config_section *section)
+{
+	int allow_hdcp = 1;
+
+	if (section)
+		weston_config_section_get_bool(section, "allow_hdcp", &allow_hdcp, 1);
+
+	weston_output_allow_protection(output, allow_hdcp);
+}
+
 static int
 wet_configure_windowed_output_from_config(struct weston_output *output,
 					  struct wet_output_config *defaults)
@@ -1268,6 +1275,8 @@ wet_configure_windowed_output_from_config(struct weston_output *output,
 		}
 		free(mode);
 	}
+
+	allow_content_protection(output, section);
 
 	if (parsed_options->width)
 		width = parsed_options->width;
@@ -1719,6 +1728,8 @@ drm_backend_output_configure(struct weston_output *output,
 
 	api->set_seat(output, seat);
 	free(seat);
+
+	allow_content_protection(output, section);
 
 	return 0;
 }
@@ -2180,6 +2191,7 @@ drm_backend_remoted_output_configure(struct weston_output *output,
 	char *gbm_format = NULL;
 	char *seat = NULL;
 	char *host = NULL;
+	char *pipeline = NULL;
 	int port, ret;
 
 	ret = api->set_mode(output, modeline);
@@ -2204,21 +2216,23 @@ drm_backend_remoted_output_configure(struct weston_output *output,
 	api->set_seat(output, seat);
 	free(seat);
 
+	weston_config_section_get_string(section, "gst-pipeline", &pipeline,
+					 NULL);
+	if (pipeline) {
+		api->set_gst_pipeline(output, pipeline);
+		free(pipeline);
+		return 0;
+	}
+
 	weston_config_section_get_string(section, "host", &host, NULL);
-	if (!host) {
-		weston_log("Cannot configure an output \"%s\". Invalid host\n",
-			   output->name);
-		return -1;
+	weston_config_section_get_int(section, "port", &port, 0);
+	if (!host || port <= 0 || 65533 < port) {
+		weston_log("Cannot configure an output \"%s\". "
+			   "Need to specify gst-pipeline or "
+			   "host and port (1-65533).\n", output->name);
 	}
 	api->set_host(output, host);
 	free(host);
-
-	weston_config_section_get_int(section, "port", &port, 0);
-	if (port <= 0 || 65533 < port) {
-		weston_log("Cannot configure an output \"%s\". Invalid port\n",
-			   output->name);
-		return -1;
-	}
 	api->set_port(output, port);
 
 	return 0;
@@ -2320,6 +2334,130 @@ load_remoting(struct weston_compositor *c, struct weston_config *wc)
 }
 
 static int
+drm_backend_pipewire_output_configure(struct weston_output *output,
+				     struct weston_config_section *section,
+				     char *modeline,
+				     const struct weston_pipewire_api *api)
+{
+	char *seat = NULL;
+	int ret;
+
+	ret = api->set_mode(output, modeline);
+	if (ret < 0) {
+		weston_log("Cannot configure an output \"%s\" using "
+			   "weston_pipewire_api. Invalid mode\n",
+			   output->name);
+		return -1;
+	}
+
+	wet_output_set_scale(output, section, 1, 0);
+	wet_output_set_transform(output, section, WL_OUTPUT_TRANSFORM_NORMAL,
+				 UINT32_MAX);
+
+	weston_config_section_get_string(section, "seat", &seat, "");
+
+	api->set_seat(output, seat);
+	free(seat);
+
+	return 0;
+}
+
+static void
+pipewire_output_init(struct weston_compositor *c,
+		    struct weston_config_section *section,
+		    const struct weston_pipewire_api *api)
+{
+	struct weston_output *output = NULL;
+	char *output_name, *modeline = NULL;
+	int ret;
+
+	weston_config_section_get_string(section, "name", &output_name,
+					 NULL);
+	if (!output_name)
+		return;
+
+	weston_config_section_get_string(section, "mode", &modeline, "off");
+	if (strcmp(modeline, "off") == 0)
+		goto err;
+
+	output = api->create_output(c, output_name);
+	if (!output) {
+		weston_log("Cannot create pipewire output \"%s\".\n",
+			   output_name);
+		goto err;
+	}
+
+	ret = drm_backend_pipewire_output_configure(output, section, modeline,
+						   api);
+	if (ret < 0) {
+		weston_log("Cannot configure pipewire output \"%s\".\n",
+			   output_name);
+		goto err;
+	}
+
+	if (weston_output_enable(output) < 0) {
+		weston_log("Enabling pipewire output \"%s\" failed.\n",
+			   output_name);
+		goto err;
+	}
+
+	free(modeline);
+	free(output_name);
+	weston_log("pipewire output '%s' enabled\n", output->name);
+	return;
+
+err:
+	free(modeline);
+	free(output_name);
+	if (output)
+		weston_output_destroy(output);
+}
+
+static void
+load_pipewire(struct weston_compositor *c, struct weston_config *wc)
+{
+	const struct weston_pipewire_api *api = NULL;
+	int (*module_init)(struct weston_compositor *ec);
+	struct weston_config_section *section = NULL;
+	const char *section_name;
+
+	/* read pipewire-output section in weston.ini */
+	while (weston_config_next_section(wc, &section, &section_name)) {
+		if (strcmp(section_name, "pipewire-output"))
+			continue;
+
+		if (!api) {
+			char *module_name;
+			struct weston_config_section *core_section =
+				weston_config_get_section(wc, "core", NULL,
+							  NULL);
+
+			weston_config_section_get_string(core_section,
+							 "pipewire",
+							 &module_name,
+							 "pipewire-plugin.so");
+			module_init = weston_load_module(module_name,
+							 "weston_module_init");
+			free(module_name);
+			if (!module_init) {
+				weston_log("Can't load pipewire-plugin\n");
+				return;
+			}
+			if (module_init(c) < 0) {
+				weston_log("Pipewire-plugin init failed\n");
+				return;
+			}
+
+			api = weston_pipewire_get_api(c);
+			if (!api)
+				return;
+		}
+
+		pipewire_output_init(c, section, api);
+	}
+}
+
+static int
 load_drm_backend(struct weston_compositor *c,
 		 int *argc, char **argv, struct weston_config *wc)
 {
@@ -2373,6 +2511,9 @@ load_drm_backend(struct weston_compositor *c,
 
 	/* remoting */
 	load_remoting(c, wc);
+
+	/* pipewire */
+	load_pipewire(c, wc);
 
 	free(config.gbm_format);
 	free(config.seat_id);
@@ -2508,6 +2649,7 @@ weston_rdp_backend_config_init(struct weston_rdp_backend_config *config)
 	config->server_key = NULL;
 	config->env_socket = 0;
 	config->no_clients_resize = 0;
+	config->force_no_compression = 0;
 }
 
 static int
@@ -2532,7 +2674,8 @@ load_rdp_backend(struct weston_compositor *c,
 		{ WESTON_OPTION_BOOLEAN, "no-clients-resize", 0, &config.no_clients_resize },
 		{ WESTON_OPTION_STRING,  "rdp4-key", 0, &config.rdp_key },
 		{ WESTON_OPTION_STRING,  "rdp-tls-cert", 0, &config.server_cert },
-		{ WESTON_OPTION_STRING,  "rdp-tls-key", 0, &config.server_key }
+		{ WESTON_OPTION_STRING,  "rdp-tls-key", 0, &config.server_key },
+		{ WESTON_OPTION_BOOLEAN, "force-no-compression", 0, &config.force_no_compression },
 	};
 
 	parse_options(rdp_options, ARRAY_LENGTH(rdp_options), argc, argv);
@@ -2895,6 +3038,53 @@ wet_load_xwayland(struct weston_compositor *comp)
 }
 #endif
 
+static void
+weston_log_setup_scopes(struct weston_log_context *log_ctx,
+			struct weston_log_subscriber *subscriber,
+			const char *names)
+{
+	assert(log_ctx);
+	assert(subscriber);
+
+	char *tokenize = strdup(names);
+	char *token = strtok(tokenize, ",");
+	while (token) {
+		weston_log_subscribe(log_ctx, subscriber, token);
+		token = strtok(NULL, ",");
+	}
+	free(tokenize);
+}
+
+static void
+flight_rec_key_binding_handler(struct weston_keyboard *keyboard,
+			       const struct timespec *time, uint32_t key,
+			       void *data)
+{
+	struct weston_log_subscriber *flight_rec = data;
+	weston_log_subscriber_display_flight_rec(flight_rec);
+}
+
+static void
+weston_log_subscribe_to_scopes(struct weston_log_context *log_ctx,
+			       struct weston_log_subscriber *logger,
+			       struct weston_log_subscriber *flight_rec,
+			       const char *log_scopes,
+			       const char *flight_rec_scopes)
+{
+	if (log_scopes)
+		weston_log_setup_scopes(log_ctx, logger, log_scopes);
+	else
+		weston_log_subscribe(log_ctx, logger, "log");
+
+	if (flight_rec_scopes) {
+		weston_log_setup_scopes(log_ctx, flight_rec, flight_rec_scopes);
+	} else {
+		/* by default subscribe to 'log', and 'drm-backend' */
+		weston_log_subscribe(log_ctx, flight_rec, "log");
+		weston_log_subscribe(log_ctx, flight_rec, "drm-backend");
+	}
+}
+
 int main(int argc, char *argv[])
 {
 	int ret = EXIT_FAILURE;
@@ -2909,6 +3099,8 @@ int main(int argc, char *argv[])
 	char *modules = NULL;
 	char *option_modules = NULL;
 	char *log = NULL;
+	char *log_scopes = NULL;
+	char *flight_rec_scopes = NULL;
 	char *server_socket = NULL;
 	int32_t idle_time = -1;
 	int32_t help = 0;
@@ -2924,6 +3116,9 @@ int main(int argc, char *argv[])
 	struct wl_listener primary_client_destroyed;
 	struct weston_seat *seat;
 	struct wet_compositor wet = { 0 };
+	struct weston_log_context *log_ctx = NULL;
+	struct weston_log_subscriber *logger = NULL;
+	struct weston_log_subscriber *flight_rec = NULL;
 	int require_input;
 	sigset_t mask;
 
@@ -2946,6 +3141,8 @@ int main(int argc, char *argv[])
 		{ WESTON_OPTION_STRING, "config", 'c', &config_file },
 		{ WESTON_OPTION_BOOLEAN, "wait-for-debugger", 0, &wait_for_debugger },
 		{ WESTON_OPTION_BOOLEAN, "debug", 0, &debug_protocol },
+		{ WESTON_OPTION_STRING, "logger-scopes", 'l', &log_scopes },
+		{ WESTON_OPTION_STRING, "flight-rec-scopes", 'f', &flight_rec_scopes },
 	};
 
 	wl_list_init(&wet.layoutput_list);
@@ -2967,8 +3164,23 @@ int main(int argc, char *argv[])
 		return EXIT_SUCCESS;
 	}
 
-	weston_log_set_handler(vlog, vlog_continue);
+	log_ctx = weston_log_ctx_compositor_create();
+	if (!log_ctx) {
+		fprintf(stderr, "Failed to initialize weston debug framework.\n");
+		return EXIT_FAILURE;
+	}
+
+	log_scope = weston_compositor_add_log_scope(log_ctx, "log",
+			"Weston and Wayland log\n", NULL, NULL);
+
 	weston_log_file_open(log);
+	weston_log_set_handler(vlog, vlog_continue);
+
+	logger = weston_log_subscriber_create_log(weston_logfile);
+	flight_rec = weston_log_subscriber_create_flight_rec(DEFAULT_FLIGHT_REC_SIZE);
+
+	weston_log_subscribe_to_scopes(log_ctx, logger, flight_rec,
+				       log_scopes, flight_rec_scopes);
 
 	weston_log("%s\n"
 		   STAMP_SPACE "%s\n"
@@ -3035,20 +3247,18 @@ int main(int argc, char *argv[])
 			backend = weston_choose_default_backend();
 	}
 
-	wet.compositor = weston_compositor_create(display, &wet);
+	wet.compositor = weston_compositor_create(display, log_ctx, &wet);
 	if (wet.compositor == NULL) {
 		weston_log("fatal: failed to create compositor\n");
 		goto out;
 	}
 	segv_compositor = wet.compositor;
 
-	log_scope = weston_compositor_add_debug_scope(wet.compositor, "log",
-			"Weston and Wayland log\n", NULL, NULL);
 	protocol_scope =
-		weston_compositor_add_debug_scope(wet.compositor,
-			"proto",
-			"Wayland protocol dump for all clients.\n",
-			NULL, NULL);
+		weston_compositor_add_log_scope(log_ctx,
+						"proto",
+						"Wayland protocol dump for all clients.\n",
+						 NULL, NULL);
 
 	if (debug_protocol) {
 		protologger = wl_display_add_protocol_logger(display,
@@ -3056,6 +3266,10 @@ int main(int argc, char *argv[])
 							     NULL);
 		weston_compositor_enable_debug_protocol(wet.compositor);
 	}
+
+	weston_compositor_add_debug_binding(wet.compositor, KEY_D,
+					    flight_rec_key_binding_handler,
+					    flight_rec);
 
 	if (weston_compositor_init_config(wet.compositor, config) < 0)
 		goto out;
@@ -3170,11 +3384,16 @@ out:
 	if (protologger)
 		wl_protocol_logger_destroy(protologger);
 
-	weston_debug_scope_destroy(protocol_scope);
+	weston_compositor_log_scope_destroy(protocol_scope);
 	protocol_scope = NULL;
-	weston_debug_scope_destroy(log_scope);
+	weston_compositor_tear_down(wet.compositor);
+
+	weston_compositor_log_scope_destroy(log_scope);
 	log_scope = NULL;
+	weston_log_ctx_compositor_destroy(wet.compositor);
 	weston_compositor_destroy(wet.compositor);
+	weston_log_subscriber_destroy_log(logger);
+	weston_log_subscriber_destroy_flight_rec(flight_rec);
 
 out_signals:
 	for (i = ARRAY_LENGTH(signals) - 1; i >= 0; i--)

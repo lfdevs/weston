@@ -28,8 +28,8 @@
 #ifndef REMOTING_PLUGIN_H
 #define REMOTING_PLUGIN_H
 
-#include "compositor.h"
-#include "plugin-registry.h"
+#include <libweston/libweston.h>
+#include <libweston/plugin-registry.h>
 
 #define WESTON_REMOTING_API_NAME	"weston_remoting_api_v1"
 
@@ -59,6 +59,10 @@ struct weston_remoting_api {
 
 	/** Set the port number */
 	void (*set_port)(struct weston_output *output, int port);
+
+	/** Set the pipeline for gstreamer */
+	void (*set_gst_pipeline)(struct weston_output *output,
+				 char *gst_pipeline);
 };
 
 static inline const struct weston_remoting_api *

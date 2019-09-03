@@ -31,11 +31,11 @@
 
 #include <wayland-server.h>
 
-#include "compositor.h"
-#include "zalloc.h"
+#include <libweston/libweston.h>
+#include <libweston/zalloc.h>
 #include "xdg-shell-server-protocol.h"
 
-#include "libweston-desktop.h"
+#include <libweston-desktop/libweston-desktop.h>
 #include "internal.h"
 
 /************************************************************************************

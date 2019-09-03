@@ -34,7 +34,10 @@
 #include <libinput.h>
 #include <libudev.h>
 
-#include "compositor.h"
+#include <libweston/libweston.h>
+#include "backend.h"
+#include "libweston-internal.h"
+#include "weston-log-internal.h"
 #include "launcher-util.h"
 #include "libinput-seat.h"
 #include "libinput-device.h"

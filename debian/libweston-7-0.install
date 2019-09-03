@@ -1,0 +1,12 @@
+usr/lib/*/libweston-7.so.*
+usr/lib/*/libweston-7/drm-backend.so
+usr/lib/*/libweston-7/fbdev-backend.so
+usr/lib/*/libweston-7/gl-renderer.so
+usr/lib/*/libweston-7/headless-backend.so
+usr/lib/*/libweston-7/pipewire-plugin.so
+usr/lib/*/libweston-7/rdp-backend.so
+usr/lib/*/libweston-7/remoting-plugin.so
+usr/lib/*/libweston-7/wayland-backend.so
+usr/lib/*/libweston-7/x11-backend.so
+usr/lib/*/libweston-7/xwayland.so
+usr/lib/*/libweston-desktop-7.so.*

@@ -132,7 +132,7 @@ foreach t : simple_clients
 
 		executable(
 			t_name, t.get('sources'),
-			include_directories: include_directories('..'),
+			include_directories: [ include_directories('..'), public_inc ],
 			dependencies: t_deps,
 			install: true
 		)
@@ -215,7 +215,7 @@ foreach t : tools_list
 		executable(
 			'weston-@0@'.format(t.get('name')),
 			t.get('sources'),
-			include_directories: include_directories('..', '../shared'),
+			include_directories: [ include_directories('..', '../shared'), public_inc ],
 			dependencies: t.get('deps', []),
 			install: true
 		)
@@ -226,9 +226,17 @@ demo_clients = [
 	{ 'basename': 'clickdot' },
 	{
 		'basename': 'cliptest',
-		'add_sources': [ '../libweston/vertex-clipping.c' ]
+		'dep_objs': dep_vertex_clipping
 	},
 	{ 'basename': 'confine' },
+	{
+		'basename': 'content_protection',
+		'add_sources': [
+			weston_content_protection_client_protocol_h,
+			weston_content_protection_protocol_c,
+		]
+	},
+
 	{ 'basename': 'dnd' },
 	{
 		'basename': 'editor',
@@ -277,7 +285,7 @@ if get_option('demo-clients')
 	foreach t : demo_clients
 		t_name = 'weston-' + t.get('basename')
 		t_srcs = [ t.get('basename') + '.c' ] + t.get('add_sources', [])
-		t_deps = [ dep_toytoolkit ]
+		t_deps = [ dep_toytoolkit, t.get('dep_objs', []) ]
 		foreach depname : t.get('deps', [])
 			dep = dependency(depname, required: false)
 			if not dep.found()
@@ -328,7 +336,7 @@ if simple_dmabuf_drm_deps.length() > 0
 		fullscreen_shell_unstable_v1_protocol_c,
 		linux_dmabuf_unstable_v1_client_protocol_h,
 		linux_dmabuf_unstable_v1_protocol_c,
-		include_directories: include_directories('..'),
+		include_directories: [ include_directories('..'), public_inc ],
 		dependencies: [
 			dep_wayland_client,
 			dep_libdrm,

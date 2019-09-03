@@ -10,13 +10,14 @@ deps_libshared = dep_wayland_client
 lib_libshared = static_library(
 	'shared',
 	srcs_libshared,
-	include_directories: include_directories('..'),
+	include_directories: [ include_directories('..'), public_inc ],
 	dependencies: deps_libshared,
 	pic: true,
 	install: false
 )
 dep_libshared = declare_dependency(
 	link_with: lib_libshared,
+	include_directories: public_inc,
 	dependencies: deps_libshared
 )
 

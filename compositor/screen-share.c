@@ -40,7 +40,9 @@
 
 #include <wayland-client.h>
 
-#include "compositor.h"
+#include <libweston/libweston.h>
+#include "backend.h"
+#include "libweston-internal.h"
 #include "weston.h"
 #include "shared/helpers.h"
 #include "shared/os-compatibility.h"
@@ -85,6 +87,7 @@ struct ss_seat {
 	struct weston_seat base;
 	struct shared_output *output;
 	struct wl_list link;
+	uint32_t id;
 
 	struct {
 		struct wl_seat *seat;
@@ -364,6 +367,7 @@ ss_seat_create(struct shared_output *so, uint32_t id)
 
 	weston_seat_init(&seat->base, so->output->compositor, "default");
 	seat->output = so;
+	seat->id = id;
 	seat->parent.seat = wl_registry_bind(so->parent.registry, id,
 					     &wl_seat_interface, 1);
 	wl_list_insert(so->seat_list.prev, &seat->link);
@@ -734,6 +738,12 @@ static void
 registry_handle_global_remove(void *data, struct wl_registry *registry,
 			      uint32_t name)
 {
+	struct shared_output *so = data;
+	struct ss_seat *seat, *next;
+
+	wl_list_for_each_safe(seat, next, &so->seat_list, link)
+		if (seat->id == name)
+			ss_seat_destroy(seat);
 }
 
 static const struct wl_registry_listener registry_listener = {
@@ -808,25 +818,10 @@ shared_output_repainted(struct wl_listener *listener, void *data)
 	pixman_region32_t damage;
 	struct ss_shm_buffer *sb;
 	int32_t x, y, width, height, stride;
-	int i, nrects, do_yflip;
+	int i, nrects, do_yflip, y_orig;
 	pixman_box32_t *r;
-	uint32_t *cache_data;
-
-	/* Damage in output coordinates */
-	pixman_region32_init(&damage);
-	pixman_region32_intersect(&damage, &so->output->region,
-				  &so->output->previous_damage);
-	pixman_region32_translate(&damage, -so->output->x, -so->output->y);
-
-	/* Apply damage to all buffers */
-	wl_list_for_each(sb, &so->shm.buffers, link)
-		pixman_region32_union(&sb->damage, &sb->damage, &damage);
-
-	/* Transform to buffer coordinates */
-	weston_transformed_region(so->output->width, so->output->height,
-				  so->output->transform,
-				  so->output->current_scale,
-				  &damage, &damage);
+	pixman_image_t *damaged_image;
+	pixman_transform_t transform;
 
 	width = so->output->current_mode->width;
 	height = so->output->current_mode->height;
@@ -842,23 +837,33 @@ shared_output_repainted(struct wl_listener *listener, void *data)
 			pixman_image_create_bits(PIXMAN_a8r8g8b8,
 						 width, height, NULL,
 						 stride);
-		if (!so->cache_image) {
-			shared_output_destroy(so);
-			return;
-		}
+		if (!so->cache_image)
+			goto err_shared_output;
 
-		pixman_region32_fini(&damage);
 		pixman_region32_init_rect(&damage, 0, 0, width, height);
+	} else {
+		/* Damage in output coordinates */
+		pixman_region32_init(&damage);
+		pixman_region32_intersect(&damage, &so->output->region,
+					  &so->output->previous_damage);
+		pixman_region32_translate(&damage, -so->output->x, -so->output->y);
 	}
 
-	if (shared_output_ensure_tmp_data(so, &damage) < 0) {
-		shared_output_destroy(so);
-		return;
-	}
+	/* Apply damage to all buffers */
+	wl_list_for_each(sb, &so->shm.buffers, link)
+		pixman_region32_union(&sb->damage, &sb->damage, &damage);
+
+	/* Transform to buffer coordinates */
+	weston_transformed_region(so->output->width, so->output->height,
+				  so->output->transform,
+				  so->output->current_scale,
+				  &damage, &damage);
+
+	if (shared_output_ensure_tmp_data(so, &damage) < 0)
+		goto err_pixman_init;
 
 	do_yflip = !!(so->output->compositor->capabilities & WESTON_CAP_CAPTURE_YFLIP);
 
-	cache_data = pixman_image_get_data(so->cache_image);
 	r = pixman_region32_rectangles(&damage, &nrects);
 	for (i = 0; i < nrects; ++i) {
 		x = r[i].x1;
@@ -866,29 +871,56 @@ shared_output_repainted(struct wl_listener *listener, void *data)
 		width = r[i].x2 - r[i].x1;
 		height = r[i].y2 - r[i].y1;
 
+		if (do_yflip)
+			y_orig = so->output->current_mode->height - r[i].y2;
+		else
+			y_orig = y;
+
+		so->output->compositor->renderer->read_pixels(
+			so->output, PIXMAN_a8r8g8b8, so->tmp_data,
+			x, y_orig, width, height);
+
+		damaged_image = pixman_image_create_bits(PIXMAN_a8r8g8b8,
+							 width, height,
+							 so->tmp_data,
+				(PIXMAN_FORMAT_BPP(PIXMAN_a8r8g8b8) / 8) * width);
+		if (!damaged_image)
+			goto err_pixman_init;
+
 		if (do_yflip) {
-			so->output->compositor->renderer->read_pixels(
-				so->output, PIXMAN_a8r8g8b8, so->tmp_data,
-				x, so->output->current_mode->height - r[i].y2,
-				width, height);
+			pixman_transform_init_scale(&transform,
+						    pixman_fixed_1,
+						    pixman_fixed_minus_1);
 
-			pixman_blt(so->tmp_data, cache_data, -width, stride,
-				   32, 32, 0, 1 - height, x, y, width, height);
-		} else {
-			so->output->compositor->renderer->read_pixels(
-				so->output, PIXMAN_a8r8g8b8, so->tmp_data,
-				x, y, width, height);
+			pixman_transform_translate(&transform, NULL,
+						   0,
+						   pixman_int_to_fixed(height));
 
-			pixman_blt(so->tmp_data, cache_data, width, stride,
-				   32, 32, 0, 0, x, y, width, height);
+			pixman_image_set_transform(damaged_image, &transform);
 		}
-	}
 
-	pixman_region32_fini(&damage);
+		pixman_image_composite32(PIXMAN_OP_SRC,
+					 damaged_image,
+					 NULL,
+					 so->cache_image,
+					 0, 0,
+					 0, 0,
+					 x, y,
+					 width, height);
+		pixman_image_unref(damaged_image);
+	}
 
 	so->cache_dirty = 1;
 
+	pixman_region32_fini(&damage);
 	shared_output_update(so);
+
+	return;
+
+err_pixman_init:
+	pixman_region32_fini(&damage);
+err_shared_output:
+	shared_output_destroy(so);
 }
 
 static struct shared_output *

@@ -28,11 +28,12 @@
 #include <assert.h>
 #include <inttypes.h>
 
-#include "compositor.h"
+#include <libweston/libweston.h>
 #include "linux-explicit-synchronization.h"
 #include "linux-explicit-synchronization-unstable-v1-server-protocol.h"
 #include "linux-sync-file.h"
 #include "shared/fd-util.h"
+#include "libweston-internal.h"
 
 static void
 destroy_linux_buffer_release(struct wl_resource *resource)
@@ -244,11 +245,9 @@ bind_linux_explicit_synchronization(struct wl_client *client,
 WL_EXPORT int
 linux_explicit_synchronization_setup(struct weston_compositor *compositor)
 {
-	/* TODO: Update to minor version 2 when the next version of
-	 * wayland-protocols that contains it is released. */
 	if (!wl_global_create(compositor->wl_display,
 			      &zwp_linux_explicit_synchronization_v1_interface,
-			      1, compositor,
+			      2, compositor,
 			      bind_linux_explicit_synchronization))
 		return -1;
 
@@ -267,7 +266,7 @@ linux_explicit_synchronization_setup(struct weston_compositor *compositor)
  *
  * The error is sent as an INVALID_OBJECT error on the client's wl_display.
  *
- * \param sync The explicit synchronization related resource that is unusable.
+ * \param resource The explicit synchronization related resource that is unusable.
  * \param msg A custom error message attached to the protocol error.
  */
 WL_EXPORT void

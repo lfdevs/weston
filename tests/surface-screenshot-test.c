@@ -33,9 +33,10 @@
 #include <errno.h>
 #include <linux/input.h>
 
-#include "compositor.h"
+#include <libweston/libweston.h>
 #include "compositor/weston.h"
 #include "file-util.h"
+#include "libweston-internal.h"
 
 static char *
 encode_PAM_comment_line(const char *comment)

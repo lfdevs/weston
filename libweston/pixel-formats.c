@@ -387,10 +387,6 @@ pixel_format_get_info_shm(uint32_t format)
 		return pixel_format_get_info(format);
 }
 
-/** Retrieve a pixel format information structure from a DRM FOURCC format
- *
- * \param format a DRM FOURCC format
- */
 WL_EXPORT const struct pixel_format_info *
 pixel_format_get_info(uint32_t format)
 {
@@ -431,15 +427,6 @@ pixel_format_is_opaque(const struct pixel_format_info *info)
 	return !info->opaque_substitute;
 }
 
-/** Retrieve the opaque substitute for a pixel format
- *
- * If the given pixel format contains an alpha channel, look up an identical
- * pixel format except where the alpha channel is ignored, if such format
- * exists. Otherwise returns the passed in format as is.
- *
- * \param info a pixel_format_info already retrieved using pixel_format_get_info()
- *
- */
 WL_EXPORT const struct pixel_format_info *
 pixel_format_get_opaque_substitute(const struct pixel_format_info *info)
 {

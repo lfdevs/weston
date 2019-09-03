@@ -1,7 +1,0 @@
-usr/include/libweston-6
-usr/lib/*/libweston-6.so
-usr/lib/*/libweston-desktop-6.so
-usr/lib/*/pkgconfig/libweston-6.pc
-usr/lib/*/pkgconfig/libweston-desktop-6.pc
-usr/share/libweston/protocols/weston-debug.xml
-usr/share/pkgconfig/libweston-6-protocols.pc

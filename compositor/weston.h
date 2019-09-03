@@ -30,7 +30,8 @@
 extern "C" {
 #endif
 
-#include <compositor.h>
+#include <libweston/libweston.h>
+#include <libweston/config-parser.h>
 
 void
 screenshooter_create(struct weston_compositor *ec);

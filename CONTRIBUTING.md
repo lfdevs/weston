@@ -37,7 +37,7 @@ fork the core Weston repository, push your changes to a branch in your new
 repository, and then submit these patches for review through a merge request.
 
 Weston formerly accepted patches via `git-send-email`, sent to
-**wayland-devel@lists.freedesktop.org**; these were
+**wayland-devel\@lists.freedesktop.org**; these were
 [tracked using Patchwork](https://patchwork.freedesktop.org/projects/wayland/).
 Some old patches continue to be sent this way, and we may accept small new
 patches sent to the list, but please send all new patches through GitLab merge
@@ -98,7 +98,9 @@ See [notes on commit messages] for a recommended reading on writing commit
 messages.
 
 Your patches should also include a Signed-off-by line with your name and
-email address.  If you're not the patch's original author, you should
+email address which indicates that you agree to the
+[Developer's Certificate of Origin 1.1](DCO-1.1.txt).
+If you're not the patch's original author, you should
 also gather S-o-b's by them (and/or whomever gave the patch to you.) The
 significance of this is that it certifies that you created the patch,
 that it was created under an appropriate open source license, or

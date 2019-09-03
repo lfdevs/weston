@@ -30,10 +30,10 @@
 #include <xcb/composite.h>
 #include <cairo/cairo-xcb.h>
 
-#include "compositor.h"
+#include <libweston/libweston.h>
 #include "compositor/weston.h"
-#include "xwayland-api.h"
-#include "weston-debug.h"
+#include <libweston/xwayland-api.h>
+#include <libweston/weston-log.h>
 
 #define SEND_EVENT_MASK (0x80)
 #define EVENT_TYPE(event) ((event)->response_type & ~SEND_EVENT_MASK)
@@ -54,7 +54,7 @@ struct weston_xserver {
 	weston_xwayland_spawn_xserver_func_t spawn_func;
 	void *user_data;
 
-	struct weston_debug_scope *wm_debug;
+	struct weston_log_scope *wm_debug;
 };
 
 struct weston_wm {

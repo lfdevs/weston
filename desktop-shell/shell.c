@@ -39,10 +39,10 @@
 #include "shell.h"
 #include "compositor/weston.h"
 #include "weston-desktop-shell-server-protocol.h"
-#include "shared/config-parser.h"
+#include <libweston/config-parser.h>
 #include "shared/helpers.h"
 #include "shared/timespec-util.h"
-#include "libweston-desktop/libweston-desktop.h"
+#include <libweston-desktop/libweston-desktop.h>
 
 #define DEFAULT_NUM_WORKSPACES 1
 #define DEFAULT_WORKSPACE_CHANGE_ANIMATION_LENGTH 200
@@ -2348,7 +2348,7 @@ fade_out_done(struct weston_view_animation *animation, void *data)
 	loop = wl_display_get_event_loop(shsurf->shell->compositor->wl_display);
 
 	if (weston_view_is_mapped(shsurf->view)) {
-		shsurf->view->is_mapped = false;
+		weston_view_unmap(shsurf->view);
 		wl_event_loop_add_idle(loop, fade_out_done_idle_cb, shsurf);
 	}
 }
@@ -4724,13 +4724,16 @@ workspace_move_surface_down_binding(struct weston_keyboard *keyboard,
 }
 
 static void
-shell_reposition_view_on_output_destroy(struct weston_view *view)
+shell_reposition_view_on_output_change(struct weston_view *view)
 {
 	struct weston_output *output, *first_output;
 	struct weston_compositor *ec = view->surface->compositor;
 	struct shell_surface *shsurf;
 	float x, y;
 	int visible;
+
+	if (wl_list_empty(&ec->output_list))
+		return;
 
 	x = view->geometry.x;
 	y = view->geometry.y;
@@ -4786,14 +4789,15 @@ shell_for_each_layer(struct desktop_shell *shell,
 }
 
 static void
-shell_output_destroy_move_layer(struct desktop_shell *shell,
+shell_output_changed_move_layer(struct desktop_shell *shell,
 				struct weston_layer *layer,
 				void *data)
 {
 	struct weston_view *view;
 
 	wl_list_for_each(view, &layer->view_list.link, layer_link.link)
-		shell_reposition_view_on_output_destroy(view);
+		shell_reposition_view_on_output_change(view);
+
 }
 
 static void
@@ -4803,7 +4807,7 @@ handle_output_destroy(struct wl_listener *listener, void *data)
 		container_of(listener, struct shell_output, destroy_listener);
 	struct desktop_shell *shell = output_listener->shell;
 
-	shell_for_each_layer(shell, shell_output_destroy_move_layer, NULL);
+	shell_for_each_layer(shell, shell_output_changed_move_layer, NULL);
 
 	if (output_listener->panel_surface)
 		wl_list_remove(&output_listener->panel_surface_listener.link);
@@ -4857,6 +4861,10 @@ create_shell_output(struct desktop_shell *shell,
 	wl_signal_add(&output->destroy_signal,
 		      &shell_output->destroy_listener);
 	wl_list_insert(shell->output_list.prev, &shell_output->link);
+
+	if (wl_list_length(&shell->output_list) == 1)
+		shell_for_each_layer(shell,
+				     shell_output_changed_move_layer, NULL);
 }
 
 static void

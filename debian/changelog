@@ -1,3 +1,16 @@
+weston (7.0.0-1~exp1) experimental; urgency=medium
+
+  * New upstream release
+  * debian/control: bump wayland dependency version
+  * debian/control: add new dependencies
+  * bump libweston-desktop ABI to 7
+  * install weston-debug.xml in ABI versioned path
+  * debian/weston.manpages: add weston-bindings manpage
+  * debian/libweston-7-0.install: install pipewire plugin
+  * debian/libweston-7-0.symbols: update
+
+ -- Héctor Orón Martínez <zumbi@debian.org>  Tue, 03 Sep 2019 14:02:59 +0200
+
 weston (6.0.1-2) unstable; urgency=medium
 
   * debian/control: bump standards version

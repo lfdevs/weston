@@ -33,7 +33,9 @@
 #include <string.h>
 #include <errno.h>
 
-#include "compositor.h"
+#include <libweston/libweston.h>
+#include "backend.h"
+#include "libweston-internal.h"
 #include "compositor/weston.h"
 #include "weston-test-server-protocol.h"
 
@@ -65,7 +67,7 @@ test_client_sigchld(struct weston_process *process, int status)
 	struct weston_test *test =
 		container_of(process, struct weston_test, process);
 
-	/* Chain up from weston-test-runner's exit code so that automake
+	/* Chain up from weston-test-runner's exit code so that ninja
 	 * knows the exit status and can report e.g. skipped tests. */
 	if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
 		exit(WEXITSTATUS(status));

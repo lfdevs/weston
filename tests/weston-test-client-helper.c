@@ -36,7 +36,7 @@
 
 #include "shared/os-compatibility.h"
 #include "shared/xalloc.h"
-#include "shared/zalloc.h"
+#include <libweston/zalloc.h>
 #include "weston-test-client-helper.h"
 
 #define max(a, b) (((a) > (b)) ? (a) : (b))
@@ -850,7 +850,7 @@ skip(const char *fmt, ...)
 	/* automake tests uses exit code 77. weston-test-runner will see
 	 * this and use it, and then weston-test's sigchld handler (in the
 	 * weston process) will use that as an exit status, which is what
-	 * automake will see in the end. */
+	 * ninja will see in the end. */
 	exit(77);
 }
 

@@ -1,8 +1,8 @@
 project('weston',
 	'c',
-	version: '6.0.1',
+	version: '7.0.0',
 	default_options: [
-		'warning_level=2',
+		'warning_level=3',
 		'c_std=gnu99',
 		'b_lundef=false',
 	],
@@ -10,7 +10,7 @@ project('weston',
 	license: 'MIT/Expat',
 )
 
-libweston_major = 6
+libweston_major = 7
 
 # libweston_revision is manufactured to follow the autotools build's
 # library file naming, thanks to libtool
@@ -30,8 +30,8 @@ endif
 dir_prefix = get_option('prefix')
 dir_bin = join_paths(dir_prefix, get_option('bindir'))
 dir_data = join_paths(dir_prefix, get_option('datadir'))
-dir_include = join_paths(dir_prefix, get_option('includedir'))
 dir_include_libweston = 'libweston-@0@'.format(libweston_major)
+dir_include_libweston_install = join_paths(dir_include_libweston, 'libweston')
 dir_lib = join_paths(dir_prefix, get_option('libdir'))
 dir_libexec = join_paths(dir_prefix, get_option('libexecdir'))
 dir_module_weston = join_paths(dir_lib, 'weston')
@@ -39,21 +39,12 @@ dir_module_libweston = join_paths(dir_lib, 'libweston-@0@'.format(libweston_majo
 dir_data_pc = join_paths(dir_data, 'pkgconfig')
 dir_lib_pc = join_paths(dir_lib, 'pkgconfig')
 dir_man = join_paths(dir_prefix, get_option('mandir'))
-dir_protocol_libweston = 'libweston/protocols'
+dir_protocol_libweston = join_paths('libweston-@0@'.format(libweston_major), 'protocols')
+
+public_inc = include_directories('include')
 
 pkgconfig = import('pkgconfig')
 
-libweston_version_h = configuration_data()
-libweston_version_h.set('WESTON_VERSION_MAJOR', version_weston_arr[0])
-libweston_version_h.set('WESTON_VERSION_MINOR', version_weston_arr[1])
-libweston_version_h.set('WESTON_VERSION_MICRO', version_weston_arr[2])
-libweston_version_h.set('WESTON_VERSION', version_weston)
-version_h = configure_file(
-	input: 'libweston/version.h.in',
-	output: 'version.h',
-	configuration: libweston_version_h
-)
-install_headers(version_h, subdir: dir_include_libweston)
 git_version_h = vcs_tag(
 	input: 'libweston/git-version.h.meson',
 	output: 'git-version.h',
@@ -69,6 +60,7 @@ global_args_maybe = [
 	'-Wno-unused-parameter',
 	'-Wno-shift-negative-value', # required due to Pixman
 	'-Wno-missing-field-initializers',
+	'-Wno-pedantic',
 	'-fvisibility=hidden',
 ]
 foreach a : global_args_maybe
@@ -150,6 +142,7 @@ dep_libdrm = dependency('libdrm', version: '>= 2.4.68')
 dep_libdrm_headers = dep_libdrm.partial_dependency(compile_args: true)
 dep_threads = dependency('threads')
 
+subdir('include')
 subdir('protocol')
 subdir('shared')
 subdir('libweston')
@@ -160,6 +153,7 @@ subdir('desktop-shell')
 subdir('fullscreen-shell')
 subdir('ivi-shell')
 subdir('remoting')
+subdir('pipewire')
 subdir('clients')
 subdir('wcap')
 subdir('tests')
@@ -168,5 +162,8 @@ subdir('man')
 
 configure_file(output: 'config.h', configuration: config_h)
 
-
-# TODO: process doc/doxygen/*.doxygen.in
+if get_option('doc')
+	subdir('doc/sphinx')
+else
+	message('Documentation will not be built. Use -Ddoc to build it.')
+endif

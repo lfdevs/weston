@@ -42,7 +42,7 @@
 #include "zuc_event_listener.h"
 #include "zuc_types.h"
 
-#include "shared/zalloc.h"
+#include <libweston/zalloc.h>
 
 /**
  * Hardcoded output name.
@@ -461,7 +461,6 @@ zuc_junit_reporter_create(void)
 #else /* ENABLE_JUNIT_XML */
 
 #include <stddef.h>
-#include "shared/zalloc.h"
 #include "zuc_event_listener.h"
 
 /*

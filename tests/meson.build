@@ -97,14 +97,9 @@ dep_zucmain = declare_dependency(
 
 tests_standalone = [
 	['config-parser', [], [ dep_zucmain ]],
-	['matrix', [ '../shared/matrix.c' ], [ dep_libm ]],
+	['matrix', [ '../shared/matrix.c' ], [ dep_libm, dep_libshared.partial_dependency(includes: true) ]],
 	['string'],
-	[
-		'vertex-clip',
-		[
-			'../libweston/vertex-clipping.c'
-		]
-	],
+	[ 'vertex-clip', [], [ dep_test_client, dep_vertex_clipping ]],
 	['timespec', [], [ dep_zucmain ]],
 	['zuc',
 		[
@@ -221,7 +216,7 @@ if get_option('shell-ivi')
 		weston_test_protocol_c,
 		ivi_application_client_protocol_h,
 		ivi_application_protocol_c,
-		include_directories: include_directories('..', '../shared'),
+		include_directories: [ include_directories('..', '../shared'), public_inc ],
 		dependencies: dep_test_client,
 		install: false
 	)
@@ -261,7 +256,7 @@ foreach t : tests_standalone
 		srcs_t,
 		c_args: [ '-DUNIT_TEST' ],
 		build_by_default: true,
-		include_directories: include_directories('..', '../shared', '../libweston'),
+		include_directories: [ include_directories('..', '../shared', '../libweston'), public_inc ],
 		dependencies: deps_t,
 		install: false,
 	)
@@ -325,8 +320,10 @@ foreach t : tests_weston
 		'test-@0@'.format(t.get(0)),
 		srcs_t,
 		c_args: [ '-DUNIT_TEST' ],
-		include_directories:
+		include_directories: [
 			include_directories('..', '../shared'),
+			public_inc,
+		],
 		dependencies: deps_t,
 		install: false,
 	)
@@ -385,3 +382,17 @@ foreach t : tests_weston_plugin
 		test(t.get(0), exe_weston, env: env_test_weston, args: args_t)
 	endif
 endforeach
+
+if get_option('backend-drm')
+	executable(
+		'setbacklight',
+		'setbacklight.c',
+		dependencies: [
+			dep_backlight,
+			dep_libdrm,
+			dependency('libudev')
+		],
+		include_directories: include_directories('..'),
+		install: false
+	)
+endif

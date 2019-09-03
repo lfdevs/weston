@@ -1,6 +1,6 @@
 .\" shorthand for double quote that works everywhere.
 .ds q \N'34'
-.TH weston.ini 5 "2013-01-17" "Weston @version@"
+.TH weston.ini 5 "2019-03-26" "Weston @version@"
 .SH NAME
 weston.ini \- configuration file for
 .B Weston
@@ -423,8 +423,9 @@ pressed
 .BI "binding-modifier=" ctrl
 sets the modifier key used for common bindings (string), such as moving
 surfaces, resizing, rotating, switching, closing and setting the transparency
-for windows, controlling the backlight and zooming the desktop. Possible values:
-none, ctrl, alt, super (default)
+for windows, controlling the backlight and zooming the desktop. See
+.BR weston-bindings (7).
+Possible values: none, ctrl, alt, super (default)
 .TP 7
 .BI "num-workspaces=" 6
 defines the number of workspaces (unsigned integer). The user can switch
@@ -544,6 +545,16 @@ multiheaded environment with a single compositor for multiple output and input
 configurations. The default seat is called "default" and will always be
 present. This seat can be constrained like any other.
 .RE
+.TP 7
+.BI "allow_hdcp=" true
+Allows HDCP support for this output. If set to true, HDCP can be tried for the
+content-protection, provided by the backends, on this output. By
+default, HDCP support is always allowed for an output. The
+content-protection can actually be realized, only if the hardware
+(source and sink) support HDCP, and the backend has the implementation
+of content-protection protocol. Currently, no backend actually
+implements HDCP yet.
+.RE
 .SH "INPUT-METHOD SECTION"
 .TP 7
 .BI "path=" "@weston_libexecdir@/weston-keyboard"
@@ -642,6 +653,6 @@ sets the command to start a fullscreen-shell server for screen sharing (string).
 .RE
 .SH "SEE ALSO"
 .BR weston (1),
-.BR weston-launch (1),
+.BR weston-bindings (7),
 .BR weston-drm (7),
 .BR xkeyboard-config (7)
