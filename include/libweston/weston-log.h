@@ -53,7 +53,7 @@ struct weston_debug_stream;
 
 /** weston_log_scope callback
  *
- * @param scope The log scope.
+ * @param sub The subscription.
  * @param user_data The \c user_data argument given to
  * weston_compositor_add_log_scope()
  *
@@ -66,7 +66,8 @@ struct weston_log_scope *
 weston_compositor_add_log_scope(struct weston_log_context *compositor,
 				  const char *name,
 				  const char *description,
-				  weston_log_scope_cb new_subscriber,
+				  weston_log_scope_cb new_subscription,
+				  weston_log_scope_cb destroy_subscription,
 				  void *user_data);
 
 void
@@ -120,6 +121,13 @@ weston_log_subscriber_destroy_flight_rec(struct weston_log_subscriber *sub);
 
 void
 weston_log_subscriber_display_flight_rec(struct weston_log_subscriber *sub);
+
+struct weston_log_subscription *
+weston_log_subscription_iterate(struct weston_log_scope *scope,
+				struct weston_log_subscription *sub_iter);
+
+void
+weston_log_flight_recorder_display_buffer(FILE *file);
 
 #ifdef  __cplusplus
 }

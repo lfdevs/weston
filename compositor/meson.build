@@ -12,7 +12,7 @@ srcs_weston = [
 ]
 deps_weston = [
 	dep_libshared,
-	dep_libweston,
+	dep_libweston_public,
 	dep_libinput,
 	dep_libevdev,
 	dep_libdl,
@@ -26,12 +26,27 @@ if get_option('xwayland')
 	config_h.set_quoted('XSERVER_PATH', get_option('xwayland-path'))
 endif
 
+libexec_weston = shared_library(
+	'exec_weston',
+	sources: srcs_weston,
+	include_directories: common_inc,
+	dependencies: deps_weston,
+	install_dir: dir_module_weston,
+	install: true,
+	version: '0.0.0',
+	soversion: 0
+)
+dep_libexec_weston = declare_dependency(
+	link_with: libexec_weston,
+	include_directories: [ include_directories('.'), public_inc ],
+	dependencies: dep_libweston_public
+)
 exe_weston = executable(
 	'weston',
-	srcs_weston,
-	include_directories: include_directories('..', '../shared'),
-	link_args: [ '-Wl,-export-dynamic' ],
-	dependencies: deps_weston,
+	'executable.c',
+	include_directories: common_inc,
+	dependencies: dep_libexec_weston,
+	install_rpath: dir_module_weston,
 	install: true
 )
 install_headers('weston.h', subdir: 'weston')
@@ -61,14 +76,16 @@ if get_option('screenshare')
 		fullscreen_shell_unstable_v1_protocol_c,
 	]
 	deps_screenshare = [
+		dep_libexec_weston,
 		dep_libshared,
-		dep_libweston,
+		dep_libweston_public,
+		dep_libweston_private_h, # XXX: https://gitlab.freedesktop.org/wayland/weston/issues/292
 		dep_wayland_client,
 	]
 	plugin_screenshare = shared_library(
 		'screen-share',
 		srcs_screenshare,
-		include_directories: include_directories('..', '../shared'),
+		include_directories: common_inc,
 		dependencies: deps_screenshare,
 		name_prefix: '',
 		install: true,
@@ -93,8 +110,8 @@ if get_option('color-management-lcms')
 	plugin_lcms = shared_library(
 		'cms-static',
 		srcs_lcms,
-		include_directories: include_directories('..', '../shared'),
-		dependencies: [ dep_libweston, dep_lcms2 ],
+		include_directories: common_inc,
+		dependencies: [ dep_libexec_weston, dep_libweston_public, dep_lcms2 ],
 		name_prefix: '',
 		install: true,
 		install_dir: dir_module_weston
@@ -117,7 +134,7 @@ if get_option('color-management-colord')
 		error('cms-colord requires colord >= 0.1.27 which was not found. Or, you can use \'-Dcolor-management-colord=false\'.')
 	endif
 
-	plugin_colord_deps = [ dep_libweston, dep_colord ]
+	plugin_colord_deps = [ dep_libweston_public, dep_colord ]
 
 	foreach depname : [ 'glib-2.0', 'gobject-2.0' ]
 		dep = dependency(depname, required: false)
@@ -130,9 +147,10 @@ if get_option('color-management-colord')
 	plugin_colord = shared_library(
 		'cms-colord',
 		srcs_colord,
-		include_directories: include_directories('..', '../shared'),
+		include_directories: common_inc,
 		dependencies: plugin_colord_deps,
 		name_prefix: '',
+		override_options: [ 'b_lundef=false' ],
 		install: true,
 		install_dir: dir_module_weston
 	)
@@ -148,8 +166,8 @@ if get_option('systemd')
 	plugin_systemd_notify = shared_library(
 		'systemd-notify',
 		'systemd-notify.c',
-		include_directories: include_directories('..', '../shared'),
-		dependencies: [ dep_libweston, dep_libsystemd ],
+		include_directories: common_inc,
+		dependencies: [ dep_libweston_public, dep_libsystemd ],
 		name_prefix: '',
 		install: true,
 		install_dir: dir_module_weston

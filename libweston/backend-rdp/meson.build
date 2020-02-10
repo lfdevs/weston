@@ -22,15 +22,16 @@ if cc.has_member(
 endif
 
 deps_rdp = [
-	dep_libweston,
+	dep_libweston_private,
 	dep_frdp,
 ]
 plugin_rdp = shared_library(
 	'rdp-backend',
 	'rdp.c',
-	include_directories: include_directories('../..', '../../shared'),
+	include_directories: common_inc,
 	dependencies: deps_rdp,
 	name_prefix: '',
+	override_options: [ 'b_lundef=false' ],
 	install: true,
 	install_dir: dir_module_libweston
 )

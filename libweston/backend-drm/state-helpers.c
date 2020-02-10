@@ -48,6 +48,7 @@ drm_plane_state_alloc(struct drm_output_state *state_output,
 	state->output_state = state_output;
 	state->plane = plane;
 	state->in_fence_fd = -1;
+	state->zpos = DRM_PLANE_ZPOS_INVALID_PLANE;
 	pixman_region32_init(&state->damage);
 
 	/* Here we only add the plane state to the desired link, and not
@@ -80,6 +81,7 @@ drm_plane_state_free(struct drm_plane_state *state, bool force)
 	wl_list_init(&state->link);
 	state->output_state = NULL;
 	state->in_fence_fd = -1;
+	state->zpos = DRM_PLANE_ZPOS_INVALID_PLANE;
 	pixman_region32_fini(&state->damage);
 
 	if (force || state != state->plane->state_cur) {
@@ -163,7 +165,7 @@ drm_plane_state_put_back(struct drm_plane_state *state)
  */
 bool
 drm_plane_state_coords_for_view(struct drm_plane_state *state,
-				struct weston_view *ev)
+				struct weston_view *ev, uint64_t zpos)
 {
 	struct drm_output *output = state->output;
 	struct weston_buffer *buffer = ev->surface->buffer_ref.buffer;
@@ -243,6 +245,9 @@ drm_plane_state_coords_for_view(struct drm_plane_state *state,
 	if (state->src_h > (uint32_t) ((buffer->height << 16) - state->src_y))
 		state->src_h = (buffer->height << 16) - state->src_y;
 
+	/* apply zpos if available */
+	state->zpos = zpos;
+
 	return true;
 }
 
@@ -293,6 +298,7 @@ drm_output_state_alloc(struct drm_output *output,
 	assert(state);
 	state->output = output;
 	state->dpms = WESTON_DPMS_OFF;
+	state->protection = WESTON_HDCP_DISABLE;
 	state->pending_state = pending_state;
 	if (pending_state)
 		wl_list_insert(&pending_state->output_list, &state->link);

@@ -1,6 +1,5 @@
 /*
- * Copyright © 2014 Pekka Paalanen <pq@iki.fi>
- * Copyright © 2014 Collabora, Ltd.
+ * Copyright © 2019 Collabora, Ltd.
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -24,32 +23,12 @@
  * SOFTWARE.
  */
 
-#ifndef WESTON_TIMELINE_OBJECT_H
-#define WESTON_TIMELINE_OBJECT_H
+#include "config.h"
 
-/*
- * This struct can be embedded in objects related to timeline output.
- * It must be initialized to all-zero. Afterwards, the timeline code
- * will handle it alone. No clean-up is necessary.
- */
-struct weston_timeline_object {
-	/*
-	 * Timeline series gets bumped every time a new log is opened.
-	 * This triggers id allocation and object info emission.
-	 * 0 is an invalid series value.
-	 */
-	unsigned series;
+#include "weston.h"
 
-	/* Object id in the timeline JSON output. 0 is invalid. */
-	unsigned id;
-
-	/*
-	 * If non-zero, forces a re-emission of object description.
-	 * Should be set to non-zero, when changing long-lived
-	 * object state that is not emitted on normal timeline
-	 * events.
-	 */
-	unsigned force_refresh;
-};
-
-#endif /* WESTON_TIMELINE_OBJECT_H */
+int
+main(int argc, char *argv[])
+{
+	return wet_main(argc, argv);
+}

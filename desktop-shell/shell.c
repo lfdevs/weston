@@ -104,6 +104,9 @@ struct shell_surface {
 
 	struct desktop_shell *shell;
 
+	struct wl_list children_list;
+	struct wl_list children_link;
+
 	int32_t saved_x, saved_y;
 	bool saved_position_valid;
 	bool saved_rotation_valid;
@@ -464,7 +467,7 @@ shell_configuration(struct desktop_shell *shell)
 {
 	struct weston_config_section *section;
 	char *s, *client;
-	int allow_zap;
+	bool allow_zap;
 
 	section = weston_config_get_section(wet_get_config(shell->compositor),
 					    "shell", NULL, NULL);
@@ -521,7 +524,7 @@ static int
 focus_surface_get_label(struct weston_surface *surface, char *buf, size_t len)
 {
 	return snprintf(buf, len, "focus highlight effect for output %s",
-			surface->output->name);
+			(surface->output ? surface->output->name : "NULL"));
 }
 
 /* no-op func for checking focus surface */
@@ -2416,6 +2419,13 @@ desktop_surface_added(struct weston_desktop_surface *desktop_surface,
 
 	wl_list_init(&shsurf->workspace_transform.link);
 
+	/*
+	 * initialize list as well as link. The latter allows to use
+	 * wl_list_remove() even when this surface is not in another list.
+	 */
+	wl_list_init(&shsurf->children_list);
+	wl_list_init(&shsurf->children_link);
+
 	weston_desktop_surface_set_user_data(desktop_surface, shsurf);
 	weston_desktop_surface_set_activated(desktop_surface,
 					     shsurf->focus_count > 0);
@@ -2427,11 +2437,18 @@ desktop_surface_removed(struct weston_desktop_surface *desktop_surface,
 {
 	struct shell_surface *shsurf =
 		weston_desktop_surface_get_user_data(desktop_surface);
+	struct shell_surface *shsurf_child, *tmp;
 	struct weston_surface *surface =
 		weston_desktop_surface_get_surface(desktop_surface);
 
 	if (!shsurf)
 		return;
+
+	wl_list_for_each_safe(shsurf_child, tmp, &shsurf->children_list, children_link) {
+		wl_list_remove(&shsurf_child->children_link);
+		wl_list_init(&shsurf_child->children_link);
+	}
+	wl_list_remove(&shsurf->children_link);
 
 	wl_signal_emit(&shsurf->destroy_signal, shsurf);
 
@@ -2748,6 +2765,27 @@ desktop_surface_resize(struct weston_desktop_surface *desktop_surface,
 }
 
 static void
+desktop_surface_set_parent(struct weston_desktop_surface *desktop_surface,
+			   struct weston_desktop_surface *parent,
+			   void *shell)
+{
+	struct shell_surface *shsurf_parent;
+	struct shell_surface *shsurf =
+		weston_desktop_surface_get_user_data(desktop_surface);
+
+	/* unlink any potential child */
+	wl_list_remove(&shsurf->children_link);
+
+	if (parent) {
+		shsurf_parent = weston_desktop_surface_get_user_data(parent);
+		wl_list_insert(shsurf_parent->children_list.prev,
+			       &shsurf->children_link);
+	} else {
+		wl_list_init(&shsurf->children_link);
+	}
+}
+
+static void
 desktop_surface_fullscreen_requested(struct weston_desktop_surface *desktop_surface,
 				     bool fullscreen,
 				     struct weston_output *output, void *shell)
@@ -2929,6 +2967,7 @@ static const struct weston_desktop_api shell_desktop_api = {
 	.committed = desktop_surface_committed,
 	.move = desktop_surface_move,
 	.resize = desktop_surface_resize,
+	.set_parent = desktop_surface_set_parent,
 	.fullscreen_requested = desktop_surface_fullscreen_requested,
 	.maximized_requested = desktop_surface_maximized_requested,
 	.minimized_requested = desktop_surface_minimized_requested,
@@ -2985,7 +3024,7 @@ static int
 background_get_label(struct weston_surface *surface, char *buf, size_t len)
 {
 	return snprintf(buf, len, "background for output %s",
-			surface->output->name);
+			(surface->output ? surface->output->name : "NULL"));
 }
 
 static void
@@ -3065,7 +3104,7 @@ static int
 panel_get_label(struct weston_surface *surface, char *buf, size_t len)
 {
 	return snprintf(buf, len, "panel for output %s",
-			surface->output->name);
+			(surface->output ? surface->output->name : "NULL"));
 }
 
 static void
@@ -3777,6 +3816,18 @@ lower_fullscreen_layer(struct desktop_shell *shell,
 	}
 }
 
+static struct shell_surface *get_last_child(struct shell_surface *shsurf)
+{
+	struct shell_surface *shsurf_child;
+
+	wl_list_for_each_reverse(shsurf_child, &shsurf->children_list, children_link) {
+		if (weston_view_is_mapped(shsurf_child->view))
+			return shsurf_child;
+	}
+
+	return NULL;
+}
+
 void
 activate(struct desktop_shell *shell, struct weston_view *view,
 	 struct weston_seat *seat, uint32_t flags)
@@ -3786,11 +3837,18 @@ activate(struct desktop_shell *shell, struct weston_view *view,
 	struct focus_state *state;
 	struct workspace *ws;
 	struct weston_surface *old_es;
-	struct shell_surface *shsurf;
+	struct shell_surface *shsurf, *shsurf_child;
 
 	main_surface = weston_surface_get_main_surface(es);
 	shsurf = get_shell_surface(main_surface);
 	assert(shsurf);
+
+	shsurf_child = get_last_child(shsurf);
+	if (shsurf_child) {
+		/* Activate last xdg child instead of parent. */
+		activate(shell, shsurf_child->view, seat, flags);
+		return;
+	}
 
 	/* Only demote fullscreen surfaces on the output of activated shsurf.
 	 * Leave fullscreen surfaces on unrelated outputs alone. */
@@ -5090,8 +5148,13 @@ wet_shell_init(struct weston_compositor *ec,
 
 	shell->compositor = ec;
 
-	shell->destroy_listener.notify = shell_destroy;
-	wl_signal_add(&ec->destroy_signal, &shell->destroy_listener);
+	if (!weston_compositor_add_destroy_listener_once(ec,
+							 &shell->destroy_listener,
+							 shell_destroy)) {
+		free(shell);
+		return 0;
+	}
+
 	shell->idle_listener.notify = idle_handler;
 	wl_signal_add(&ec->idle_signal, &shell->idle_listener);
 	shell->wake_listener.notify = wake_handler;

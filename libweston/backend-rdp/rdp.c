@@ -484,7 +484,7 @@ rdp_switch_mode(struct weston_output *output, struct weston_mode *target_mode)
 	output->current_mode->flags |= WL_OUTPUT_MODE_CURRENT;
 
 	pixman_renderer_output_destroy(output);
-	pixman_renderer_output_create(output, PIXMAN_RENDERER_OUTPUT_USE_SHADOW);
+	pixman_renderer_output_create(output, 0);
 
 	new_shadow_buffer = pixman_image_create_bits(PIXMAN_x8r8g8b8, target_mode->width,
 			target_mode->height, 0, target_mode->width * 4);
@@ -526,8 +526,9 @@ rdp_output_set_size(struct weston_output *base,
 	wl_list_for_each(head, &output->base.head_list, output_link) {
 		weston_head_set_monitor_strings(head, "weston", "rdp", NULL);
 
-		/* XXX: Calculate proper size. */
-		weston_head_set_physical_size(head, width, height);
+		/* This is a virtual output, so report a zero physical size.
+		 * It's better to let frontends/clients use their defaults. */
+		weston_head_set_physical_size(head, 0, 0);
 	}
 
 	wl_list_init(&output->peers);
@@ -662,16 +663,25 @@ rdp_destroy(struct weston_compositor *ec)
 {
 	struct rdp_backend *b = to_rdp_backend(ec);
 	struct weston_head *base, *next;
+	struct rdp_peers_item *rdp_peer, *tmp;
 	int i;
+
+	wl_list_for_each_safe(rdp_peer, tmp, &b->output->peers, link) {
+		freerdp_peer* client = rdp_peer->peer;
+
+		client->Disconnect(client);
+		freerdp_peer_context_free(client);
+		freerdp_peer_free(client);
+	}
+
+	for (i = 0; i < MAX_FREERDP_FDS; i++)
+		if (b->listener_events[i])
+			wl_event_source_remove(b->listener_events[i]);
 
 	weston_compositor_shutdown(ec);
 
 	wl_list_for_each_safe(base, next, &ec->head_list, compositor_link)
 		rdp_head_destroy(to_rdp_head(base));
-
-	for (i = 0; i < MAX_FREERDP_FDS; i++)
-		if (b->listener_events[i])
-			wl_event_source_remove(b->listener_events[i]);
 
 	freerdp_listener_free(b->listener);
 
@@ -818,7 +828,7 @@ struct rdp_to_xkb_keyboard_layout {
 
 /* table reversed from
 	https://github.com/awakecoding/FreeRDP/blob/master/libfreerdp/locale/xkb_layout_ids.c#L811 */
-static
+static const
 struct rdp_to_xkb_keyboard_layout rdp_keyboards[] = {
 	{KBD_ARABIC_101, "ara", 0},
 	{KBD_BULGARIAN, 0, 0},
@@ -933,7 +943,7 @@ struct rdp_to_xkb_keyboard_layout rdp_keyboards[] = {
 };
 
 /* taken from 2.2.7.1.6 Input Capability Set (TS_INPUT_CAPABILITYSET) */
-static char *rdp_keyboard_types[] = {
+static const char *rdp_keyboard_types[] = {
 	"",	/* 0: unused */
 	"", /* 1: IBM PC/XT or compatible (83-key) keyboard */
 	"", /* 2: Olivetti "ICO" (102-key) keyboard */
@@ -953,7 +963,6 @@ xf_peer_activate(freerdp_peer* client)
 	rdpSettings *settings;
 	rdpPointerUpdate *pointer;
 	struct rdp_peers_item *peersItem;
-	struct xkb_context *xkbContext;
 	struct xkb_rule_names xkbRuleNames;
 	struct xkb_keymap *keymap;
 	struct weston_output *weston_output;
@@ -1037,13 +1046,8 @@ xf_peer_activate(freerdp_peer* client)
 
 	keymap = NULL;
 	if (xkbRuleNames.layout) {
-		xkbContext = xkb_context_new(0);
-		if (!xkbContext) {
-			weston_log("unable to create a xkb_context\n");
-			return FALSE;
-		}
-
-		keymap = xkb_keymap_new_from_names(xkbContext, &xkbRuleNames, 0);
+		keymap = xkb_keymap_new_from_names(b->compositor->xkb_context,
+						   &xkbRuleNames, 0);
 	}
 
 	if (settings->ClientHostname)
@@ -1060,6 +1064,7 @@ xf_peer_activate(freerdp_peer* client)
 
 	weston_seat_init(peersItem->seat, b->compositor, seat_name);
 	weston_seat_init_keyboard(peersItem->seat, keymap);
+	xkb_keymap_unref(keymap);
 	weston_seat_init_pointer(peersItem->seat);
 
 	peersItem->flags |= RDP_PEER_ACTIVATED;

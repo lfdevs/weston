@@ -1,8 +1,8 @@
 plugin_test_shell_desktop = shared_library(
 	'weston-test-desktop-shell',
 	'weston-test-desktop-shell.c',
-	include_directories: include_directories('..', '../shared'),
-	dependencies: [ dep_lib_desktop, dep_libweston ],
+	include_directories: common_inc,
+	dependencies: [ dep_lib_desktop, dep_libweston_public ],
 	name_prefix: '',
 	install: false
 )
@@ -11,7 +11,7 @@ env_modmap += 'weston-test-desktop-shell.so=@0@;'.format(plugin_test_shell_deskt
 lib_test_runner = static_library(
 	'test-runner',
 	'weston-test-runner.c',
-	include_directories: include_directories('..', '../shared'),
+	include_directories: common_inc,
 	install: false,
 )
 dep_test_runner = declare_dependency(link_with: lib_test_runner)
@@ -21,7 +21,7 @@ lib_test_client = static_library(
 	'weston-test-client-helper.c',
 	weston_test_client_protocol_h,
 	weston_test_protocol_c,
-	include_directories: include_directories('..', '../shared'),
+	include_directories: common_inc,
 	dependencies: [
 		dep_libshared,
 		dep_wayland_client,
@@ -44,8 +44,8 @@ exe_plugin_test = shared_library(
 	'weston-test.c',
 	weston_test_server_protocol_h,
 	weston_test_protocol_c,
-	include_directories: include_directories('..', '../shared'),
-	dependencies: [ dep_libweston ],
+	include_directories: common_inc,
+	dependencies: [ dep_libexec_weston, dep_libweston_private ],
 	name_prefix: '',
 	install: false,
 )
@@ -75,7 +75,7 @@ lib_zuc = static_library(
 	'../tools/zunitc/src/zuc_junit_reporter.h',
 	'../tools/zunitc/src/zuc_types.h',
 	'../tools/zunitc/src/zunitc_impl.c',
-	include_directories: include_directories('..', '../shared', '../tools/zunitc/inc'),
+	include_directories: [ common_inc, include_directories('../tools/zunitc/inc') ],
 	dependencies: deps_zuc,
 )
 dep_zuc = declare_dependency(
@@ -87,7 +87,7 @@ dep_zuc = declare_dependency(
 lib_zucmain = static_library(
 	'zunitcmain',
 	'../tools/zunitc/src/main.c',
-	include_directories: include_directories('..', '../shared', '../tools/zunitc/inc'),
+	include_directories: [ common_inc, include_directories('../tools/zunitc/inc') ],
 	dependencies: [ dep_libshared, dep_zuc ],
 )
 dep_zucmain = declare_dependency(
@@ -97,7 +97,7 @@ dep_zucmain = declare_dependency(
 
 tests_standalone = [
 	['config-parser', [], [ dep_zucmain ]],
-	['matrix', [ '../shared/matrix.c' ], [ dep_libm, dep_libshared.partial_dependency(includes: true) ]],
+	['matrix', [], [ dep_libm, dep_matrix_c ]],
 	['string'],
 	[ 'vertex-clip', [], [ dep_test_client, dep_vertex_clipping ]],
 	['timespec', [], [ dep_zucmain ]],
@@ -184,7 +184,7 @@ tests_weston_plugin = [
 	['plugin-registry'],
 	['surface'],
 	['surface-global'],
-	['surface-screenshot'],
+	['surface-screenshot', 'surface-screenshot-test.c', dep_libshared],
 ]
 
 if get_option('shell-ivi')
@@ -205,7 +205,8 @@ if get_option('shell-ivi')
 				'ivi-layout-test-plugin.c',
 				weston_test_server_protocol_h,
 				weston_test_protocol_c,
-			]
+			],
+			[ dep_libexec_weston ]
 		],
 	]
 
@@ -216,7 +217,7 @@ if get_option('shell-ivi')
 		weston_test_protocol_c,
 		ivi_application_client_protocol_h,
 		ivi_application_protocol_c,
-		include_directories: [ include_directories('..', '../shared'), public_inc ],
+		include_directories: common_inc,
 		dependencies: dep_test_client,
 		install: false
 	)
@@ -256,7 +257,7 @@ foreach t : tests_standalone
 		srcs_t,
 		c_args: [ '-DUNIT_TEST' ],
 		build_by_default: true,
-		include_directories: [ include_directories('..', '../shared', '../libweston'), public_inc ],
+		include_directories: common_inc,
 		dependencies: deps_t,
 		install: false,
 	)
@@ -320,10 +321,7 @@ foreach t : tests_weston
 		'test-@0@'.format(t.get(0)),
 		srcs_t,
 		c_args: [ '-DUNIT_TEST' ],
-		include_directories: [
-			include_directories('..', '../shared'),
-			public_inc,
-		],
+		include_directories: common_inc,
 		dependencies: deps_t,
 		install: false,
 	)
@@ -346,7 +344,7 @@ foreach t : tests_weston_plugin
 	endif
 
 	deps_t = [
-		dep_libweston,
+		dep_libweston_private,
 	]
 	if t.length() > 2
 		deps_t += t.get(2)
@@ -355,7 +353,7 @@ foreach t : tests_weston_plugin
 	exe_t = shared_library(
 		'test-@0@'.format(t.get(0)),
 		srcs_t,
-		include_directories: include_directories('..', '../shared'),
+		include_directories: common_inc,
 		dependencies: deps_t,
 		name_prefix: '',
 		install: false,
@@ -392,7 +390,7 @@ if get_option('backend-drm')
 			dep_libdrm,
 			dependency('libudev')
 		],
-		include_directories: include_directories('..'),
+		include_directories: common_inc,
 		install: false
 	)
 endif

@@ -46,6 +46,9 @@
 
 struct weston_test {
 	struct weston_compositor *compositor;
+	/* XXX: missing compositor destroy listener
+	 * https://gitlab.freedesktop.org/wayland/weston/issues/300
+	 */
 	struct weston_layer layer;
 	struct weston_process process;
 	struct weston_seat seat;
@@ -364,6 +367,7 @@ struct test_screenshot {
 struct test_screenshot_frame_listener {
 	struct wl_listener listener;
 	struct weston_buffer *buffer;
+	struct weston_output *output;
 	weston_test_screenshot_done_func_t done;
 	void *data;
 };
@@ -438,12 +442,12 @@ test_screenshot_frame_notify(struct wl_listener *listener, void *data)
 	struct test_screenshot_frame_listener *l =
 		container_of(listener,
 			     struct test_screenshot_frame_listener, listener);
-	struct weston_output *output = data;
+	struct weston_output *output = l->output;
 	struct weston_compositor *compositor = output->compositor;
 	int32_t stride;
 	uint8_t *pixels, *d, *s;
 
-	output->disable_planes--;
+	weston_output_disable_planes_decr(output);
 	wl_list_remove(&listener->link);
 	stride = l->buffer->width * (PIXMAN_FORMAT_BPP(compositor->read_format) / 8);
 	pixels = malloc(stride * l->buffer->height);
@@ -533,13 +537,14 @@ weston_test_screenshot_shoot(struct weston_output *output,
 
 	/* Set up the listener */
 	l->buffer = buffer;
+	l->output = output;
 	l->done = done;
 	l->data = data;
 	l->listener.notify = test_screenshot_frame_notify;
 	wl_signal_add(&output->frame_signal, &l->listener);
 
 	/* Fire off a repaint */
-	output->disable_planes++;
+	weston_output_disable_planes_incr(output);
 	weston_output_schedule_repaint(output);
 
 	return true;

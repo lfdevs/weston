@@ -39,6 +39,7 @@
 #include <sys/shm.h>
 #include <linux/input.h>
 
+#include <drm_fourcc.h>
 #include <xcb/xcb.h>
 #include <xcb/shm.h>
 #ifdef HAVE_XCB_XKB
@@ -57,7 +58,7 @@
 #include "shared/timespec-util.h"
 #include "shared/file-util.h"
 #include "renderer-gl/gl-renderer.h"
-#include "weston-egl-ext.h"
+#include "shared/weston-egl-ext.h"
 #include "pixman-renderer.h"
 #include "presentation-time-server-protocol.h"
 #include "linux-dmabuf.h"
@@ -71,6 +72,10 @@
 
 #define WINDOW_MAX_WIDTH 8192
 #define WINDOW_MAX_HEIGHT 8192
+
+static const uint32_t x11_formats[] = {
+	DRM_FORMAT_XRGB8888,
+};
 
 struct x11_backend {
 	struct weston_backend	 base;
@@ -865,9 +870,8 @@ x11_output_switch_mode(struct weston_output *base, struct weston_mode *mode)
 		ret = gl_renderer->output_window_create(&output->base,
 						        (EGLNativeWindowType) output->window,
 						        &xid,
-						        gl_renderer->opaque_attribs,
-						        NULL,
-						        0);
+						        x11_formats,
+						        ARRAY_LENGTH(x11_formats));
 		if (ret < 0)
 			return -1;
 	}
@@ -1041,9 +1045,8 @@ x11_output_enable(struct weston_output *base)
 					&output->base,
 					(EGLNativeWindowType) output->window,
 					&xid,
-					gl_renderer->opaque_attribs,
-					NULL,
-					0);
+					x11_formats,
+					ARRAY_LENGTH(x11_formats));
 		if (ret < 0)
 			goto err;
 
@@ -1809,8 +1812,10 @@ init_gl_renderer(struct x11_backend *b)
 		return -1;
 
 	ret = gl_renderer->display_create(b->compositor, EGL_PLATFORM_X11_KHR,
-					  (void *) b->dpy, NULL,
-					  gl_renderer->opaque_attribs, NULL, 0);
+					  (void *) b->dpy,
+					  EGL_WINDOW_BIT,
+					  x11_formats,
+					  ARRAY_LENGTH(x11_formats));
 
 	return ret;
 }

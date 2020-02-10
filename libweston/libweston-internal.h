@@ -79,6 +79,9 @@ weston_compositor_add_pending_output(struct weston_output *output,
 bool
 weston_compositor_import_dmabuf(struct weston_compositor *compositor,
 				struct linux_dmabuf_buffer *buffer);
+bool
+weston_compositor_dmabuf_can_scanout(struct weston_compositor *compositor,
+					struct linux_dmabuf_buffer *buffer);
 void
 weston_compositor_offscreen(struct weston_compositor *compositor);
 
@@ -147,6 +150,14 @@ weston_compositor_xkb_destroy(struct weston_compositor *ec);
 
 int
 weston_input_init(struct weston_compositor *compositor);
+
+/* weston_output */
+
+void
+weston_output_disable_planes_incr(struct weston_output *output);
+
+void
+weston_output_disable_planes_decr(struct weston_output *output);
 
 /* weston_plane */
 
@@ -279,6 +290,12 @@ weston_view_from_global_float(struct weston_view *view,
 bool
 weston_view_is_opaque(struct weston_view *ev, pixman_region32_t *region);
 
+bool
+weston_view_has_valid_buffer(struct weston_view *ev);
+
+bool
+weston_view_matches_output_entirely(struct weston_view *ev,
+				    struct weston_output *output);
 void
 weston_view_move_to_plane(struct weston_view *view,
 			  struct weston_plane *plane);

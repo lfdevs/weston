@@ -1,5 +1,5 @@
-libweston-7.so.0 libweston-7-0 #MINVER#
-* Build-Depends-Package: libweston-7-dev
+libweston-8.so.0 libweston-8-0 #MINVER#
+* Build-Depends-Package: libweston-8-dev
  linux_dmabuf_buffer_get@Base 1.12.0
  linux_dmabuf_buffer_get_user_data@Base 1.12.0
  linux_dmabuf_buffer_send_server_error@Base 1.12.0
@@ -27,6 +27,7 @@ libweston-7.so.0 libweston-7-0 #MINVER#
  notify_touch_normalized@Base 5.0.0
  pixel_format_get_info@Base 3.0.0
  pixel_format_get_info_by_drm_name@Base 6.0
+ pixel_format_get_info_by_opaque_substitute@Base 8.0.0
  pixel_format_get_info_shm@Base 6.0
  pixel_format_get_opaque_substitute@Base 3.0.0
  pixel_format_get_plane_count@Base 3.0.0
@@ -47,6 +48,7 @@ libweston-7.so.0 libweston-7-0 #MINVER#
  weston_compositor_add_axis_binding@Base 1.12.0
  weston_compositor_add_button_binding@Base 1.12.0
  weston_compositor_add_debug_binding@Base 1.12.0
+ weston_compositor_add_destroy_listener_once@Base 8.0.0
  weston_compositor_add_head@Base 5.0.0
  weston_compositor_add_heads_changed_listener@Base 5.0.0
  weston_compositor_add_key_binding@Base 1.12.0
@@ -59,6 +61,7 @@ libweston-7.so.0 libweston-7-0 #MINVER#
  weston_compositor_create_output_with_head@Base 5.0.0
  weston_compositor_damage_all@Base 1.12.0
  weston_compositor_destroy@Base 1.12.0
+ weston_compositor_dmabuf_can_scanout@Base 8.0.0
  weston_compositor_enable_content_protection@Base 7.0.0
  weston_compositor_enable_debug_protocol@Base 6.0
  weston_compositor_enable_touch_calibrator@Base 5.0.0
@@ -88,6 +91,8 @@ libweston-7.so.0 libweston-7-0 #MINVER#
  weston_compositor_stack_plane@Base 1.12.0
  weston_compositor_tear_down@Base 7.0.0
  weston_compositor_wake@Base 1.12.0
+ weston_config_destroy@Base 8.0.0
+ weston_config_get_full_path@Base 8.0.0
  weston_config_get_name_from_env@Base 6.0
  weston_config_get_section@Base 1.12.0
  weston_config_next_section@Base 3.0.0
@@ -98,6 +103,7 @@ libweston-7.so.0 libweston-7-0 #MINVER#
  weston_config_section_get_int@Base 1.12.0
  weston_config_section_get_string@Base 1.12.0
  weston_config_section_get_uint@Base 1.12.0
+ weston_direct_display_setup@Base 8.0.0
  weston_environment_get_fd@Base 1.12.0
  weston_fade_run@Base 1.12.0
  weston_fade_update@Base 1.12.0
@@ -144,6 +150,7 @@ libweston-7.so.0 libweston-7-0 #MINVER#
  weston_log_continue@Base 1.12.0
  weston_log_ctx_compositor_create@Base 7.0.0
  weston_log_ctx_compositor_destroy@Base 7.0.0
+ weston_log_flight_recorder_display_buffer@Base 8.0.0
  weston_log_scope_complete@Base 7.0.0
  weston_log_scope_is_enabled@Base 7.0.0
  weston_log_scope_printf@Base 7.0.0
@@ -158,6 +165,7 @@ libweston-7.so.0 libweston-7-0 #MINVER#
  weston_log_subscriber_destroy_log@Base 7.0.0
  weston_log_subscriber_display_flight_rec@Base 7.0.0
  weston_log_subscription_complete@Base 7.0.0
+ weston_log_subscription_iterate@Base 8.0.0
  weston_log_subscription_printf@Base 7.0.0
  weston_matrix_init@Base 1.12.0
  weston_matrix_invert@Base 1.12.0
@@ -177,6 +185,8 @@ libweston-7.so.0 libweston-7-0 #MINVER#
  weston_output_damage@Base 1.12.0
  weston_output_destroy@Base 5.0.0
  weston_output_disable@Base 3.0.0
+ weston_output_disable_planes_decr@Base 8.0.0
+ weston_output_disable_planes_incr@Base 8.0.0
  weston_output_enable@Base 3.0.0
  weston_output_finish_frame@Base 1.12.0
  weston_output_get_destroy_listener@Base 5.0.0
@@ -212,6 +222,7 @@ libweston-7.so.0 libweston-7-0 #MINVER#
  weston_pointer_set_focus@Base 1.12.0
  weston_pointer_start_drag@Base 1.12.0
  weston_pointer_start_grab@Base 1.12.0
+ weston_primary_flight_recorder_ring_buffer@Base 8.0.0
  weston_recorder_start@Base 1.12.0
  weston_recorder_stop@Base 1.12.0
  weston_screenshooter_shoot@Base 1.12.0
@@ -254,8 +265,9 @@ libweston-7.so.0 libweston-7-0 #MINVER#
  weston_surface_to_buffer_rect@Base 1.12.0
  weston_surface_to_buffer_region@Base 1.12.0
  weston_surface_unmap@Base 1.12.0
- weston_timeline_enabled_@Base 1.12.0
+#MISSING: 8.0.0-1# weston_timeline_enabled_@Base 1.12.0
  weston_timeline_point@Base 1.12.0
+ weston_timeline_refresh_subscription_objects@Base 8.0.0
  weston_touch_create_touch_device@Base 5.0.0
  weston_touch_device_can_calibrate@Base 5.0.0
  weston_touch_device_destroy@Base 5.0.0
@@ -281,8 +293,10 @@ libweston-7.so.0 libweston-7-0 #MINVER#
  weston_view_from_global_fixed@Base 1.12.0
  weston_view_from_global_float@Base 1.12.0
  weston_view_geometry_dirty@Base 1.12.0
+ weston_view_has_valid_buffer@Base 8.0.0
  weston_view_is_mapped@Base 1.12.0
  weston_view_is_opaque@Base 6.0
+ weston_view_matches_output_entirely@Base 8.0.0
  weston_view_move_to_plane@Base 1.12.0
  weston_view_schedule_repaint@Base 1.12.0
  weston_view_set_mask@Base 1.12.0
@@ -299,37 +313,36 @@ libweston-7.so.0 libweston-7-0 #MINVER#
  weston_zoom_run@Base 1.12.0
  wl_data_device_manager_init@Base 1.12.0
  wl_data_device_set_keyboard_focus@Base 1.12.0
-libweston-desktop-7.so.0 libweston-7-0 #MINVER#
-* Build-Depends-Package: libweston-7-dev
- weston_desktop_client_for_each_surface@Base 1.12.0
- weston_desktop_client_get_client@Base 1.12.0
- weston_desktop_client_ping@Base 1.12.0
- weston_desktop_create@Base 1.12.0
- weston_desktop_destroy@Base 1.12.0
- weston_desktop_surface_add_metadata_listener@Base 4.0.0
- weston_desktop_surface_close@Base 1.12.0
- weston_desktop_surface_create_view@Base 1.12.0
- weston_desktop_surface_get_activated@Base 1.12.0
- weston_desktop_surface_get_app_id@Base 1.12.0
- weston_desktop_surface_get_client@Base 1.12.0
- weston_desktop_surface_get_fullscreen@Base 1.12.0
- weston_desktop_surface_get_geometry@Base 1.12.0
- weston_desktop_surface_get_max_size@Base 1.12.0
- weston_desktop_surface_get_maximized@Base 1.12.0
- weston_desktop_surface_get_min_size@Base 1.12.0
- weston_desktop_surface_get_pid@Base 1.12.0
- weston_desktop_surface_get_resizing@Base 1.12.0
- weston_desktop_surface_get_surface@Base 1.12.0
- weston_desktop_surface_get_title@Base 1.12.0
- weston_desktop_surface_get_user_data@Base 1.12.0
- weston_desktop_surface_propagate_layer@Base 1.12.0
- weston_desktop_surface_set_activated@Base 1.12.0
- weston_desktop_surface_set_fullscreen@Base 1.12.0
- weston_desktop_surface_set_maximized@Base 1.12.0
- weston_desktop_surface_set_resizing@Base 1.12.0
- weston_desktop_surface_set_size@Base 1.12.0
- weston_desktop_surface_set_user_data@Base 1.12.0
- weston_desktop_surface_unlink_view@Base 1.12.0
- weston_seat_break_desktop_grabs@Base 1.12.0
- weston_surface_get_desktop_surface@Base 1.12.0
- weston_surface_is_desktop_surface@Base 1.12.0
+libweston-desktop-8.so.0 libweston-8-0 #MINVER#
+ weston_desktop_client_for_each_surface@Base 8.0.0
+ weston_desktop_client_get_client@Base 8.0.0
+ weston_desktop_client_ping@Base 8.0.0
+ weston_desktop_create@Base 8.0.0
+ weston_desktop_destroy@Base 8.0.0
+ weston_desktop_surface_add_metadata_listener@Base 8.0.0
+ weston_desktop_surface_close@Base 8.0.0
+ weston_desktop_surface_create_view@Base 8.0.0
+ weston_desktop_surface_get_activated@Base 8.0.0
+ weston_desktop_surface_get_app_id@Base 8.0.0
+ weston_desktop_surface_get_client@Base 8.0.0
+ weston_desktop_surface_get_fullscreen@Base 8.0.0
+ weston_desktop_surface_get_geometry@Base 8.0.0
+ weston_desktop_surface_get_max_size@Base 8.0.0
+ weston_desktop_surface_get_maximized@Base 8.0.0
+ weston_desktop_surface_get_min_size@Base 8.0.0
+ weston_desktop_surface_get_pid@Base 8.0.0
+ weston_desktop_surface_get_resizing@Base 8.0.0
+ weston_desktop_surface_get_surface@Base 8.0.0
+ weston_desktop_surface_get_title@Base 8.0.0
+ weston_desktop_surface_get_user_data@Base 8.0.0
+ weston_desktop_surface_propagate_layer@Base 8.0.0
+ weston_desktop_surface_set_activated@Base 8.0.0
+ weston_desktop_surface_set_fullscreen@Base 8.0.0
+ weston_desktop_surface_set_maximized@Base 8.0.0
+ weston_desktop_surface_set_resizing@Base 8.0.0
+ weston_desktop_surface_set_size@Base 8.0.0
+ weston_desktop_surface_set_user_data@Base 8.0.0
+ weston_desktop_surface_unlink_view@Base 8.0.0
+ weston_seat_break_desktop_grabs@Base 8.0.0
+ weston_surface_get_desktop_surface@Base 8.0.0
+ weston_surface_is_desktop_surface@Base 8.0.0

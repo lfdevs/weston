@@ -8,7 +8,7 @@ if get_option('pipewire')
 	depnames = [
 		'libpipewire-0.2', 'libspa-0.1'
 	]
-	deps_pipewire = [ dep_libweston ]
+	deps_pipewire = [ dep_libweston_private ]
 	foreach depname : depnames
 		dep = dependency(depname, required: false)
 		if not dep.found()
@@ -20,7 +20,7 @@ if get_option('pipewire')
 	plugin_pipewire = shared_library(
 		'pipewire-plugin',
 		'pipewire-plugin.c',
-		include_directories: include_directories('..', '../shared'),
+		include_directories: common_inc,
 		dependencies: deps_pipewire,
 		name_prefix: '',
 		install: true,

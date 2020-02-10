@@ -77,6 +77,7 @@ const struct drm_property_info plane_props[] = {
 	[WDRM_PLANE_IN_FORMATS] = { .name = "IN_FORMATS" },
 	[WDRM_PLANE_IN_FENCE_FD] = { .name = "IN_FENCE_FD" },
 	[WDRM_PLANE_FB_DAMAGE_CLIPS] = { .name = "FB_DAMAGE_CLIPS" },
+	[WDRM_PLANE_ZPOS] = { .name = "zpos" },
 };
 
 struct drm_property_enum_info dpms_state_enums[] = {
@@ -94,6 +95,27 @@ struct drm_property_enum_info dpms_state_enums[] = {
 	},
 };
 
+struct drm_property_enum_info content_protection_enums[] = {
+	[WDRM_CONTENT_PROTECTION_UNDESIRED] = {
+		.name = "Undesired",
+	},
+	[WDRM_CONTENT_PROTECTION_DESIRED] = {
+		.name = "Desired",
+	},
+	[WDRM_CONTENT_PROTECTION_ENABLED] = {
+		.name = "Enabled",
+	},
+};
+
+struct drm_property_enum_info hdcp_content_type_enums[] = {
+	[WDRM_HDCP_CONTENT_TYPE0] = {
+		.name = "HDCP Type0",
+	},
+	[WDRM_HDCP_CONTENT_TYPE1] = {
+		.name = "HDCP Type1",
+	},
+};
+
 const struct drm_property_info connector_props[] = {
 	[WDRM_CONNECTOR_EDID] = { .name = "EDID" },
 	[WDRM_CONNECTOR_DPMS] = {
@@ -103,6 +125,16 @@ const struct drm_property_info connector_props[] = {
 	},
 	[WDRM_CONNECTOR_CRTC_ID] = { .name = "CRTC_ID", },
 	[WDRM_CONNECTOR_NON_DESKTOP] = { .name = "non-desktop", },
+	[WDRM_CONNECTOR_CONTENT_PROTECTION] = {
+		.name = "Content Protection",
+		.enum_values = content_protection_enums,
+		.num_enum_values = WDRM_CONTENT_PROTECTION__COUNT,
+	},
+	[WDRM_CONNECTOR_HDCP_CONTENT_TYPE] = {
+		.name = "HDCP Content Type",
+		.enum_values = hdcp_content_type_enums,
+		.num_enum_values = WDRM_HDCP_CONTENT_TYPE__COUNT,
+	},
 };
 
 const struct drm_property_info crtc_props[] = {
@@ -169,6 +201,42 @@ drm_property_get_value(struct drm_property_info *info,
 	}
 
 	return def;
+}
+
+/**
+ * Get the current range values of a KMS property
+ *
+ * Given a drmModeObjectGetProperties return, as well as the drm_property_info
+ * for the target property, return the current range values of that property,
+ *
+ * If the property is not present, or there's no it is not a prop range then
+ * NULL will be returned.
+ *
+ * @param info Internal structure for property to look up
+ * @param props Raw KMS properties for the target object
+ */
+uint64_t *
+drm_property_get_range_values(struct drm_property_info *info,
+			      const drmModeObjectProperties *props)
+{
+	unsigned int i;
+
+	if (info->prop_id == 0)
+		return NULL;
+
+	for (i = 0; i < props->count_props; i++) {
+
+		if (props->props[i] != info->prop_id)
+			continue;
+
+		if (!(info->flags & DRM_MODE_PROP_RANGE) &&
+		    !(info->flags & DRM_MODE_PROP_SIGNED_RANGE))
+			continue;
+
+		return info->range_values;
+	}
+
+	return NULL;
 }
 
 /**
@@ -263,6 +331,15 @@ drm_property_info_populate(struct drm_backend *b,
 		}
 
 		info[j].prop_id = props->props[i];
+		info[j].flags = prop->flags;
+
+		if (prop->flags & DRM_MODE_PROP_RANGE ||
+		    prop->flags & DRM_MODE_PROP_SIGNED_RANGE) {
+			info[j].num_range_values = prop->count_values;
+			for (int i = 0; i < prop->count_values; i++)
+				info[j].range_values[i] = prop->values[i];
+		}
+
 
 		if (info[j].num_enum_values == 0) {
 			drmModeFreeProperty(prop);
@@ -326,7 +403,6 @@ drm_property_info_free(struct drm_property_info *info, int num_props)
 	memset(info, 0, sizeof(*info) * num_props);
 }
 
-#ifdef HAVE_DRM_FORMATS_BLOB
 static inline uint32_t *
 formats_ptr(struct drm_format_modifier_blob *blob)
 {
@@ -339,7 +415,6 @@ modifiers_ptr(struct drm_format_modifier_blob *blob)
 	return (struct drm_format_modifier *)
 		(((char *)blob) + blob->modifiers_offset);
 }
-#endif
 
 /**
  * Populates the plane's formats array, using either the IN_FORMATS blob
@@ -350,7 +425,6 @@ drm_plane_populate_formats(struct drm_plane *plane, const drmModePlane *kplane,
 			   const drmModeObjectProperties *props)
 {
 	unsigned i;
-#ifdef HAVE_DRM_FORMATS_BLOB
 	drmModePropertyBlobRes *blob;
 	struct drm_format_modifier_blob *fmt_mod_blob;
 	struct drm_format_modifier *blob_modifiers;
@@ -417,7 +491,6 @@ drm_plane_populate_formats(struct drm_plane *plane, const drmModePlane *kplane,
 	return 0;
 
 fallback:
-#endif
 	/* No IN_FORMATS blob available, so just use the old. */
 	assert(plane->count_formats == kplane->count_formats);
 	for (i = 0; i < kplane->count_formats; i++) {
@@ -463,6 +536,7 @@ drm_output_assign_state(struct drm_output_state *state,
 	struct drm_output *output = state->output;
 	struct drm_backend *b = to_drm_backend(output->base.compositor);
 	struct drm_plane_state *plane_state;
+	struct drm_head *head;
 
 	assert(!output->state_last);
 
@@ -479,8 +553,14 @@ drm_output_assign_state(struct drm_output_state *state,
 
 	if (b->atomic_modeset && mode == DRM_STATE_APPLY_ASYNC) {
 		drm_debug(b, "\t[CRTC:%u] setting pending flip\n", output->crtc_id);
-		output->atomic_complete_pending = 1;
+		output->atomic_complete_pending = true;
 	}
+
+	if (b->atomic_modeset &&
+	    state->protection == WESTON_HDCP_DISABLE)
+		wl_list_for_each(head, &output->base.head_list, base.output_link)
+			weston_head_set_content_protection_status(&head->base,
+							   WESTON_HDCP_DISABLE);
 
 	/* Replace state_cur on each affected plane with the new state, being
 	 * careful to dispose of orphaned (but only orphaned) previous state.
@@ -503,7 +583,7 @@ drm_output_assign_state(struct drm_output_state *state,
 
 		assert(plane->type != WDRM_PLANE_TYPE_OVERLAY);
 		if (plane->type == WDRM_PLANE_TYPE_PRIMARY)
-			output->page_flip_pending = 1;
+			output->page_flip_pending = true;
 	}
 }
 
@@ -555,7 +635,7 @@ drm_output_set_cursor(struct drm_output_state *output_state)
 	return;
 
 err:
-	b->cursors_are_broken = 1;
+	b->cursors_are_broken = true;
 	drmModeSetCursor(b->drm.fd, output->crtc_id, 0, 0, 0);
 }
 
@@ -698,7 +778,6 @@ err:
 	return -1;
 }
 
-#ifdef HAVE_DRM_ATOMIC
 static int
 crtc_add_prop(drmModeAtomicReq *req, struct drm_output *output,
 	      enum wdrm_crtc_property prop, uint64_t val)
@@ -793,6 +872,87 @@ plane_add_damage(drmModeAtomicReq *req, struct drm_backend *backend,
 	return 0;
 }
 
+static bool
+drm_head_has_prop(struct drm_head *head,
+		  enum wdrm_connector_property prop)
+{
+	if (head && head->props_conn[prop].prop_id != 0)
+		return true;
+
+	return false;
+}
+
+/*
+ * This function converts the protection requests from weston_hdcp_protection
+ * corresponding drm values. These values can be set in "Content Protection"
+ * & "HDCP Content Type" connector properties.
+ */
+static void
+get_drm_protection_from_weston(enum weston_hdcp_protection weston_protection,
+			       enum wdrm_content_protection_state *drm_protection,
+			       enum wdrm_hdcp_content_type *drm_cp_type)
+{
+
+	switch (weston_protection) {
+	case WESTON_HDCP_DISABLE:
+		*drm_protection = WDRM_CONTENT_PROTECTION_UNDESIRED;
+		*drm_cp_type = WDRM_HDCP_CONTENT_TYPE0;
+		break;
+	case WESTON_HDCP_ENABLE_TYPE_0:
+		*drm_protection = WDRM_CONTENT_PROTECTION_DESIRED;
+		*drm_cp_type = WDRM_HDCP_CONTENT_TYPE0;
+		break;
+	case WESTON_HDCP_ENABLE_TYPE_1:
+		*drm_protection = WDRM_CONTENT_PROTECTION_DESIRED;
+		*drm_cp_type = WDRM_HDCP_CONTENT_TYPE1;
+		break;
+	default:
+		assert(0 && "bad weston_hdcp_protection");
+	}
+}
+
+static void
+drm_head_set_hdcp_property(struct drm_head *head,
+			   enum weston_hdcp_protection protection,
+			   drmModeAtomicReq *req)
+{
+	int ret;
+	enum wdrm_content_protection_state drm_protection;
+	enum wdrm_hdcp_content_type drm_cp_type;
+	struct drm_property_enum_info *enum_info;
+	uint64_t prop_val;
+
+	get_drm_protection_from_weston(protection, &drm_protection,
+				       &drm_cp_type);
+
+	if (!drm_head_has_prop(head, WDRM_CONNECTOR_CONTENT_PROTECTION))
+		return;
+
+	/*
+	 * Content-type property is not exposed for platforms not supporting
+	 * HDCP2.2, therefore, type-1 cannot be supported. The type-0 content
+	 * still can be supported if the content-protection property is exposed.
+	 */
+	if (!drm_head_has_prop(head, WDRM_CONNECTOR_HDCP_CONTENT_TYPE) &&
+	    drm_cp_type != WDRM_HDCP_CONTENT_TYPE0)
+			return;
+
+	enum_info = head->props_conn[WDRM_CONNECTOR_CONTENT_PROTECTION].enum_values;
+	prop_val = enum_info[drm_protection].value;
+	ret = connector_add_prop(req, head, WDRM_CONNECTOR_CONTENT_PROTECTION,
+				 prop_val);
+	assert(ret == 0);
+
+	if (!drm_head_has_prop(head, WDRM_CONNECTOR_HDCP_CONTENT_TYPE))
+		return;
+
+	enum_info = head->props_conn[WDRM_CONNECTOR_HDCP_CONTENT_TYPE].enum_values;
+	prop_val = enum_info[drm_cp_type].value;
+	ret = connector_add_prop(req, head, WDRM_CONNECTOR_HDCP_CONTENT_TYPE,
+				 prop_val);
+	assert(ret == 0);
+}
+
 static int
 drm_output_apply_state_atomic(struct drm_output_state *state,
 			      drmModeAtomicReq *req,
@@ -839,6 +999,9 @@ drm_output_apply_state_atomic(struct drm_output_state *state,
 			ret |= connector_add_prop(req, head, WDRM_CONNECTOR_CRTC_ID, 0);
 	}
 
+	wl_list_for_each(head, &output->base.head_list, base.output_link)
+		drm_head_set_hdcp_property(head, state->protection, req);
+
 	if (ret != 0) {
 		weston_log("couldn't set atomic CRTC/connector state\n");
 		return ret;
@@ -882,6 +1045,13 @@ drm_output_apply_state_atomic(struct drm_output_state *state,
 					      WDRM_PLANE_IN_FENCE_FD,
 					      plane_state->in_fence_fd);
 		}
+
+		/* do note, that 'invented' zpos values are set as immutable */
+		if (plane_state->zpos != DRM_PLANE_ZPOS_INVALID_PLANE &&
+		    plane_state->plane->zpos_min != plane_state->plane->zpos_max)
+			ret |= plane_add_prop(req, plane,
+					      WDRM_PLANE_ZPOS,
+					      plane_state->zpos);
 
 		if (ret != 0) {
 			weston_log("couldn't set plane state\n");
@@ -1066,7 +1236,6 @@ out:
 	drm_pending_state_free(pending_state);
 	return ret;
 }
-#endif
 
 /**
  * Tests a pending state, to see if the kernel will accept the update as
@@ -1089,13 +1258,11 @@ out:
 int
 drm_pending_state_test(struct drm_pending_state *pending_state)
 {
-#ifdef HAVE_DRM_ATOMIC
 	struct drm_backend *b = pending_state->backend;
 
 	if (b->atomic_modeset)
 		return drm_pending_state_apply_atomic(pending_state,
 						      DRM_STATE_TEST_ONLY);
-#endif
 
 	/* We have no way to test state before application on the legacy
 	 * modesetting API, so just claim it succeeded. */
@@ -1116,11 +1283,9 @@ drm_pending_state_apply(struct drm_pending_state *pending_state)
 	struct drm_output_state *output_state, *tmp;
 	uint32_t *unused;
 
-#ifdef HAVE_DRM_ATOMIC
 	if (b->atomic_modeset)
 		return drm_pending_state_apply_atomic(pending_state,
 						      DRM_STATE_APPLY_ASYNC);
-#endif
 
 	if (b->state_invalid) {
 		/* If we need to reset all our state (e.g. because we've
@@ -1174,11 +1339,9 @@ drm_pending_state_apply_sync(struct drm_pending_state *pending_state)
 	struct drm_output_state *output_state, *tmp;
 	uint32_t *unused;
 
-#ifdef HAVE_DRM_ATOMIC
 	if (b->atomic_modeset)
 		return drm_pending_state_apply_atomic(pending_state,
 						      DRM_STATE_APPLY_SYNC);
-#endif
 
 	if (b->state_invalid) {
 		/* If we need to reset all our state (e.g. because we've
@@ -1237,12 +1400,11 @@ page_flip_handler(int fd, unsigned int frame,
 
 	assert(!b->atomic_modeset);
 	assert(output->page_flip_pending);
-	output->page_flip_pending = 0;
+	output->page_flip_pending = false;
 
 	drm_output_update_complete(output, flags, sec, usec);
 }
 
-#ifdef HAVE_DRM_ATOMIC
 static void
 atomic_flip_handler(int fd, unsigned int frame, unsigned int sec,
 		    unsigned int usec, unsigned int crtc_id, void *data)
@@ -1264,30 +1426,23 @@ atomic_flip_handler(int fd, unsigned int frame, unsigned int sec,
 	drm_debug(b, "[atomic][CRTC:%u] flip processing started\n", crtc_id);
 	assert(b->atomic_modeset);
 	assert(output->atomic_complete_pending);
-	output->atomic_complete_pending = 0;
+	output->atomic_complete_pending = false;
 
 	drm_output_update_complete(output, flags, sec, usec);
 	drm_debug(b, "[atomic][CRTC:%u] flip processing completed\n", crtc_id);
 }
-#endif
 
 int
 on_drm_input(int fd, uint32_t mask, void *data)
 {
-#ifdef HAVE_DRM_ATOMIC
 	struct drm_backend *b = data;
-#endif
 	drmEventContext evctx;
 
 	memset(&evctx, 0, sizeof evctx);
-#ifndef HAVE_DRM_ATOMIC
-	evctx.version = 2;
-#else
 	evctx.version = 3;
 	if (b->atomic_modeset)
 		evctx.page_flip_handler2 = atomic_flip_handler;
 	else
-#endif
 		evctx.page_flip_handler = page_flip_handler;
 	drmHandleEvent(fd, &evctx);
 
@@ -1334,7 +1489,6 @@ init_kms_caps(struct drm_backend *b)
 	weston_log("DRM: %s universal planes\n",
 		   b->universal_planes ? "supports" : "does not support");
 
-#ifdef HAVE_DRM_ATOMIC
 	if (b->universal_planes && !getenv("WESTON_DISABLE_ATOMIC")) {
 		ret = drmGetCap(b->drm.fd, DRM_CAP_CRTC_IN_VBLANK_EVENT, &cap);
 		if (ret != 0)
@@ -1342,16 +1496,13 @@ init_kms_caps(struct drm_backend *b)
 		ret = drmSetClientCap(b->drm.fd, DRM_CLIENT_CAP_ATOMIC, 1);
 		b->atomic_modeset = ((ret == 0) && (cap == 1));
 	}
-#endif
 	weston_log("DRM: %s atomic modesetting\n",
 		   b->atomic_modeset ? "supports" : "does not support");
 
-#ifdef HAVE_DRM_ADDFB2_MODIFIERS
 	ret = drmGetCap(b->drm.fd, DRM_CAP_ADDFB2_MODIFIERS, &cap);
 	if (ret == 0)
 		b->fb_modifiers = cap;
 	else
-#endif
 		b->fb_modifiers = 0;
 
 	/*
@@ -1363,7 +1514,7 @@ init_kms_caps(struct drm_backend *b)
 	 * enabled.
 	 */
 	if (!b->atomic_modeset || getenv("WESTON_FORCE_RENDERER"))
-		b->sprites_are_broken = 1;
+		b->sprites_are_broken = true;
 
 	ret = drmSetClientCap(b->drm.fd, DRM_CLIENT_CAP_ASPECT_RATIO, 1);
 	b->aspect_ratio_supported = (ret == 0);

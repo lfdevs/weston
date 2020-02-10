@@ -36,12 +36,12 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <fcntl.h>
-#include <gbm.h>
 
 #include <gst/gst.h>
 #include <gst/allocators/gstdmabuf.h>
 #include <gst/app/gstappsrc.h>
 #include <gst/video/gstvideometa.h>
+#include <drm_fourcc.h>
 
 #include "remoting-plugin.h"
 #include <libweston/backend-drm.h>
@@ -69,6 +69,8 @@ struct remoted_gstpipe {
 
 /* supported gbm format list */
 struct remoted_output_support_gbm_format {
+	/* GBM_FORMAT_* tokens are strictly aliased with DRM_FORMAT_*, so we
+	 * use the latter to avoid a dependency on GBM */
 	uint32_t gbm_format;
 	const char *gst_format_string;
 	GstVideoFormat gst_video_format;
@@ -76,15 +78,15 @@ struct remoted_output_support_gbm_format {
 
 static const struct remoted_output_support_gbm_format supported_formats[] = {
 	{
-		.gbm_format = GBM_FORMAT_XRGB8888,
+		.gbm_format = DRM_FORMAT_XRGB8888,
 		.gst_format_string = "BGRx",
 		.gst_video_format = GST_VIDEO_FORMAT_BGRx,
 	}, {
-		.gbm_format = GBM_FORMAT_RGB565,
+		.gbm_format = DRM_FORMAT_RGB565,
 		.gst_format_string = "RGB16",
 		.gst_video_format = GST_VIDEO_FORMAT_RGB16,
 	}, {
-		.gbm_format = GBM_FORMAT_XRGB2101010,
+		.gbm_format = DRM_FORMAT_XRGB2101010,
 		.gst_format_string = "r210",
 		.gst_video_format = GST_VIDEO_FORMAT_r210,
 	}
@@ -911,6 +913,13 @@ weston_module_init(struct weston_compositor *compositor)
 	if (!remoting)
 		return -1;
 
+	if (!weston_compositor_add_destroy_listener_once(compositor,
+							 &remoting->destroy_listener,
+							 weston_remoting_destroy)) {
+		free(remoting);
+		return 0;
+	}
+
 	remoting->virtual_output_api = api;
 	remoting->compositor = compositor;
 	wl_list_init(&remoting->output_list);
@@ -930,11 +939,10 @@ weston_module_init(struct weston_compositor *compositor)
 		goto failed;
 	}
 
-	remoting->destroy_listener.notify = weston_remoting_destroy;
-	wl_signal_add(&compositor->destroy_signal, &remoting->destroy_listener);
 	return 0;
 
 failed:
+	wl_list_remove(&remoting->destroy_listener.link);
 	free(remoting);
 	return -1;
 }

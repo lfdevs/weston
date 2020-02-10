@@ -114,6 +114,9 @@ struct ss_shm_buffer {
 
 struct screen_share {
 	struct weston_compositor *compositor;
+	/* XXX: missing compositor destroy listener
+	 * https://gitlab.freedesktop.org/wayland/weston/issues/298
+	 */
 	char *command;
 };
 
@@ -816,6 +819,7 @@ shared_output_repainted(struct wl_listener *listener, void *data)
 	struct shared_output *so =
 		container_of(listener, struct shared_output, frame_listener);
 	pixman_region32_t damage;
+	pixman_region32_t *current_damage = data;
 	struct ss_shm_buffer *sb;
 	int32_t x, y, width, height, stride;
 	int i, nrects, do_yflip, y_orig;
@@ -844,8 +848,7 @@ shared_output_repainted(struct wl_listener *listener, void *data)
 	} else {
 		/* Damage in output coordinates */
 		pixman_region32_init(&damage);
-		pixman_region32_intersect(&damage, &so->output->region,
-					  &so->output->previous_damage);
+		pixman_region32_intersect(&damage, &so->output->region, current_damage);
 		pixman_region32_translate(&damage, -so->output->x, -so->output->y);
 	}
 
@@ -1010,7 +1013,7 @@ shared_output_create(struct weston_output *output, int parent_fd)
 
 	so->frame_listener.notify = shared_output_repainted;
 	wl_signal_add(&output->frame_signal, &so->frame_listener);
-	output->disable_planes++;
+	weston_output_disable_planes_incr(output);
 	weston_output_damage(output);
 
 	return so;
@@ -1031,7 +1034,7 @@ shared_output_destroy(struct shared_output *so)
 {
 	struct ss_shm_buffer *buffer, *bnext;
 
-	so->output->disable_planes--;
+	weston_output_disable_planes_decr(so->output);
 
 	wl_list_for_each_safe(buffer, bnext, &so->shm.buffers, link)
 		ss_shm_buffer_destroy(buffer);

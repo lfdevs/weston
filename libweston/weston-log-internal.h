@@ -88,7 +88,7 @@ struct weston_log_scope *
 weston_log_get_scope(struct weston_log_context *log_ctx, const char *name);
 
 void
-weston_log_run_cb_new_subscriber(struct weston_log_subscription *sub);
+weston_log_run_cb_new_subscription(struct weston_log_subscription *sub);
 
 void
 weston_debug_protocol_advertise_scopes(struct weston_log_context *log_ctx,
@@ -101,5 +101,19 @@ int
 weston_vlog(const char *fmt, va_list ap);
 int
 weston_vlog_continue(const char *fmt, va_list ap);
+
+void *
+weston_log_subscription_get_data(struct weston_log_subscription *sub);
+
+void
+weston_log_subscription_set_data(struct weston_log_subscription *sub, void *data);
+
+void
+weston_timeline_create_subscription(struct weston_log_subscription *sub,
+				    void *user_data);
+
+void
+weston_timeline_destroy_subscription(struct weston_log_subscription *sub,
+				     void *user_data);
 
 #endif /* WESTON_LOG_INTERNAL_H */

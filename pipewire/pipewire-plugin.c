@@ -797,6 +797,13 @@ weston_module_init(struct weston_compositor *compositor)
 	if (!pipewire)
 		return -1;
 
+	if (!weston_compositor_add_destroy_listener_once(compositor,
+							 &pipewire->destroy_listener,
+							 weston_pipewire_destroy)) {
+		free(pipewire);
+		return 0;
+	}
+
 	pipewire->virtual_output_api = api;
 	pipewire->compositor = compositor;
 	wl_list_init(&pipewire->output_list);
@@ -819,13 +826,12 @@ weston_module_init(struct weston_compositor *compositor)
 			compositor->weston_log_ctx,
 			"pipewire",
 			"Debug messages from pipewire plugin\n",
-			NULL, NULL);
+			NULL, NULL, NULL);
 
-	pipewire->destroy_listener.notify = weston_pipewire_destroy;
-	wl_signal_add(&compositor->destroy_signal, &pipewire->destroy_listener);
 	return 0;
 
 failed:
+	wl_list_remove(&pipewire->destroy_listener.link);
 	free(pipewire);
 	return -1;
 }

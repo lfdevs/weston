@@ -43,7 +43,6 @@ extern "C" {
 
 #include <libweston/matrix.h>
 #include <libweston/zalloc.h>
-#include <libweston/timeline-object.h>
 
 struct weston_geometry {
 	int32_t x, y;
@@ -79,6 +78,7 @@ struct weston_pointer;
 struct linux_dmabuf_buffer;
 struct weston_recorder;
 struct weston_pointer_constraint;
+struct ro_anonymous_file;
 
 enum weston_keyboard_modifier {
 	MODIFIER_CTRL = (1 << 0),
@@ -249,8 +249,6 @@ struct weston_output {
 	/** Output area in global coordinates, simple rect */
 	pixman_region32_t region;
 
-	pixman_region32_t previous_damage;
-
 	/** True if damage has occurred since the last repaint for this output;
 	 *  if set, a repaint will eventually occur. */
 	bool repaint_needed;
@@ -319,8 +317,6 @@ struct weston_output {
 			  uint16_t *r,
 			  uint16_t *g,
 			  uint16_t *b);
-
-	struct weston_timeline_object timeline;
 
 	bool enabled; /**< is in the output_list, not pending list */
 	int scale;
@@ -707,8 +703,7 @@ weston_pointer_start_drag(struct weston_pointer *pointer,
 		       struct wl_client *client);
 struct weston_xkb_info {
 	struct xkb_keymap *keymap;
-	size_t keymap_size;
-	char *keymap_string;
+	struct ro_anonymous_file *keymap_rofile;
 	int32_t ref_count;
 	xkb_mod_index_t shift_mod;
 	xkb_mod_index_t caps_mod;
@@ -1118,6 +1113,7 @@ struct weston_compositor {
 
 	struct weston_log_context *weston_log_ctx;
 	struct weston_log_scope *debug_scene;
+	struct weston_log_scope *timeline;
 
 	struct content_protection *content_protection;
 };
@@ -1464,8 +1460,6 @@ struct weston_surface {
 	 */
 	const char *role_name;
 
-	struct weston_timeline_object timeline;
-
 	bool is_mapped;
 	bool is_opaque;
 
@@ -1777,6 +1771,11 @@ struct weston_compositor *
 weston_compositor_create(struct wl_display *display,
 			 struct weston_log_context *log_ctx, void *user_data);
 
+bool
+weston_compositor_add_destroy_listener_once(struct weston_compositor *compositor,
+					    struct wl_listener *listener,
+					    wl_notify_func_t destroy_handler);
+
 enum weston_compositor_backend {
 	WESTON_BACKEND_DRM,
 	WESTON_BACKEND_FBDEV,
@@ -2013,6 +2012,9 @@ weston_output_init(struct weston_output *output,
 		   struct weston_compositor *compositor,
 		   const char *name);
 
+void
+weston_output_move(struct weston_output *output, int x, int y);
+
 int
 weston_output_enable(struct weston_output *output);
 
@@ -2044,6 +2046,10 @@ weston_log_ctx_compositor_destroy(struct weston_compositor *compositor);
 
 int
 weston_compositor_enable_content_protection(struct weston_compositor *compositor);
+
+void
+weston_timeline_refresh_subscription_objects(struct weston_compositor *wc,
+					     void *object);
 
 #ifdef  __cplusplus
 }

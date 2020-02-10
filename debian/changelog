@@ -1,3 +1,11 @@
+weston (8.0.0-1~exp1) experimental; urgency=medium
+
+  * New upstream release
+  * debian/libweston-8-0.symbols: update
+  * libexec_weston.so*,weston-direct-display.xml: new files
+
+ -- Héctor Orón Martínez <zumbi@debian.org>  Mon, 10 Feb 2020 12:23:53 +0100
+
 weston (7.0.0-1~exp1) experimental; urgency=medium
 
   * New upstream release
