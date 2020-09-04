@@ -200,6 +200,7 @@ enum wdrm_connector_property {
 	WDRM_CONNECTOR_NON_DESKTOP,
 	WDRM_CONNECTOR_CONTENT_PROTECTION,
 	WDRM_CONNECTOR_HDCP_CONTENT_TYPE,
+	WDRM_CONNECTOR_PANEL_ORIENTATION,
 	WDRM_CONNECTOR__COUNT
 };
 
@@ -222,6 +223,14 @@ enum wdrm_dpms_state {
 	WDRM_DPMS_STATE_STANDBY, /* unused */
 	WDRM_DPMS_STATE_SUSPEND, /* unused */
 	WDRM_DPMS_STATE__COUNT
+};
+
+enum wdrm_panel_orientation {
+	WDRM_PANEL_ORIENTATION_NORMAL = 0,
+	WDRM_PANEL_ORIENTATION_UPSIDE_DOWN,
+	WDRM_PANEL_ORIENTATION_LEFT_SIDE_UP,
+	WDRM_PANEL_ORIENTATION_RIGHT_SIDE_UP,
+	WDRM_PANEL_ORIENTATION__COUNT
 };
 
 /**
@@ -409,7 +418,7 @@ struct drm_plane_state {
 	/* We don't own the fd, so we shouldn't close it */
 	int in_fence_fd;
 
-	pixman_region32_t damage; /* damage to kernel */
+	uint32_t damage_blob_id; /* damage to kernel */
 
 	struct wl_list link; /* drm_output_state::plane_list */
 };
@@ -625,7 +634,8 @@ drm_property_get_range_values(struct drm_property_info *info,
 			      const drmModeObjectProperties *props);
 int
 drm_plane_populate_formats(struct drm_plane *plane, const drmModePlane *kplane,
-			   const drmModeObjectProperties *props);
+			   const drmModeObjectProperties *props,
+			   const bool use_modifiers);
 void
 drm_property_info_free(struct drm_property_info *info, int num_props);
 
@@ -658,16 +668,6 @@ drm_output_update_complete(struct drm_output *output, uint32_t flags,
 			   unsigned int sec, unsigned int usec);
 int
 on_drm_input(int fd, uint32_t mask, void *data);
-
-struct drm_plane_state *
-drm_output_state_get_existing_plane(struct drm_output_state *state_output,
-				    struct drm_plane *plane);
-void
-drm_plane_state_free(struct drm_plane_state *state, bool force);
-void
-drm_output_state_free(struct drm_output_state *state);
-void
-drm_pending_state_free(struct drm_pending_state *pending_state);
 
 struct drm_fb *
 drm_fb_ref(struct drm_fb *fb);
@@ -749,6 +749,8 @@ drm_plane_state_put_back(struct drm_plane_state *state);
 bool
 drm_plane_state_coords_for_view(struct drm_plane_state *state,
 				struct weston_view *ev, uint64_t zpos);
+void
+drm_plane_reset_state(struct drm_plane *plane);
 
 void
 drm_assign_planes(struct weston_output *output_base, void *repaint_data);

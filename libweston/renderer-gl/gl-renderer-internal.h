@@ -63,7 +63,10 @@ struct gl_renderer {
 	PFNEGLCREATEIMAGEKHRPROC create_image;
 	PFNEGLDESTROYIMAGEKHRPROC destroy_image;
 	PFNEGLSWAPBUFFERSWITHDAMAGEEXTPROC swap_buffers_with_damage;
+
+	PFNEGLGETPLATFORMDISPLAYEXTPROC get_platform_display;
 	PFNEGLCREATEPLATFORMWINDOWSURFACEEXTPROC create_platform_window;
+	bool has_platform_base;
 
 	bool has_unpack_subimage;
 
@@ -86,6 +89,7 @@ struct gl_renderer {
 
 	bool has_dmabuf_import;
 	struct wl_list dmabuf_images;
+	struct wl_list dmabuf_formats;
 
 	bool has_gl_texture_rg;
 
@@ -127,6 +131,9 @@ void
 gl_renderer_print_egl_error_state(void);
 
 void
+gl_renderer_log_extensions(const char *name, const char *extensions);
+
+void
 log_egl_config_info(EGLDisplay egldpy, EGLConfig eglconfig);
 
 EGLConfig
@@ -134,6 +141,12 @@ gl_renderer_get_egl_config(struct gl_renderer *gr,
 			   EGLint egl_surface_type,
 			   const uint32_t *drm_formats,
 			   unsigned drm_formats_count);
+
+int
+gl_renderer_setup_egl_display(struct gl_renderer *gr, void *native_display);
+
+int
+gl_renderer_setup_egl_client_extensions(struct gl_renderer *gr);
 
 int
 gl_renderer_setup_egl_extensions(struct weston_compositor *ec);

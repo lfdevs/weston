@@ -306,8 +306,9 @@ drm_output_update_complete(struct drm_output *output, uint32_t flags,
 		output->dpms_off_pending = false;
 		drm_output_get_disable_state(pending, output);
 		drm_pending_state_apply_sync(pending);
-	} else if (output->state_cur->dpms == WESTON_DPMS_OFF &&
-	           output->base.repaint_status != REPAINT_AWAITING_COMPLETION) {
+	}
+	if (output->state_cur->dpms == WESTON_DPMS_OFF &&
+	    output->base.repaint_status != REPAINT_AWAITING_COMPLETION) {
 		/* DPMS can happen to us either in the middle of a repaint
 		 * cycle (when we have painted fresh content, only to throw it
 		 * away for DPMS off), or at any other random point. If the
@@ -354,8 +355,13 @@ drm_output_render(struct drm_output_state *state, pixman_region32_t *damage)
 	struct weston_compositor *c = output->base.compositor;
 	struct drm_plane_state *scanout_state;
 	struct drm_plane *scanout_plane = output->scanout_plane;
+	struct drm_property_info *damage_info =
+		&scanout_plane->props[WDRM_PLANE_FB_DAMAGE_CLIPS];
 	struct drm_backend *b = to_drm_backend(c);
 	struct drm_fb *fb;
+	pixman_region32_t scanout_damage;
+	pixman_box32_t *rects;
+	int n_rects;
 
 	/* If we already have a client buffer promoted to scanout, then we don't
 	 * want to render. */
@@ -364,14 +370,16 @@ drm_output_render(struct drm_output_state *state, pixman_region32_t *damage)
 	if (scanout_state->fb)
 		return;
 
+	/*
+	 * If we don't have any damage on the primary plane, and we already
+	 * have a renderer buffer active, we can reuse it; else we pass
+	 * the damaged region into the renderer to re-render the affected
+	 * area.
+	 */
 	if (!pixman_region32_not_empty(damage) &&
 	    scanout_plane->state_cur->fb &&
 	    (scanout_plane->state_cur->fb->type == BUFFER_GBM_SURFACE ||
-	     scanout_plane->state_cur->fb->type == BUFFER_PIXMAN_DUMB) &&
-	    scanout_plane->state_cur->fb->width ==
-		output->base.current_mode->width &&
-	    scanout_plane->state_cur->fb->height ==
-		output->base.current_mode->height) {
+	     scanout_plane->state_cur->fb->type == BUFFER_PIXMAN_DUMB)) {
 		fb = drm_fb_ref(scanout_plane->state_cur->fb);
 	} else if (b->use_pixman) {
 		fb = drm_output_render_pixman(state, damage);
@@ -389,32 +397,54 @@ drm_output_render(struct drm_output_state *state, pixman_region32_t *damage)
 
 	scanout_state->src_x = 0;
 	scanout_state->src_y = 0;
-	scanout_state->src_w = output->base.current_mode->width << 16;
-	scanout_state->src_h = output->base.current_mode->height << 16;
+	scanout_state->src_w = fb->width << 16;
+	scanout_state->src_h = fb->height << 16;
 
 	scanout_state->dest_x = 0;
 	scanout_state->dest_y = 0;
-	scanout_state->dest_w = scanout_state->src_w >> 16;
-	scanout_state->dest_h = scanout_state->src_h >> 16;
+	scanout_state->dest_w = output->base.current_mode->width;
+	scanout_state->dest_h = output->base.current_mode->height;
 
-	pixman_region32_copy(&scanout_state->damage, damage);
+	pixman_region32_subtract(&c->primary_plane.damage,
+				 &c->primary_plane.damage, damage);
+
+	/* Don't bother calculating plane damage if the plane doesn't support it */
+	if (damage_info->prop_id == 0)
+		return;
+
+	pixman_region32_init(&scanout_damage);
+	pixman_region32_copy(&scanout_damage, damage);
+
 	if (output->base.zoom.active) {
-		weston_matrix_transform_region(&scanout_state->damage,
+		weston_matrix_transform_region(&scanout_damage,
 					       &output->base.matrix,
-					       &scanout_state->damage);
+					       &scanout_damage);
 	} else {
-		pixman_region32_translate(&scanout_state->damage,
+		pixman_region32_translate(&scanout_damage,
 					  -output->base.x, -output->base.y);
 		weston_transformed_region(output->base.width,
 					  output->base.height,
 					  output->base.transform,
 					  output->base.current_scale,
-					  &scanout_state->damage,
-					  &scanout_state->damage);
+					  &scanout_damage,
+					  &scanout_damage);
 	}
 
-	pixman_region32_subtract(&c->primary_plane.damage,
-				 &c->primary_plane.damage, damage);
+	assert(scanout_state->damage_blob_id == 0);
+
+	rects = pixman_region32_rectangles(&scanout_damage, &n_rects);
+
+	/*
+	 * If this function fails, the blob id should still be 0.
+	 * This tells the kernel there is no damage information, which means
+	 * that it will consider the whole plane damaged. While this may
+	 * affect efficiency, it should still produce correct results.
+	 */
+	drmModeCreatePropertyBlob(b->drm.fd, rects,
+				  sizeof(*rects) * n_rects,
+				  &scanout_state->damage_blob_id);
+
+	pixman_region32_fini(&scanout_damage);
 }
 
 static int
@@ -768,7 +798,7 @@ drm_plane_create(struct drm_backend *b, const drmModePlane *kplane,
 					       WDRM_PLANE_TYPE__COUNT);
 
 		zpos_range_values =
-			drm_property_get_range_values(&plane->props[WDRM_PLANE_ZPOS], 
+			drm_property_get_range_values(&plane->props[WDRM_PLANE_ZPOS],
 						      props);
 
 		if (zpos_range_values) {
@@ -779,7 +809,8 @@ drm_plane_create(struct drm_backend *b, const drmModePlane *kplane,
 			plane->zpos_max = DRM_PLANE_ZPOS_INVALID_PLANE;
 		}
 
-		if (drm_plane_populate_formats(plane, kplane, props) < 0) {
+		if (drm_plane_populate_formats(plane, kplane, props,
+					       b->fb_modifiers) < 0) {
 			drmModeFreeObjectProperties(props);
 			goto err;
 		}
@@ -1177,7 +1208,9 @@ drm_output_init_pixman(struct drm_output *output, struct drm_backend *b)
 	uint32_t format = output->gbm_format;
 	uint32_t pixman_format;
 	unsigned int i;
-	uint32_t flags = 0;
+	const struct pixman_renderer_output_options options = {
+		.use_shadow = b->use_pixman_shadow,
+	};
 
 	switch (format) {
 		case DRM_FORMAT_XRGB8888:
@@ -1205,10 +1238,7 @@ drm_output_init_pixman(struct drm_output *output, struct drm_backend *b)
 			goto err;
 	}
 
-	if (b->use_pixman_shadow)
-		flags |= PIXMAN_RENDERER_OUTPUT_USE_SHADOW;
-
-	if (pixman_renderer_output_create(&output->base, flags) < 0)
+	if (pixman_renderer_output_create(&output->base, &options) < 0)
  		goto err;
 
 	weston_log("DRM: output %s %s shadow framebuffer.\n", output->base.name,
@@ -1244,10 +1274,7 @@ drm_output_fini_pixman(struct drm_output *output)
 	if (!b->shutting_down &&
 	    output->scanout_plane->state_cur->fb &&
 	    output->scanout_plane->state_cur->fb->type == BUFFER_PIXMAN_DUMB) {
-		drm_plane_state_free(output->scanout_plane->state_cur, true);
-		output->scanout_plane->state_cur =
-			drm_plane_state_alloc(NULL, output->scanout_plane);
-		output->scanout_plane->state_cur->complete = true;
+		drm_plane_reset_state(output->scanout_plane);
 	}
 
 	pixman_renderer_output_destroy(&output->base);
@@ -1388,12 +1415,6 @@ drm_output_set_gbm_format(struct weston_output *base,
 
 	if (parse_gbm_format(gbm_format, b->gbm_format, &output->gbm_format) == -1)
 		output->gbm_format = b->gbm_format;
-
-	/* Without universal planes, we can't discover which formats are
-	 * supported by the primary plane; we just hope that the GBM format
-	 * works. */
-	if (!b->universal_planes)
-		output->scanout_plane->formats[0].format = output->gbm_format;
 }
 
 static void
@@ -1625,6 +1646,12 @@ drm_output_init_crtc(struct drm_output *output, drmModeRes *resources)
 		goto err_crtc;
 	}
 
+	/* Without universal planes, we can't discover which formats are
+	 * supported by the primary plane; we just hope that the GBM format
+	 * works. */
+	if (!b->universal_planes)
+		output->scanout_plane->formats[0].format = output->gbm_format;
+
 	/* Failing to find a cursor plane is not fatal, as we'll fall back
 	 * to software cursor. */
 	output->cursor_plane =
@@ -1654,23 +1681,29 @@ drm_output_fini_crtc(struct drm_output *output)
 	struct drm_backend *b = to_drm_backend(output->base.compositor);
 	uint32_t *unused;
 
-	if (!b->universal_planes && !b->shutting_down) {
-		/* With universal planes, the 'special' planes are allocated at
-		 * startup, freed at shutdown, and live on the plane list in
-		 * between. We want the planes to continue to exist and be freed
-		 * up for other outputs.
-		 *
-		 * Without universal planes, our special planes are
-		 * pseudo-planes allocated at output creation, freed at output
-		 * destruction, and not usable by other outputs.
-		 *
-		 * On the other hand, if the compositor is already shutting down,
-		 * the plane has already been destroyed.
-		 */
-		if (output->cursor_plane)
-			drm_plane_destroy(output->cursor_plane);
-		if (output->scanout_plane)
-			drm_plane_destroy(output->scanout_plane);
+	/* If the compositor is already shutting down, the planes have already
+	 * been destroyed. */
+	if (!b->shutting_down) {
+		if (!b->universal_planes) {
+			/* Without universal planes, our special planes are
+			 * pseudo-planes allocated at output creation, freed at
+			 * output destruction, and not usable by other outputs.
+			 */
+			if (output->cursor_plane)
+				drm_plane_destroy(output->cursor_plane);
+			if (output->scanout_plane)
+				drm_plane_destroy(output->scanout_plane);
+		} else {
+			/* With universal planes, the 'special' planes are
+			 * allocated at startup, freed at shutdown, and live on
+			 * the plane list in between. We want the planes to
+			 * continue to exist and be freed up for other outputs.
+			 */
+			if (output->cursor_plane)
+				drm_plane_reset_state(output->cursor_plane);
+			if (output->scanout_plane)
+				drm_plane_reset_state(output->scanout_plane);
+		}
 	}
 
 	drm_property_info_free(output->props_crtc, WDRM_CRTC__COUNT);
@@ -2387,7 +2420,7 @@ drm_destroy(struct weston_compositor *ec)
 
 	destroy_sprites(b);
 
-	weston_compositor_log_scope_destroy(b->debug);
+	weston_log_scope_destroy(b->debug);
 	b->debug = NULL;
 	weston_compositor_shutdown(ec);
 
@@ -2825,12 +2858,12 @@ drm_backend_create(struct weston_compositor *compositor,
 	b->pageflip_timeout = config->pageflip_timeout;
 	b->use_pixman_shadow = config->use_pixman_shadow;
 
-	b->debug = weston_compositor_add_log_scope(compositor->weston_log_ctx,
-						   "drm-backend",
+	b->debug = weston_compositor_add_log_scope(compositor, "drm-backend",
 						   "Debug messages from DRM/KMS backend\n",
-						    NULL, NULL, NULL);
+						   NULL, NULL, NULL);
 
 	compositor->backend = &b->base;
+	compositor->require_input = !config->continue_without_input;
 
 	if (parse_gbm_format(config->gbm_format, DRM_FORMAT_XRGB8888, &b->gbm_format) < 0)
 		goto err_compositor;
@@ -2999,10 +3032,10 @@ err_sprite:
 	destroy_sprites(b);
 err_udev_dev:
 	udev_device_unref(drm_device);
-err_launcher:
-	weston_launcher_destroy(compositor->launcher);
 err_udev:
 	udev_unref(b->udev);
+err_launcher:
+	weston_launcher_destroy(compositor->launcher);
 err_compositor:
 	weston_compositor_shutdown(compositor);
 	free(b);

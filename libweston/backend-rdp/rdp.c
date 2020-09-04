@@ -213,6 +213,9 @@ rdp_peer_refresh_rfx(pixman_region32_t *damage, pixman_image_t *image, freerdp_p
 #else
 	memset(&cmd, 0, sizeof(*cmd));
 #endif
+#ifdef HAVE_SURFCMD_CMDTYPE
+	cmd.cmdType = CMDTYPE_STREAM_SURFACE_BITS;
+#endif
 	cmd.destLeft = damage->extents.x1;
 	cmd.destTop = damage->extents.y1;
 	cmd.destRight = damage->extents.x2;
@@ -270,7 +273,9 @@ rdp_peer_refresh_nsc(pixman_region32_t *damage, pixman_image_t *image, freerdp_p
 #else
 	memset(cmd, 0, sizeof(*cmd));
 #endif
-
+#ifdef HAVE_SURFCMD_CMDTYPE
+	cmd.cmdType = CMDTYPE_SET_SURFACE_BITS;
+#endif
 	cmd.destLeft = damage->extents.x1;
 	cmd.destTop = damage->extents.y1;
 	cmd.destRight = damage->extents.x2;
@@ -326,6 +331,9 @@ rdp_peer_refresh_raw(pixman_region32_t *region, pixman_image_t *image, freerdp_p
 	update->SurfaceFrameMarker(peer->context, &marker);
 
 	memset(&cmd, 0, sizeof(cmd));
+#ifdef HAVE_SURFCMD_CMDTYPE
+	cmd.cmdType = CMDTYPE_SET_SURFACE_BITS;
+#endif
 	SURFACE_BPP(cmd) = 32;
 	SURFACE_CODECID(cmd) = 0;
 
@@ -468,6 +476,7 @@ rdp_switch_mode(struct weston_output *output, struct weston_mode *target_mode)
 	rdpSettings *settings;
 	pixman_image_t *new_shadow_buffer;
 	struct weston_mode *local_mode;
+	const struct pixman_renderer_output_options options = { };
 
 	local_mode = ensure_matching_mode(output, target_mode);
 	if (!local_mode) {
@@ -484,7 +493,7 @@ rdp_switch_mode(struct weston_output *output, struct weston_mode *target_mode)
 	output->current_mode->flags |= WL_OUTPUT_MODE_CURRENT;
 
 	pixman_renderer_output_destroy(output);
-	pixman_renderer_output_create(output, 0);
+	pixman_renderer_output_create(output, &options);
 
 	new_shadow_buffer = pixman_image_create_bits(PIXMAN_x8r8g8b8, target_mode->width,
 			target_mode->height, 0, target_mode->width * 4);
@@ -560,6 +569,9 @@ rdp_output_enable(struct weston_output *base)
 	struct rdp_output *output = to_rdp_output(base);
 	struct rdp_backend *b = to_rdp_backend(base->compositor);
 	struct wl_event_loop *loop;
+	const struct pixman_renderer_output_options options = {
+		.use_shadow = true,
+	};
 
 	output->shadow_surface = pixman_image_create_bits(PIXMAN_x8r8g8b8,
 							  output->base.current_mode->width,
@@ -571,8 +583,7 @@ rdp_output_enable(struct weston_output *base)
 		return -1;
 	}
 
-	if (pixman_renderer_output_create(&output->base,
-					  PIXMAN_RENDERER_OUTPUT_USE_SHADOW) < 0) {
+	if (pixman_renderer_output_create(&output->base, &options) < 0) {
 		pixman_image_unref(output->shadow_surface);
 		return -1;
 	}
@@ -755,8 +766,11 @@ rdp_peer_context_new(freerdp_peer* client, RdpPeerContext* context)
 	if (!context->nsc_context)
 		goto out_error_nsc;
 
+#ifdef HAVE_NSC_CONTEXT_SET_PARAMETERS
+	nsc_context_set_parameters(context->nsc_context, NSC_COLOR_FORMAT, DEFAULT_PIXEL_FORMAT);
+#else
 	nsc_context_set_pixel_format(context->nsc_context, DEFAULT_PIXEL_FORMAT);
-
+#endif
 	context->encode_stream = Stream_New(NULL, 65536);
 	if (!context->encode_stream)
 		goto out_error_stream;

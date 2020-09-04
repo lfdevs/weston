@@ -1,6 +1,6 @@
 project('weston',
 	'c',
-	version: '8.0.0',
+	version: '9.0.0',
 	default_options: [
 		'warning_level=3',
 		'c_std=gnu99',
@@ -10,7 +10,7 @@ project('weston',
 	license: 'MIT/Expat',
 )
 
-libweston_major = 8
+libweston_major = 9
 
 # libweston_revision is manufactured to follow the autotools build's
 # library file naming, thanks to libtool
@@ -58,6 +58,7 @@ cc = meson.get_compiler('c')
 
 global_args = []
 global_args_maybe = [
+	'-Wmissing-prototypes',
 	'-Wno-unused-parameter',
 	'-Wno-shift-negative-value', # required due to Pixman
 	'-Wno-missing-field-initializers',
@@ -114,6 +115,8 @@ config_h.set_quoted('LIBEXECDIR', dir_libexec)
 config_h.set_quoted('MODULEDIR', dir_module_weston)
 config_h.set_quoted('LIBWESTON_MODULEDIR', dir_module_libweston)
 
+config_h.set10('TEST_GL_RENDERER', get_option('test-gl-renderer'))
+
 backend_default = get_option('backend-default')
 if backend_default == 'auto'
 	foreach b : [ 'headless', 'fbdev', 'x11', 'wayland', 'drm' ]
@@ -155,6 +158,7 @@ subdir('compositor')
 subdir('desktop-shell')
 subdir('fullscreen-shell')
 subdir('ivi-shell')
+subdir('kiosk-shell')
 subdir('remoting')
 subdir('pipewire')
 subdir('clients')

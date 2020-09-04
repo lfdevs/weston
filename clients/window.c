@@ -1832,14 +1832,14 @@ widget_cairo_update_transform(struct widget *widget, cairo_t *cr)
 		translate_y = 0;
 		break;
 	case WL_OUTPUT_TRANSFORM_90:
-		angle = M_PI_2;
-		translate_x = surface_height;
-		translate_y = 0;
+		angle = M_PI + M_PI_2;
+		translate_x = 0;
+		translate_y = surface_width;
 		break;
 	case WL_OUTPUT_TRANSFORM_FLIPPED_90:
-		angle = M_PI_2;
-		translate_x = surface_height;
-		translate_y = surface_width;
+		angle = M_PI + M_PI_2;
+		translate_x = 0;
+		translate_y = 0;
 		break;
 	case WL_OUTPUT_TRANSFORM_180:
 		angle = M_PI;
@@ -1852,14 +1852,14 @@ widget_cairo_update_transform(struct widget *widget, cairo_t *cr)
 		translate_y = surface_height;
 		break;
 	case WL_OUTPUT_TRANSFORM_270:
-		angle = M_PI + M_PI_2;
-		translate_x = 0;
-		translate_y = surface_width;
+		angle = M_PI_2;
+		translate_x = surface_height;
+		translate_y = 0;
 		break;
 	case WL_OUTPUT_TRANSFORM_FLIPPED_270:
-		angle = M_PI + M_PI_2;
-		translate_x = 0;
-		translate_y = 0;
+		angle = M_PI_2;
+		translate_x = surface_height;
+		translate_y = surface_width;
 		break;
 	}
 
@@ -2577,6 +2577,10 @@ window_frame_create(struct window *window, void *data)
 	frame = xzalloc(sizeof *frame);
 	frame->frame = frame_create(window->display->theme, 0, 0,
 	                            buttons, window->title, NULL);
+	if (!frame->frame) {
+		free(frame);
+		return NULL;
+	}
 
 	frame->widget = window_add_widget(window, frame);
 	frame->child = widget_add_widget(frame->widget, data);
@@ -3436,13 +3440,15 @@ touch_handle_cancel(void *data, struct wl_touch *wl_touch)
 	}
 }
 
-void touch_handle_shape(void *data, struct wl_touch *wl_touch, int32_t id,
-			 wl_fixed_t major, wl_fixed_t minor)
+static void
+touch_handle_shape(void *data, struct wl_touch *wl_touch, int32_t id,
+			wl_fixed_t major, wl_fixed_t minor)
 {
 }
 
-void touch_handle_orientation(void *data, struct wl_touch *wl_touch, int32_t id,
-			       wl_fixed_t orientation)
+static void
+touch_handle_orientation(void *data, struct wl_touch *wl_touch, int32_t id,
+			wl_fixed_t orientation)
 {
 }
 
@@ -6238,7 +6244,7 @@ display_create(int *argc, char *argv[])
 		return NULL;
 	}
 
-	d->xkb_context = xkb_context_new(0);
+	d->xkb_context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
 	if (d->xkb_context == NULL) {
 		fprintf(stderr, "Failed to create XKB context\n");
 		free(d);

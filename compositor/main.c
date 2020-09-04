@@ -171,21 +171,27 @@ custom_handler(const char *fmt, va_list arg)
 	weston_log_scope_vprintf(log_scope, fmt, arg);
 }
 
-static void
+static bool
 weston_log_file_open(const char *filename)
 {
 	wl_log_set_handler_server(custom_handler);
 
 	if (filename != NULL) {
 		weston_logfile = fopen(filename, "a");
-		if (weston_logfile)
+		if (weston_logfile) {
 			os_fd_set_cloexec(fileno(weston_logfile));
+		} else {
+			fprintf(stderr, "Failed to open %s: %s\n", filename, strerror(errno));
+			return false;
+		}
 	}
 
 	if (weston_logfile == NULL)
 		weston_logfile = stderr;
 	else
 		setvbuf(weston_logfile, NULL, _IOLBF, 256);
+
+	return true;
 }
 
 static void
@@ -670,7 +676,8 @@ usage(int error_code)
 		"  --tty=TTY\t\tThe tty to use\n"
 		"  --drm-device=CARD\tThe DRM device to use, e.g. \"card0\".\n"
 		"  --use-pixman\t\tUse the pixman (CPU) renderer\n"
-		"  --current-mode\tPrefer current KMS mode over EDID preferred mode\n\n");
+		"  --current-mode\tPrefer current KMS mode over EDID preferred mode\n"
+		"  --continue-without-input\tAllow the compositor to start without input devices\n\n");
 #endif
 
 #if defined(BUILD_FBDEV_COMPOSITOR)
@@ -687,6 +694,7 @@ usage(int error_code)
 		"Options for headless-backend.so:\n\n"
 		"  --width=WIDTH\t\tWidth of memory surface\n"
 		"  --height=HEIGHT\tHeight of memory surface\n"
+		"  --scale=SCALE\t\tScale factor of output\n"
 		"  --transform=TR\tThe output transformation, TR is one of:\n"
 		"\tnormal 90 180 270 flipped flipped-90 flipped-180 flipped-270\n"
 		"  --use-pixman\t\tUse the pixman (CPU) renderer (default: no rendering)\n"
@@ -1107,14 +1115,14 @@ weston_choose_default_backend(void)
 }
 
 static const struct { const char *name; uint32_t token; } transforms[] = {
-	{ "normal",     WL_OUTPUT_TRANSFORM_NORMAL },
-	{ "90",         WL_OUTPUT_TRANSFORM_90 },
-	{ "180",        WL_OUTPUT_TRANSFORM_180 },
-	{ "270",        WL_OUTPUT_TRANSFORM_270 },
-	{ "flipped",    WL_OUTPUT_TRANSFORM_FLIPPED },
-	{ "flipped-90", WL_OUTPUT_TRANSFORM_FLIPPED_90 },
-	{ "flipped-180", WL_OUTPUT_TRANSFORM_FLIPPED_180 },
-	{ "flipped-270", WL_OUTPUT_TRANSFORM_FLIPPED_270 },
+	{ "normal",             WL_OUTPUT_TRANSFORM_NORMAL },
+	{ "rotate-90",          WL_OUTPUT_TRANSFORM_90 },
+	{ "rotate-180",         WL_OUTPUT_TRANSFORM_180 },
+	{ "rotate-270",         WL_OUTPUT_TRANSFORM_270 },
+	{ "flipped",            WL_OUTPUT_TRANSFORM_FLIPPED },
+	{ "flipped-rotate-90",  WL_OUTPUT_TRANSFORM_FLIPPED_90 },
+	{ "flipped-rotate-180", WL_OUTPUT_TRANSFORM_FLIPPED_180 },
+	{ "flipped-rotate-270", WL_OUTPUT_TRANSFORM_FLIPPED_270 },
 };
 
 WL_EXPORT int
@@ -1207,23 +1215,25 @@ wet_output_set_scale(struct weston_output *output,
 /* UINT32_MAX is treated as invalid because 0 is a valid
  * enumeration value and the parameter is unsigned
  */
-static void
+static int
 wet_output_set_transform(struct weston_output *output,
 			 struct weston_config_section *section,
 			 uint32_t default_transform,
 			 uint32_t parsed_transform)
 {
-	char *t;
+	char *t = NULL;
 	uint32_t transform = default_transform;
 
 	if (section) {
 		weston_config_section_get_string(section,
-						 "transform", &t, "normal");
+						 "transform", &t, NULL);
+	}
 
+	if (t) {
 		if (weston_parse_transform(t, &transform) < 0) {
 			weston_log("Invalid transform \"%s\" for output %s\n",
 				   t, output->name);
-			transform = default_transform;
+			return -1;
 		}
 		free(t);
 	}
@@ -1232,6 +1242,8 @@ wet_output_set_transform(struct weston_output *output,
 		transform = parsed_transform;
 
 	weston_output_set_transform(output, transform);
+
+	return 0;
 }
 
 static void
@@ -1293,7 +1305,10 @@ wet_configure_windowed_output_from_config(struct weston_output *output,
 		height = parsed_options->height;
 
 	wet_output_set_scale(output, section, defaults->scale, parsed_options->scale);
-	wet_output_set_transform(output, section, defaults->transform, parsed_options->transform);
+	if (wet_output_set_transform(output, section, defaults->transform,
+				     parsed_options->transform) < 0) {
+		return -1;
+	}
 
 	if (api->output_set_size(output, width, height) < 0) {
 		weston_log("Cannot configure output \"%s\" using weston_windowed_output_api.\n",
@@ -1692,6 +1707,7 @@ drm_backend_output_configure(struct weston_output *output,
 	const struct weston_drm_output_api *api;
 	enum weston_drm_backend_output_mode mode =
 		WESTON_DRM_BACKEND_OUTPUT_PREFERRED;
+	uint32_t transform = WL_OUTPUT_TRANSFORM_NORMAL;
 	char *s;
 	char *modeline = NULL;
 	char *gbm_format = NULL;
@@ -1723,8 +1739,16 @@ drm_backend_output_configure(struct weston_output *output,
 	}
 	free(modeline);
 
+	if (count_remaining_heads(output, NULL) == 1) {
+		struct weston_head *head = weston_output_get_first_head(output);
+		transform = weston_head_get_transform(head);
+	}
+
 	wet_output_set_scale(output, section, 1, 0);
-	wet_output_set_transform(output, section, WL_OUTPUT_TRANSFORM_NORMAL, UINT32_MAX);
+	if (wet_output_set_transform(output, section, transform,
+				     UINT32_MAX) < 0) {
+		return -1;
+	}
 
 	weston_config_section_get_string(section,
 					 "gbm-format", &gbm_format, NULL);
@@ -2219,8 +2243,11 @@ drm_backend_remoted_output_configure(struct weston_output *output,
 	}
 
 	wet_output_set_scale(output, section, 1, 0);
-	wet_output_set_transform(output, section, WL_OUTPUT_TRANSFORM_NORMAL,
-				 UINT32_MAX);
+	if (wet_output_set_transform(output, section,
+				     WL_OUTPUT_TRANSFORM_NORMAL,
+				     UINT32_MAX) < 0) {
+		return -1;
+	};
 
 	weston_config_section_get_string(section, "gbm-format", &gbm_format,
 					 NULL);
@@ -2367,8 +2394,11 @@ drm_backend_pipewire_output_configure(struct weston_output *output,
 	}
 
 	wet_output_set_scale(output, section, 1, 0);
-	wet_output_set_transform(output, section, WL_OUTPUT_TRANSFORM_NORMAL,
-				 UINT32_MAX);
+	if (wet_output_set_transform(output, section,
+				     WL_OUTPUT_TRANSFORM_NORMAL,
+				     UINT32_MAX) < 0) {
+		return -1;
+	}
 
 	weston_config_section_get_string(section, "seat", &seat, "");
 
@@ -2494,6 +2524,7 @@ load_drm_backend(struct weston_compositor *c,
 		{ WESTON_OPTION_STRING, "drm-device", 0, &config.specific_device },
 		{ WESTON_OPTION_BOOLEAN, "current-mode", 0, &wet->drm_use_current_mode },
 		{ WESTON_OPTION_BOOLEAN, "use-pixman", 0, &config.use_pixman },
+		{ WESTON_OPTION_BOOLEAN, "continue-without-input", 0, &config.continue_without_input },
 	};
 
 	parse_options(options, ARRAY_LENGTH(options), argc, argv);
@@ -2550,7 +2581,7 @@ load_headless_backend(struct weston_compositor *c,
 	const struct weston_windowed_output_api *api;
 	struct weston_headless_backend_config config = {{ 0, }};
 	struct weston_config_section *section;
-	bool no_outputs;
+	bool no_outputs = false;
 	int ret = 0;
 	char *transform = NULL;
 
@@ -2567,6 +2598,7 @@ load_headless_backend(struct weston_compositor *c,
 	const struct weston_option options[] = {
 		{ WESTON_OPTION_INTEGER, "width", 0, &parsed_options->width },
 		{ WESTON_OPTION_INTEGER, "height", 0, &parsed_options->height },
+		{ WESTON_OPTION_INTEGER, "scale", 0, &parsed_options->scale },
 		{ WESTON_OPTION_BOOLEAN, "use-pixman", 0, &config.use_pixman },
 		{ WESTON_OPTION_BOOLEAN, "use-gl", 0, &config.use_gl },
 		{ WESTON_OPTION_STRING, "transform", 0, &transform },
@@ -2578,7 +2610,7 @@ load_headless_backend(struct weston_compositor *c,
 	if (transform) {
 		if (weston_parse_transform(transform, &parsed_options->transform) < 0) {
 			weston_log("Invalid transform \"%s\"\n", transform);
-			parsed_options->transform = UINT32_MAX;
+			return -1;
 		}
 		free(transform);
 	}
@@ -2709,7 +2741,12 @@ fbdev_backend_output_configure(struct weston_output *output)
 
 	section = weston_config_get_section(wc, "output", "name", "fbdev");
 
-	wet_output_set_transform(output, section, WL_OUTPUT_TRANSFORM_NORMAL, UINT32_MAX);
+	if (wet_output_set_transform(output, section,
+				     WL_OUTPUT_TRANSFORM_NORMAL,
+				     UINT32_MAX) < 0) {
+		return -1;
+	}
+
 	weston_output_set_scale(output, 1);
 
 	return 0;
@@ -3156,16 +3193,18 @@ wet_main(int argc, char *argv[])
 		return EXIT_SUCCESS;
 	}
 
-	log_ctx = weston_log_ctx_compositor_create();
+	log_ctx = weston_log_ctx_create();
 	if (!log_ctx) {
 		fprintf(stderr, "Failed to initialize weston debug framework.\n");
 		return EXIT_FAILURE;
 	}
 
-	log_scope = weston_compositor_add_log_scope(log_ctx, "log",
+	log_scope = weston_log_ctx_add_log_scope(log_ctx, "log",
 			"Weston and Wayland log\n", NULL, NULL, NULL);
 
-	weston_log_file_open(log);
+	if (!weston_log_file_open(log))
+		return EXIT_FAILURE;
+
 	weston_log_set_handler(vlog, vlog_continue);
 
 	logger = weston_log_subscriber_create_log(weston_logfile);
@@ -3248,10 +3287,9 @@ wet_main(int argc, char *argv[])
 	segv_compositor = wet.compositor;
 
 	protocol_scope =
-		weston_compositor_add_log_scope(log_ctx,
-						"proto",
-						"Wayland protocol dump for all clients.\n",
-						 NULL, NULL, NULL);
+		weston_log_ctx_add_log_scope(log_ctx, "proto",
+					     "Wayland protocol dump for all clients.\n",
+					     NULL, NULL, NULL);
 
 	protologger = wl_display_add_protocol_logger(display,
 						     protocol_log_fn,
@@ -3376,16 +3414,14 @@ out:
 	if (protologger)
 		wl_protocol_logger_destroy(protologger);
 
-	weston_compositor_log_scope_destroy(protocol_scope);
-	protocol_scope = NULL;
-	weston_compositor_tear_down(wet.compositor);
-
-	weston_compositor_log_scope_destroy(log_scope);
-	log_scope = NULL;
-	weston_log_ctx_compositor_destroy(wet.compositor);
 	weston_compositor_destroy(wet.compositor);
-	weston_log_subscriber_destroy_log(logger);
-	weston_log_subscriber_destroy_flight_rec(flight_rec);
+	weston_log_scope_destroy(protocol_scope);
+	protocol_scope = NULL;
+	weston_log_scope_destroy(log_scope);
+	log_scope = NULL;
+	weston_log_subscriber_destroy(logger);
+	weston_log_subscriber_destroy(flight_rec);
+	weston_log_ctx_destroy(log_ctx);
 
 out_signals:
 	for (i = ARRAY_LENGTH(signals) - 1; i >= 0; i--)

@@ -2,7 +2,8 @@
 
 override_dh_auto_configure:
 	dh_auto_configure -- -Dscreenshare=true \
-		-Dsystemd=true -Dsimple-dmabuf-drm=auto
+		-Dsystemd=true -Dsimple-dmabuf-drm=auto \
+		-Dpipewire=false
 
 override_dh_auto_test:
 	# the test suite does not 100% pass in headless mode
@@ -12,10 +13,10 @@ override_dh_missing:
 	dh_missing --fail-missing -X.la
 
 override_dh_makeshlibs:
-	dh_makeshlibs -Xlibweston-8/ -- -c4 -ldebian/weston/usr/lib/$(DEB_HOST_GNU_TYPE)/weston/
+	dh_makeshlibs -Xlibweston-9/ -- -c4 -ldebian/weston/usr/lib/$(DEB_TARGET_MULTIARCH)/weston/
 
 override_dh_shlibdeps:
-	dh_shlibdeps -O--buildsystem=meson -- -ldebian/weston/usr/lib/$(DEB_HOST_GNU_TYPE)/weston/
+	dh_shlibdeps -O--buildsystem=meson -- -ldebian/weston/usr/lib/$(DEB_TARGET_MULTIARCH)/weston/
 
 override_dh_fixperms:
 	dh_fixperms -Xusr/bin/weston-launch
@@ -24,7 +25,7 @@ override_dh_fixperms:
 override_dh_install:
 	sed -e '/libdir=/d' \
 	    -e '/includedir=/d' \
-	    -i debian/tmp/usr/share/pkgconfig/libweston-8-protocols.pc
+	    -i debian/tmp/usr/share/pkgconfig/libweston-9-protocols.pc
 	dh_install
 
 %:

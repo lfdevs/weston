@@ -131,6 +131,15 @@ struct dmabuf_image {
 	struct gl_shader *shader;
 };
 
+struct dmabuf_format {
+	uint32_t format;
+	struct wl_list link;
+
+	uint64_t *modifiers;
+	unsigned *external_only;
+	int num_modifiers;
+};
+
 struct yuv_plane_descriptor {
 	int width_divisor;
 	int height_divisor;
@@ -208,8 +217,6 @@ struct timeline_render_point {
 	struct weston_output *output;
 	struct wl_event_source *event_source;
 };
-
-static PFNEGLGETPLATFORMDISPLAYEXTPROC get_platform_display = NULL;
 
 static inline const char *
 dump_format(uint32_t format, char out[4])
@@ -2221,9 +2228,75 @@ import_yuv_dmabuf(struct gl_renderer *gr,
 	return true;
 }
 
-static GLenum
-choose_texture_target(struct dmabuf_attributes *attributes)
+static void
+gl_renderer_query_dmabuf_modifiers_full(struct gl_renderer *gr, int format,
+					uint64_t **modifiers,
+					unsigned **external_only,
+					int *num_modifiers);
+
+static struct dmabuf_format*
+dmabuf_format_create(struct gl_renderer *gr, uint32_t format)
 {
+	struct dmabuf_format *dmabuf_format;
+
+	dmabuf_format = calloc(1, sizeof(struct dmabuf_format));
+	if (!dmabuf_format)
+		return NULL;
+
+	dmabuf_format->format = format;
+
+	gl_renderer_query_dmabuf_modifiers_full(gr, format,
+			&dmabuf_format->modifiers,
+			&dmabuf_format->external_only,
+			&dmabuf_format->num_modifiers);
+
+	if (dmabuf_format->num_modifiers == 0) {
+		free(dmabuf_format);
+		return NULL;
+	}
+
+	wl_list_insert(&gr->dmabuf_formats, &dmabuf_format->link);
+	return dmabuf_format;
+}
+
+static void
+dmabuf_format_destroy(struct dmabuf_format *format)
+{
+	free(format->modifiers);
+	free(format->external_only);
+	wl_list_remove(&format->link);
+	free(format);
+}
+
+static GLenum
+choose_texture_target(struct gl_renderer *gr,
+		      struct dmabuf_attributes *attributes)
+{
+	struct dmabuf_format *tmp, *format = NULL;
+
+	wl_list_for_each(tmp, &gr->dmabuf_formats, link) {
+		if (tmp->format == attributes->format) {
+			format = tmp;
+			break;
+		}
+	}
+
+	if (!format)
+		format = dmabuf_format_create(gr, attributes->format);
+
+	if (format) {
+		int i;
+
+		for (i = 0; i < format->num_modifiers; ++i) {
+			if (format->modifiers[i] == attributes->modifier[0]) {
+				if(format->external_only[i])
+					return GL_TEXTURE_EXTERNAL_OES;
+				else
+					return GL_TEXTURE_2D;
+			}
+		}
+	}
+
 	if (attributes->n_planes > 1)
 		return GL_TEXTURE_EXTERNAL_OES;
 
@@ -2255,7 +2328,7 @@ import_dmabuf(struct gl_renderer *gr,
 		image->num_images = 1;
 		image->images[0] = egl_image;
 		image->import_type = IMPORT_TYPE_DIRECT;
-		image->target = choose_texture_target(&dmabuf->attributes);
+		image->target = choose_texture_target(gr, &dmabuf->attributes);
 
 		switch (image->target) {
 		case GL_TEXTURE_2D:
@@ -2323,11 +2396,11 @@ gl_renderer_query_dmabuf_formats(struct weston_compositor *wc,
 }
 
 static void
-gl_renderer_query_dmabuf_modifiers(struct weston_compositor *wc, int format,
+gl_renderer_query_dmabuf_modifiers_full(struct gl_renderer *gr, int format,
 					uint64_t **modifiers,
+					unsigned **external_only,
 					int *num_modifiers)
 {
-	struct gl_renderer *gr = get_renderer(wc);
 	int num;
 
 	assert(gr->has_dmabuf_import);
@@ -2345,14 +2418,36 @@ gl_renderer_query_dmabuf_modifiers(struct weston_compositor *wc, int format,
 		*num_modifiers = 0;
 		return;
 	}
+	if (external_only) {
+		*external_only = calloc(num, sizeof(unsigned));
+		if (*external_only == NULL) {
+			*num_modifiers = 0;
+			free(*modifiers);
+			return;
+		}
+	}
 	if (!gr->query_dmabuf_modifiers(gr->egl_display, format,
-				num, *modifiers, NULL, &num)) {
+				num, *modifiers, external_only ?
+				*external_only : NULL, &num)) {
 		*num_modifiers = 0;
 		free(*modifiers);
+		if (external_only)
+			free(*external_only);
 		return;
 	}
 
 	*num_modifiers = num;
+}
+
+static void
+gl_renderer_query_dmabuf_modifiers(struct weston_compositor *wc, int format,
+					uint64_t **modifiers,
+					int *num_modifiers)
+{
+	struct gl_renderer *gr = get_renderer(wc);
+
+	gl_renderer_query_dmabuf_modifiers_full(gr, format, modifiers, NULL,
+			num_modifiers);
 }
 
 static bool
@@ -2439,7 +2534,6 @@ gl_renderer_attach_dmabuf(struct weston_surface *surface,
 	struct gl_surface_state *gs = get_surface_state(surface);
 	struct dmabuf_image *image;
 	int i;
-	int ret;
 
 	if (!gr->has_dmabuf_import) {
 		linux_dmabuf_buffer_send_server_error(dmabuf,
@@ -2485,10 +2579,8 @@ gl_renderer_attach_dmabuf(struct weston_surface *surface,
 	/* The dmabuf_image should have been created during the import */
 	assert(image != NULL);
 
-	for (i = 0; i < image->num_images; ++i) {
-		ret = egl_image_unref(image->images[i]);
-		assert(ret == 0);
-	}
+	for (i = 0; i < image->num_images; ++i)
+		egl_image_unref(image->images[i]);
 
 	if (!import_known_dmabuf(gr, image)) {
 		linux_dmabuf_buffer_send_server_error(dmabuf, "EGL dmabuf import failed");
@@ -2970,6 +3062,8 @@ shader_init(struct gl_shader *shader, struct gl_renderer *renderer,
 
 	shader->vertex_shader =
 		compile_shader(GL_VERTEX_SHADER, 1, &vertex_source);
+	if (shader->vertex_shader == GL_NONE)
+		return -1;
 
 	if (renderer->fragment_shader_debug) {
 		sources[0] = fragment_source;
@@ -2984,6 +3078,8 @@ shader_init(struct gl_shader *shader, struct gl_renderer *renderer,
 
 	shader->fragment_shader =
 		compile_shader(GL_FRAGMENT_SHADER, count, sources);
+	if (shader->fragment_shader == GL_NONE)
+		return -1;
 
 	shader->program = glCreateProgram();
 	glAttachShader(shader->program, shader->vertex_shader);
@@ -3021,8 +3117,8 @@ shader_release(struct gl_shader *shader)
 	shader->program = 0;
 }
 
-static void
-log_extensions(const char *name, const char *extensions)
+void
+gl_renderer_log_extensions(const char *name, const char *extensions)
 {
 	const char *p, *end;
 	int l;
@@ -3059,7 +3155,7 @@ log_egl_info(EGLDisplay egldpy)
 	weston_log("EGL client APIs: %s\n", str ? str : "(null)");
 
 	str = eglQueryString(egldpy, EGL_EXTENSIONS);
-	log_extensions("EGL extensions", str ? str : "(null)");
+	gl_renderer_log_extensions("EGL extensions", str ? str : "(null)");
 }
 
 static void
@@ -3080,7 +3176,7 @@ log_gl_info(void)
 	weston_log("GL renderer: %s\n", str ? str : "(null)");
 
 	str = (char *)glGetString(GL_EXTENSIONS);
-	log_extensions("GL extensions", str ? str : "(null)");
+	gl_renderer_log_extensions("GL extensions", str ? str : "(null)");
 }
 
 static void
@@ -3170,10 +3266,7 @@ gl_renderer_output_create(struct weston_output *output,
 
 static int
 gl_renderer_output_window_create(struct weston_output *output,
-				 EGLNativeWindowType window_for_legacy,
-				 void *window_for_platform,
-				 const uint32_t *drm_formats,
-				 unsigned drm_formats_count)
+				 const struct gl_renderer_output_options *options)
 {
 	struct weston_compositor *ec = output->compositor;
 	struct gl_renderer *gr = get_renderer(ec);
@@ -3181,10 +3274,10 @@ gl_renderer_output_window_create(struct weston_output *output,
 	int ret = 0;
 
 	egl_surface = gl_renderer_create_window_surface(gr,
-							window_for_legacy,
-							window_for_platform,
-							drm_formats,
-							drm_formats_count);
+							options->window_for_legacy,
+							options->window_for_platform,
+							options->drm_formats,
+							options->drm_formats_count);
 	if (egl_surface == EGL_NO_SURFACE) {
 		weston_log("failed to create egl surface\n");
 		return -1;
@@ -3199,24 +3292,21 @@ gl_renderer_output_window_create(struct weston_output *output,
 
 static int
 gl_renderer_output_pbuffer_create(struct weston_output *output,
-				  int width,
-				  int height,
-				  const uint32_t *drm_formats,
-				  unsigned drm_formats_count)
+				  const struct gl_renderer_pbuffer_options *options)
 {
 	struct gl_renderer *gr = get_renderer(output->compositor);
 	EGLConfig pbuffer_config;
 	EGLSurface egl_surface;
 	int ret;
 	EGLint pbuffer_attribs[] = {
-		EGL_WIDTH, width,
-		EGL_HEIGHT, height,
+		EGL_WIDTH, options->width,
+		EGL_HEIGHT, options->height,
 		EGL_NONE
 	};
 
 	pbuffer_config = gl_renderer_get_egl_config(gr, EGL_PBUFFER_BIT,
-						    drm_formats,
-						    drm_formats_count);
+						    options->drm_formats,
+						    options->drm_formats_count);
 	if (pbuffer_config == EGL_NO_CONFIG_KHR) {
 		weston_log("failed to choose EGL config for PbufferSurface\n");
 		return -1;
@@ -3293,6 +3383,7 @@ gl_renderer_destroy(struct weston_compositor *ec)
 {
 	struct gl_renderer *gr = get_renderer(ec);
 	struct dmabuf_image *image, *next;
+	struct dmabuf_format *format, *next_format;
 
 	wl_signal_emit(&gr->destroy_signal, gr);
 
@@ -3307,6 +3398,9 @@ gl_renderer_destroy(struct weston_compositor *ec)
 
 	wl_list_for_each_safe(image, next, &gr->dmabuf_images, link)
 		dmabuf_image_destroy(image);
+
+	wl_list_for_each_safe(format, next_format, &gr->dmabuf_formats, link)
+		dmabuf_format_destroy(format);
 
 	if (gr->dummy_surface != EGL_NO_SURFACE)
 		weston_platform_destroy_egl_surface(gr->egl_display,
@@ -3326,85 +3420,6 @@ gl_renderer_destroy(struct weston_compositor *ec)
 		weston_binding_destroy(gr->fan_binding);
 
 	free(gr);
-}
-
-/** Checks whether a platform EGL client extension is supported
- *
- * \param ec The weston compositor
- * \param extension_suffix The EGL client extension suffix
- * \return 1 if supported, 0 if using fallbacks, -1 unsupported
- *
- * This function checks whether a specific platform_* extension is supported
- * by EGL.
- *
- * The extension suffix should be the suffix of the platform extension (that
- * specifies a platform argument as defined in EGL_EXT_platform_base). For
- * example, passing "foo" will check whether either "EGL_KHR_platform_foo",
- * "EGL_EXT_platform_foo", or "EGL_MESA_platform_foo" is supported.
- *
- * The return value is 1:
- *   - if the supplied EGL client extension is supported.
- * The return value is 0:
- *   - if the platform_base client extension isn't supported so will
- *     fallback to eglGetDisplay and friends.
- * The return value is -1:
- *   - if the supplied EGL client extension is not supported.
- */
-static int
-gl_renderer_supports(struct weston_compositor *ec,
-		     const char *extension_suffix)
-{
-	static const char *extensions = NULL;
-	char s[64];
-
-	if (!extensions) {
-		extensions = (const char *) eglQueryString(
-			EGL_NO_DISPLAY, EGL_EXTENSIONS);
-
-		if (!extensions)
-			return 0;
-
-		log_extensions("EGL client extensions",
-			       extensions);
-	}
-
-	if (!weston_check_egl_extension(extensions, "EGL_EXT_platform_base"))
-		return 0;
-
-	snprintf(s, sizeof s, "EGL_KHR_platform_%s", extension_suffix);
-	if (weston_check_egl_extension(extensions, s))
-		return 1;
-
-	snprintf(s, sizeof s, "EGL_EXT_platform_%s", extension_suffix);
-	if (weston_check_egl_extension(extensions, s))
-		return 1;
-
-	snprintf(s, sizeof s, "EGL_MESA_platform_%s", extension_suffix);
-	if (weston_check_egl_extension(extensions, s))
-		return 1;
-
-	/* at this point we definitely have some platform extensions but
-	 * haven't found the supplied platform, so chances are it's
-	 * not supported. */
-
-	return -1;
-}
-
-static const char *
-platform_to_extension(EGLenum platform)
-{
-	switch (platform) {
-	case EGL_PLATFORM_GBM_KHR:
-		return "gbm";
-	case EGL_PLATFORM_WAYLAND_KHR:
-		return "wayland";
-	case EGL_PLATFORM_X11_KHR:
-		return "x11";
-	case EGL_PLATFORM_SURFACELESS_MESA:
-		return "surfaceless";
-	default:
-		assert(0 && "bad EGL platform enum");
-	}
 }
 
 static void
@@ -3430,8 +3445,12 @@ gl_renderer_create_pbuffer_surface(struct gl_renderer *gr) {
 		EGL_NONE
 	};
 
-	pbuffer_config = gl_renderer_get_egl_config(gr, EGL_PBUFFER_BIT,
-						    NULL, 0);
+	pbuffer_config = gr->egl_config;
+	if (pbuffer_config == EGL_NO_CONFIG_KHR) {
+		pbuffer_config =
+			gl_renderer_get_egl_config(gr, EGL_PBUFFER_BIT,
+						   NULL, 0);
+	}
 	if (pbuffer_config == EGL_NO_CONFIG_KHR) {
 		weston_log("failed to choose EGL config for PbufferSurface\n");
 		return -1;
@@ -3451,30 +3470,18 @@ gl_renderer_create_pbuffer_surface(struct gl_renderer *gr) {
 
 static int
 gl_renderer_display_create(struct weston_compositor *ec,
-			   EGLenum platform,
-			   void *native_display,
-			   EGLint egl_surface_type,
-			   const uint32_t *drm_formats,
-			   unsigned drm_formats_count)
+			   const struct gl_renderer_display_options *options)
 {
 	struct gl_renderer *gr;
-	EGLint major, minor;
-	int supports = 0;
-
-	if (platform) {
-		supports = gl_renderer_supports(
-			ec, platform_to_extension(platform));
-		if (supports < 0)
-			return -1;
-	}
-
-	/* Surfaceless is unusable without platform_base extension */
-	if (supports == 0 && platform == EGL_PLATFORM_SURFACELESS_MESA)
-		return -1;
 
 	gr = zalloc(sizeof *gr);
 	if (gr == NULL)
 		return -1;
+
+	gr->platform = options->egl_platform;
+
+	if (gl_renderer_setup_egl_client_extensions(gr) < 0)
+		goto fail;
 
 	gr->base.read_pixels = gl_renderer_read_pixels;
 	gr->base.repaint_output = gl_renderer_repaint_output;
@@ -3485,43 +3492,9 @@ gl_renderer_display_create(struct weston_compositor *ec,
 	gr->base.surface_get_content_size =
 		gl_renderer_surface_get_content_size;
 	gr->base.surface_copy_content = gl_renderer_surface_copy_content;
-	gr->platform = platform;
-	gr->egl_display = NULL;
 
-	/* extension_suffix is supported */
-	if (supports) {
-		if (!get_platform_display) {
-			get_platform_display = (void *) eglGetProcAddress(
-					"eglGetPlatformDisplayEXT");
-		}
-
-		/* also wrap this in the supports check because
-		 * eglGetProcAddress can return non-NULL and still not
-		 * support the feature at runtime, so ensure the
-		 * appropriate extension checks have been done. */
-		if (get_platform_display && platform) {
-			gr->egl_display = get_platform_display(platform,
-							       native_display,
-							       NULL);
-		}
-	}
-
-	if (!gr->egl_display) {
-		weston_log("warning: either no EGL_EXT_platform_base "
-			   "support or specific platform support; "
-			   "falling back to eglGetDisplay.\n");
-		gr->egl_display = eglGetDisplay(native_display);
-	}
-
-	if (gr->egl_display == EGL_NO_DISPLAY) {
-		weston_log("failed to create display\n");
+	if (gl_renderer_setup_egl_display(gr, options->egl_native_display) < 0)
 		goto fail;
-	}
-
-	if (!eglInitialize(gr->egl_display, &major, &minor)) {
-		weston_log("failed to initialize display\n");
-		goto fail_with_error;
-	}
 
 	log_egl_info(gr->egl_display);
 
@@ -3531,13 +3504,16 @@ gl_renderer_display_create(struct weston_compositor *ec,
 		goto fail_with_error;
 
 	if (!gr->has_configless_context) {
+		EGLint egl_surface_type = options->egl_surface_type;
+
 		if (!gr->has_surfaceless_context)
 			egl_surface_type |= EGL_PBUFFER_BIT;
 
-		gr->egl_config = gl_renderer_get_egl_config(gr,
-							    egl_surface_type,
-							    drm_formats,
-							    drm_formats_count);
+		gr->egl_config =
+			gl_renderer_get_egl_config(gr,
+						   egl_surface_type,
+						   options->drm_formats,
+						   options->drm_formats_count);
 		if (gr->egl_config == EGL_NO_CONFIG_KHR) {
 			weston_log("failed to choose EGL config\n");
 			goto fail_terminate;
@@ -3558,6 +3534,7 @@ gl_renderer_display_create(struct weston_compositor *ec,
 		gr->base.query_dmabuf_modifiers =
 			gl_renderer_query_dmabuf_modifiers;
 	}
+	wl_list_init(&gr->dmabuf_formats);
 
 	if (gr->has_surfaceless_context) {
 		weston_log("EGL_KHR_surfaceless_context available\n");
@@ -3592,6 +3569,7 @@ fail_terminate:
 	eglTerminate(gr->egl_display);
 fail:
 	free(gr);
+	ec->renderer = NULL;
 	return -1;
 }
 

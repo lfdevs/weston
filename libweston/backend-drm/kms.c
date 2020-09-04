@@ -116,6 +116,13 @@ struct drm_property_enum_info hdcp_content_type_enums[] = {
 	},
 };
 
+struct drm_property_enum_info panel_orientation_enums[] = {
+	[WDRM_PANEL_ORIENTATION_NORMAL] = { .name = "Normal", },
+	[WDRM_PANEL_ORIENTATION_UPSIDE_DOWN] = { .name = "Upside Down", },
+	[WDRM_PANEL_ORIENTATION_LEFT_SIDE_UP] = { .name = "Left Side Up", },
+	[WDRM_PANEL_ORIENTATION_RIGHT_SIDE_UP] = { .name = "Right Side Up", },
+};
+
 const struct drm_property_info connector_props[] = {
 	[WDRM_CONNECTOR_EDID] = { .name = "EDID" },
 	[WDRM_CONNECTOR_DPMS] = {
@@ -134,6 +141,11 @@ const struct drm_property_info connector_props[] = {
 		.name = "HDCP Content Type",
 		.enum_values = hdcp_content_type_enums,
 		.num_enum_values = WDRM_HDCP_CONTENT_TYPE__COUNT,
+	},
+	[WDRM_CONNECTOR_PANEL_ORIENTATION] = {
+		.name = "panel orientation",
+		.enum_values = panel_orientation_enums,
+		.num_enum_values = WDRM_PANEL_ORIENTATION__COUNT,
 	},
 };
 
@@ -422,7 +434,8 @@ modifiers_ptr(struct drm_format_modifier_blob *blob)
  */
 int
 drm_plane_populate_formats(struct drm_plane *plane, const drmModePlane *kplane,
-			   const drmModeObjectProperties *props)
+			   const drmModeObjectProperties *props,
+			   const bool use_modifiers)
 {
 	unsigned i;
 	drmModePropertyBlobRes *blob;
@@ -430,6 +443,9 @@ drm_plane_populate_formats(struct drm_plane *plane, const drmModePlane *kplane,
 	struct drm_format_modifier *blob_modifiers;
 	uint32_t *blob_formats;
 	uint32_t blob_id;
+
+	if (!use_modifiers)
+		goto fallback;
 
 	blob_id = drm_property_get_value(&plane->props[WDRM_PLANE_IN_FORMATS],
 				         props,
@@ -835,43 +851,6 @@ plane_add_prop(drmModeAtomicReq *req, struct drm_plane *plane,
 	return (ret <= 0) ? -1 : 0;
 }
 
-
-static int
-plane_add_damage(drmModeAtomicReq *req, struct drm_backend *backend,
-		 struct drm_plane_state *plane_state)
-{
-	struct drm_plane *plane = plane_state->plane;
-	struct drm_property_info *info =
-		&plane->props[WDRM_PLANE_FB_DAMAGE_CLIPS];
-	pixman_box32_t *rects;
-	uint32_t blob_id;
-	int n_rects;
-	int ret;
-
-	if (!pixman_region32_not_empty(&plane_state->damage))
-		return 0;
-
-	/*
-	 * If a plane doesn't support fb damage blob property, kernel will
-	 * perform full plane update.
-	 */
-	if (info->prop_id == 0)
-		return 0;
-
-	rects = pixman_region32_rectangles(&plane_state->damage, &n_rects);
-
-	ret = drmModeCreatePropertyBlob(backend->drm.fd, rects,
-					sizeof(*rects) * n_rects, &blob_id);
-	if (ret != 0)
-		return ret;
-
-	ret = plane_add_prop(req, plane, WDRM_PLANE_FB_DAMAGE_CLIPS, blob_id);
-	if (ret != 0)
-		return ret;
-
-	return 0;
-}
-
 static bool
 drm_head_has_prop(struct drm_head *head,
 		  enum wdrm_connector_property prop)
@@ -1031,7 +1010,9 @@ drm_output_apply_state_atomic(struct drm_output_state *state,
 				      plane_state->dest_w);
 		ret |= plane_add_prop(req, plane, WDRM_PLANE_CRTC_H,
 				      plane_state->dest_h);
-		ret |= plane_add_damage(req, b, plane_state);
+		if (plane->props[WDRM_PLANE_FB_DAMAGE_CLIPS].prop_id != 0)
+			ret |= plane_add_prop(req, plane, WDRM_PLANE_FB_DAMAGE_CLIPS,
+					      plane_state->damage_blob_id);
 
 		if (plane_state->fb && plane_state->fb->format)
 			pinfo = plane_state->fb->format;
@@ -1486,8 +1467,6 @@ init_kms_caps(struct drm_backend *b)
 		ret = drmSetClientCap(b->drm.fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
 		b->universal_planes = (ret == 0);
 	}
-	weston_log("DRM: %s universal planes\n",
-		   b->universal_planes ? "supports" : "does not support");
 
 	if (b->universal_planes && !getenv("WESTON_DISABLE_ATOMIC")) {
 		ret = drmGetCap(b->drm.fd, DRM_CAP_CRTC_IN_VBLANK_EVENT, &cap);
@@ -1499,11 +1478,13 @@ init_kms_caps(struct drm_backend *b)
 	weston_log("DRM: %s atomic modesetting\n",
 		   b->atomic_modeset ? "supports" : "does not support");
 
-	ret = drmGetCap(b->drm.fd, DRM_CAP_ADDFB2_MODIFIERS, &cap);
-	if (ret == 0)
-		b->fb_modifiers = cap;
-	else
-		b->fb_modifiers = 0;
+	if (!getenv("WESTON_DISABLE_GBM_MODIFIERS")) {
+		ret = drmGetCap(b->drm.fd, DRM_CAP_ADDFB2_MODIFIERS, &cap);
+		if (ret == 0)
+			b->fb_modifiers = cap;
+	}
+	weston_log("DRM: %s GBM modifiers\n",
+		   b->fb_modifiers ? "supports" : "does not support");
 
 	/*
 	 * KMS support for hardware planes cannot properly synchronize

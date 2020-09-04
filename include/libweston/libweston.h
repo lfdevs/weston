@@ -185,10 +185,10 @@ enum weston_hdcp_protection {
 	WESTON_HDCP_ENABLE_TYPE_1
 };
 
-/** Represents a monitor
+/** Represents a head, usually a display connector
  *
- * This object represents a monitor (hardware backends like DRM) or a window
- * (windowed nested backends).
+ * \rst
+ See :ref:`libweston-head`. \endrst
  *
  * \ingroup head
  */
@@ -207,6 +207,10 @@ struct weston_head {
 
 	int32_t mm_width;		/**< physical image width in mm */
 	int32_t mm_height;		/**< physical image height in mm */
+
+	/** WL_OUTPUT_TRANSFORM enum to apply to match native orientation */
+	uint32_t transform;
+
 	char *make;			/**< monitor manufacturer (PNP ID) */
 	char *model;			/**< monitor model */
 	char *serial_number;		/**< monitor serial */
@@ -222,7 +226,10 @@ struct weston_head {
 	enum weston_hdcp_protection current_protection;
 };
 
-/** Represents an output
+/** Content producer for heads
+ *
+ * \rst
+ See :ref:`libweston-output`. \endrst
  *
  * \ingroup output
  */
@@ -1763,8 +1770,6 @@ void
 weston_compositor_get_time(struct timespec *time);
 
 void
-weston_compositor_tear_down(struct weston_compositor *ec);
-void
 weston_compositor_destroy(struct weston_compositor *ec);
 
 struct weston_compositor *
@@ -1953,6 +1958,9 @@ weston_head_get_name(struct weston_head *head);
 struct weston_output *
 weston_head_get_output(struct weston_head *head);
 
+uint32_t
+weston_head_get_transform(struct weston_head *head);
+
 void
 weston_head_detach(struct weston_head *head);
 
@@ -2039,10 +2047,10 @@ weston_compositor_enable_touch_calibrator(struct weston_compositor *compositor,
 				weston_touch_calibration_save_func save);
 
 struct weston_log_context *
-weston_log_ctx_compositor_create(void);
+weston_log_ctx_create(void);
 
 void
-weston_log_ctx_compositor_destroy(struct weston_compositor *compositor);
+weston_log_ctx_destroy(struct weston_log_context *log_ctx);
 
 int
 weston_compositor_enable_content_protection(struct weston_compositor *compositor);

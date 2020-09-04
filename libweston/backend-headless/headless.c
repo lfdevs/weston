@@ -196,12 +196,14 @@ headless_output_enable_gl(struct headless_output *output)
 {
 	struct weston_compositor *compositor = output->base.compositor;
 	struct headless_backend *b = to_headless_backend(compositor);
+	const struct gl_renderer_pbuffer_options options = {
+		.width = output->base.current_mode->width,
+		.height = output->base.current_mode->height,
+		.drm_formats = headless_formats,
+		.drm_formats_count = ARRAY_LENGTH(headless_formats),
+	};
 
-	if (b->glri->output_pbuffer_create(&output->base,
-					   output->base.current_mode->width,
-					   output->base.current_mode->height,
-					   headless_formats,
-					   ARRAY_LENGTH(headless_formats)) < 0) {
+	if (b->glri->output_pbuffer_create(&output->base, &options) < 0) {
 		weston_log("failed to create gl renderer output state\n");
 		return -1;
 	}
@@ -212,6 +214,10 @@ headless_output_enable_gl(struct headless_output *output)
 static int
 headless_output_enable_pixman(struct headless_output *output)
 {
+	const struct pixman_renderer_output_options options = {
+		.use_shadow = true,
+	};
+
 	output->image_buf = malloc(output->base.current_mode->width *
 				   output->base.current_mode->height * 4);
 	if (!output->image_buf)
@@ -223,8 +229,7 @@ headless_output_enable_pixman(struct headless_output *output)
 						 output->image_buf,
 						 output->base.current_mode->width * 4);
 
-	if (pixman_renderer_output_create(&output->base,
-					  PIXMAN_RENDERER_OUTPUT_USE_SHADOW) < 0)
+	if (pixman_renderer_output_create(&output->base, &options) < 0)
 		goto err_renderer;
 
 	pixman_renderer_output_set_buffer(&output->base, output->image);
@@ -387,20 +392,19 @@ headless_destroy(struct weston_compositor *ec)
 static int
 headless_gl_renderer_init(struct headless_backend *b)
 {
+	const struct gl_renderer_display_options options = {
+		.egl_platform = EGL_PLATFORM_SURFACELESS_MESA,
+		.egl_native_display = EGL_DEFAULT_DISPLAY,
+		.egl_surface_type = EGL_PBUFFER_BIT,
+		.drm_formats = headless_formats,
+		.drm_formats_count = ARRAY_LENGTH(headless_formats),
+	};
+
 	b->glri = weston_load_module("gl-renderer.so", "gl_renderer_interface");
 	if (!b->glri)
 		return -1;
 
-	if (b->glri->display_create(b->compositor,
-				    EGL_PLATFORM_SURFACELESS_MESA,
-				    EGL_DEFAULT_DISPLAY,
-				    EGL_PBUFFER_BIT,
-				    headless_formats,
-				    ARRAY_LENGTH(headless_formats)) < 0) {
-		return -1;
-	}
-
-	return 0;
+	return b->glri->display_create(b->compositor, &options);
 }
 
 static const struct weston_windowed_output_api api = {
@@ -450,6 +454,9 @@ headless_backend_create(struct weston_compositor *compositor,
 	case HEADLESS_NOOP:
 		ret = noop_renderer_init(compositor);
 		break;
+	default:
+		assert(0 && "invalid renderer type");
+		ret = -1;
 	}
 
 	if (ret < 0)

@@ -29,8 +29,24 @@
 #include <stdio.h>
 
 #include "weston-test-client-helper.h"
+#include "weston-test-fixture-compositor.h"
+#include "test-config.h"
 
-char *server_parameters="--use-pixman --width=320 --height=240";
+static enum test_result_code
+fixture_setup(struct weston_test_harness *harness)
+{
+	struct compositor_setup setup;
+
+	compositor_setup_defaults(&setup);
+	setup.renderer = RENDERER_PIXMAN;
+	setup.width = 320;
+	setup.height = 240;
+	setup.shell = SHELL_DESKTOP;
+	setup.config_file = TESTSUITE_INTERNAL_SCREENSHOT_CONFIG_PATH;
+
+	return weston_test_harness_execute_as_client(harness, &setup);
+}
+DECLARE_FIXTURE_SETUP(fixture_setup);
 
 static void
 draw_stuff(pixman_image_t *image)
@@ -125,7 +141,7 @@ TEST(internal_screenshot)
 	/* Test check_images_match() without a clip.
 	 * We expect this to fail since we use a bad reference image
 	 */
-	match = check_images_match(screenshot->image, reference_bad, NULL);
+	match = check_images_match(screenshot->image, reference_bad, NULL, NULL);
 	testlog("Screenshot %s reference image\n", match? "equal to" : "different from");
 	assert(!match);
 	pixman_image_unref(reference_bad);
@@ -139,10 +155,10 @@ TEST(internal_screenshot)
 	clip.width = 100;
 	clip.height = 100;
 	testlog("Clip: %d,%d %d x %d\n", clip.x, clip.y, clip.width, clip.height);
-	match = check_images_match(screenshot->image, reference_good, &clip);
+	match = check_images_match(screenshot->image, reference_good, &clip, NULL);
 	testlog("Screenshot %s reference image in clipped area\n", match? "matches" : "doesn't match");
 	if (!match) {
-		diffimg = visualize_image_difference(screenshot->image, reference_good, &clip);
+		diffimg = visualize_image_difference(screenshot->image, reference_good, &clip, NULL);
 		fname = screenshot_output_filename("internal-screenshot-error", 0);
 		write_image_as_png(diffimg, fname);
 		pixman_image_unref(diffimg);

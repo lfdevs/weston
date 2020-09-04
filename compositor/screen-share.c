@@ -551,8 +551,8 @@ output_compute_transform(struct weston_output *output,
 		break;
 	case WL_OUTPUT_TRANSFORM_90:
 	case WL_OUTPUT_TRANSFORM_FLIPPED_90:
-		pixman_transform_rotate(transform, NULL, 0, pixman_fixed_1);
-		pixman_transform_translate(transform, NULL, fh, 0);
+		pixman_transform_rotate(transform, NULL, 0, -pixman_fixed_1);
+		pixman_transform_translate(transform, NULL, 0, fw);
 		break;
 	case WL_OUTPUT_TRANSFORM_180:
 	case WL_OUTPUT_TRANSFORM_FLIPPED_180:
@@ -561,8 +561,8 @@ output_compute_transform(struct weston_output *output,
 		break;
 	case WL_OUTPUT_TRANSFORM_270:
 	case WL_OUTPUT_TRANSFORM_FLIPPED_270:
-		pixman_transform_rotate(transform, NULL, 0, -pixman_fixed_1);
-		pixman_transform_translate(transform, NULL, 0, fw);
+		pixman_transform_rotate(transform, NULL, 0, pixman_fixed_1);
+		pixman_transform_translate(transform, NULL, fh, 0);
 		break;
 	}
 
@@ -1163,13 +1163,15 @@ wet_module_init(struct weston_compositor *compositor,
 		int *argc, char *argv[])
 {
 	struct screen_share *ss;
-	struct weston_config *config = wet_get_config(compositor);
+	struct weston_config *config;
 	struct weston_config_section *section;
 
 	ss = zalloc(sizeof *ss);
 	if (ss == NULL)
 		return -1;
 	ss->compositor = compositor;
+
+	config = wet_get_config(compositor);
 
 	section = weston_config_get_section(config, "screen-share", NULL, NULL);
 

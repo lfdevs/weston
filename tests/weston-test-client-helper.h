@@ -37,6 +37,7 @@
 #include <wayland-client-protocol.h>
 #include "weston-test-runner.h"
 #include "weston-test-client-protocol.h"
+#include "viewporter-client-protocol.h"
 
 struct client {
 	struct wl_display *wl_display;
@@ -57,6 +58,7 @@ struct client {
 	int has_argb;
 	struct wl_list global_list;
 	bool has_wl_drm;
+	struct wl_list output_list; /* struct output::link */
 };
 
 struct global {
@@ -145,6 +147,7 @@ struct touch {
 
 struct output {
 	struct wl_output *wl_output;
+	struct wl_list link; /* struct client::output_list */
 	int x;
 	int y;
 	int width;
@@ -161,7 +164,7 @@ struct buffer {
 
 struct surface {
 	struct wl_surface *wl_surface;
-	struct output *output;
+	struct output *output; /* not owned */
 	int x;
 	int y;
 	int width;
@@ -176,11 +179,22 @@ struct rectangle {
 	int height;
 };
 
+struct range {
+	int a;
+	int b;
+};
+
 struct client *
 create_client(void);
 
+void
+client_destroy(struct client *client);
+
 struct surface *
 create_test_surface(struct client *client);
+
+void
+surface_destroy(struct surface *surface);
 
 struct client *
 create_client_and_test_surface(int x, int y, int width, int height);
@@ -222,13 +236,18 @@ screenshot_output_filename(const char *basename, uint32_t seq);
 char *
 screenshot_reference_filename(const char *basename, uint32_t seq);
 
+char *
+image_filename(const char *basename);
+
 bool
 check_images_match(pixman_image_t *img_a, pixman_image_t *img_b,
-		   const struct rectangle *clip);
+		   const struct rectangle *clip,
+		   const struct range *prec);
 
 pixman_image_t *
 visualize_image_difference(pixman_image_t *img_a, pixman_image_t *img_b,
-			   const struct rectangle *clip_rect);
+			   const struct rectangle *clip_rect,
+			   const struct range *prec);
 
 bool
 write_image_as_png(pixman_image_t *image, const char *fname);
@@ -238,5 +257,31 @@ load_image_from_png(const char *fname);
 
 struct buffer *
 capture_screenshot_of_output(struct client *client);
+
+bool
+verify_screen_content(struct client *client,
+		      const char *ref_image,
+		      int ref_seq_no,
+		      const struct rectangle *clip,
+		      int seq_no);
+
+struct buffer *
+client_buffer_from_image_file(struct client *client,
+			      const char *basename,
+			      int scale);
+
+void *
+bind_to_singleton_global(struct client *client,
+			 const struct wl_interface *iface,
+			 int version);
+
+struct wp_viewport *
+client_create_viewport(struct client *client);
+
+void
+fill_image_with_color(pixman_image_t *image, pixman_color_t *color);
+
+pixman_color_t *
+color_rgb888(pixman_color_t *tmp, uint8_t r, uint8_t g, uint8_t b);
 
 #endif

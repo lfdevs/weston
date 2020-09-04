@@ -124,6 +124,12 @@ option(
 	value: true,
 	description: 'Weston shell UI: IVI (automotive)'
 )
+option(
+	'shell-kiosk',
+	type: 'boolean',
+	value: true,
+	description: 'Weston shell UI: kiosk (desktop apps)'
+)
 
 option(
 	'desktop-shell-client-default',
@@ -203,6 +209,12 @@ option(
 	type: 'boolean',
 	value: true,
 	description: 'Tests: output JUnit XML results'
+)
+option(
+	'test-gl-renderer',
+	type: 'boolean',
+	value: true,
+	description: 'Tests: allow running with GL-renderer'
 )
 option(
 	'doc',
