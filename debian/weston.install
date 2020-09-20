@@ -14,7 +14,7 @@ usr/lib/*/weston/fullscreen-shell.so
 usr/lib/*/weston/hmi-controller.so
 usr/lib/*/weston/ivi-shell.so
 usr/lib/*/weston/kiosk-shell.so
-usr/lib/*/weston/libexec_weston.so.*
+usr/lib/*/weston/libexec_weston.so*
 usr/lib/*/weston/screen-share.so
 usr/lib/*/weston/systemd-notify.so
 usr/share/wayland-sessions/weston.desktop

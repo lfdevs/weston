@@ -60,6 +60,9 @@ Depends: adduser,
          libwayland-egl1-mesa (>= 10.1.0-2) | libwayland-egl1,
          ${misc:Depends},
          ${shlibs:Depends}
+Breaks: libweston-8-dev
+Conflicts: libweston-8-dev
+Replaces: libweston-8-dev
 Recommends: libgl1-mesa-dri
 Description: reference implementation of a wayland compositor
  Part of the Wayland project is also the Weston reference implementation

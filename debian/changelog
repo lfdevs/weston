@@ -1,3 +1,9 @@
+weston (9.0.0-2) unstable; urgency=medium
+
+  * debian/libweston-9-dev.install: drop libexec_weston (Closes: #970134)
+
+ -- Héctor Orón Martínez <zumbi@debian.org>  Sun, 20 Sep 2020 10:36:42 +0200
+
 weston (9.0.0-1) unstable; urgency=medium
 
   * Release to unstable.
