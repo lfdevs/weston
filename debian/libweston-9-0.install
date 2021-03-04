@@ -3,8 +3,7 @@ usr/lib/*/libweston-9/drm-backend.so
 usr/lib/*/libweston-9/fbdev-backend.so
 usr/lib/*/libweston-9/gl-renderer.so
 usr/lib/*/libweston-9/headless-backend.so
-# re-enable once upstream supports pipewire-0.3
-# usr/lib/*/libweston-9/pipewire-plugin.so
+usr/lib/*/libweston-9/pipewire-plugin.so
 usr/lib/*/libweston-9/rdp-backend.so
 usr/lib/*/libweston-9/remoting-plugin.so
 usr/lib/*/libweston-9/wayland-backend.so

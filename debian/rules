@@ -2,12 +2,11 @@
 
 override_dh_auto_configure:
 	dh_auto_configure -- -Dscreenshare=true \
-		-Dsystemd=true -Dsimple-dmabuf-drm=auto \
-		-Dpipewire=false
+		-Dsystemd=true -Dsimple-dmabuf-drm=auto
 
 override_dh_auto_test:
-	# the test suite does not 100% pass in headless mode
-	dh_auto_test || true
+	mkdir -p $(CURDIR)/debian/tmp/tmp/xdgruntimedir
+	XDG_RUNTIME_DIR=$(CURDIR)/debian/tmp/tmp/xdgruntimedir dh_auto_test || true
 
 override_dh_missing:
 	dh_missing --fail-missing -X.la
