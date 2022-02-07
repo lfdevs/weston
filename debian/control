@@ -10,7 +10,7 @@ Build-Depends: debhelper (>= 10),
                libcairo2-dev (>= 1.10.0),
                libcolord-dev (>= 0.1.27),
                libdbus-1-dev,
-               libdrm-dev (>= 2.4.83),
+               libdrm-dev (>= 2.4.95),
                libegl1-mesa-dev (>= 9.0~),
                libgbm-dev (>= 17.2),
                libgdk-pixbuf2.0-dev,
@@ -30,7 +30,7 @@ Build-Depends: debhelper (>= 10),
                libudev-dev (>= 136),
                libva-dev,
                libvpx-dev,
-               libwayland-dev (>= 1.12.0),
+               libwayland-dev (>= 1.18.0),
                libwebp-dev,
                libx11-dev,
                libx11-xcb-dev,
@@ -43,7 +43,7 @@ Build-Depends: debhelper (>= 10),
                libxkbcommon-dev (>= 0.3.0),
                libxml2-dev,
                mesa-common-dev,
-               meson,
+               meson (>= 0.52.1),
                pkg-config,
                quilt,
                wayland-protocols (>= 1.18)
@@ -56,9 +56,6 @@ Vcs-Browser: https://salsa.debian.org/xorg-team/wayland/weston
 Package: weston
 Architecture: linux-any
 Depends: adduser,
-         libegl1-mesa (>= 8.0-2) | libegl1-x11,
-         libgles2-mesa (>= 8.0-2) | libgles2,
-         libwayland-egl1-mesa (>= 10.1.0-2) | libwayland-egl1,
          ${misc:Depends},
          ${shlibs:Depends}
 Breaks: libweston-8-dev
@@ -72,7 +69,7 @@ Description: reference implementation of a wayland compositor
  and fast compositor and is suitable for many embedded and mobile use
  cases.
 
-Package: libweston-9-0
+Package: libweston-10-0
 Section: libs
 Architecture: linux-any
 Depends: ${misc:Depends}, ${shlibs:Depends}
@@ -87,12 +84,12 @@ Description: reference implementation of a wayland compositor (shared libs)
  .
  This package includes the libweston shared libraries.
 
-Package: libweston-9-dev
+Package: libweston-10-dev
 Section: libdevel
 Architecture: linux-any
 Depends: libpixman-1-dev,
          libwayland-dev,
-         libweston-9-0 (= ${binary:Version}),
+         libweston-10-0 (= ${binary:Version}),
          libxkbcommon-dev,
          ${misc:Depends},
          ${shlibs:Depends}

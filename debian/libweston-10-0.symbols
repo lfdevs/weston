@@ -1,5 +1,5 @@
-libweston-9.so.0 libweston-9-0 #MINVER#
-* Build-Depends-Package: libweston-9-dev
+libweston-10.so.0 libweston-10-0 #MINVER#
+* Build-Depends-Package: libweston-10-dev
  linux_dmabuf_buffer_get@Base 1.12.0
  linux_dmabuf_buffer_get_user_data@Base 1.12.0
  linux_dmabuf_buffer_send_server_error@Base 1.12.0
@@ -27,8 +27,11 @@ libweston-9.so.0 libweston-9-0 #MINVER#
  notify_touch_normalized@Base 5.0.0
  pixel_format_get_info@Base 3.0.0
  pixel_format_get_info_by_drm_name@Base 6.0
+ pixel_format_get_info_by_index@Base 10.0.0
  pixel_format_get_info_by_opaque_substitute@Base 8.0.0
+ pixel_format_get_info_count@Base 10.0.0
  pixel_format_get_info_shm@Base 6.0
+ pixel_format_get_modifier@Base 10.0.0
  pixel_format_get_opaque_substitute@Base 3.0.0
  pixel_format_get_plane_count@Base 3.0.0
  pixel_format_height_for_plane@Base 3.0.0
@@ -45,6 +48,13 @@ libweston-9.so.0 libweston-9-0 #MINVER#
  weston_buffer_release_move@Base 6.0
  weston_buffer_release_reference@Base 6.0
  weston_buffer_send_server_error@Base 6.0
+ weston_color_profile_get_description@Base 10.0.0
+ weston_color_profile_init@Base 10.0.0
+ weston_color_profile_ref@Base 10.0.0
+ weston_color_profile_unref@Base 10.0.0
+ weston_color_transform_init@Base 10.0.0
+ weston_color_transform_ref@Base 10.0.0
+ weston_color_transform_unref@Base 10.0.0
  weston_compositor_add_axis_binding@Base 1.12.0
  weston_compositor_add_button_binding@Base 1.12.0
  weston_compositor_add_debug_binding@Base 1.12.0
@@ -69,12 +79,15 @@ libweston-9.so.0 libweston-9-0 #MINVER#
  weston_compositor_exit_with_code@Base 1.12.0
  weston_compositor_find_output_by_name@Base 5.0.0
  weston_compositor_flush_heads_changed@Base 5.0.0
+ weston_compositor_get_test_data@Base 10.0.0
  weston_compositor_get_time@Base 1.12.0
  weston_compositor_get_user_data@Base 1.12.0
  weston_compositor_import_dmabuf@Base 1.12.0
  weston_compositor_is_debug_protocol_enabled@Base 6.0
  weston_compositor_iterate_heads@Base 5.0.0
  weston_compositor_load_backend@Base 1.12.0
+ weston_compositor_load_color_manager@Base 10.0.0
+ weston_compositor_load_icc_file@Base 10.0.0
  weston_compositor_load_xwayland@Base 1.12.0
  weston_compositor_offscreen@Base 1.12.0
  weston_compositor_pick_view@Base 1.12.0
@@ -102,6 +115,28 @@ libweston-9.so.0 libweston-9-0 #MINVER#
  weston_config_section_get_string@Base 1.12.0
  weston_config_section_get_uint@Base 1.12.0
  weston_direct_display_setup@Base 8.0.0
+ weston_dmabuf_feedback_create@Base 10.0.0
+ weston_dmabuf_feedback_destroy@Base 10.0.0
+ weston_dmabuf_feedback_find_tranche@Base 10.0.0
+ weston_dmabuf_feedback_format_table_create@Base 10.0.0
+ weston_dmabuf_feedback_format_table_destroy@Base 10.0.0
+ weston_dmabuf_feedback_format_table_set_scanout_indices@Base 10.0.0
+ weston_dmabuf_feedback_send_all@Base 10.0.0
+ weston_dmabuf_feedback_tranche_create@Base 10.0.0
+ weston_drm_format_add_modifier@Base 10.0.0
+ weston_drm_format_array_add_format@Base 10.0.0
+ weston_drm_format_array_count_pairs@Base 10.0.0
+ weston_drm_format_array_equal@Base 10.0.0
+ weston_drm_format_array_find_format@Base 10.0.0
+ weston_drm_format_array_fini@Base 10.0.0
+ weston_drm_format_array_init@Base 10.0.0
+ weston_drm_format_array_intersect@Base 10.0.0
+ weston_drm_format_array_join@Base 10.0.0
+ weston_drm_format_array_remove_latest_format@Base 10.0.0
+ weston_drm_format_array_replace@Base 10.0.0
+ weston_drm_format_array_subtract@Base 10.0.0
+ weston_drm_format_get_modifiers@Base 10.0.0
+ weston_drm_format_has_modifier@Base 10.0.0
  weston_fade_run@Base 1.12.0
  weston_fade_update@Base 1.12.0
  weston_head_add_destroy_listener@Base 5.0.0
@@ -137,6 +172,7 @@ libweston-9.so.0 libweston-9-0 #MINVER#
  weston_keyboard_start_grab@Base 1.12.0
  weston_layer_entry_insert@Base 1.12.0
  weston_layer_entry_remove@Base 1.12.0
+ weston_layer_fini@Base 10.0.0
  weston_layer_init@Base 1.12.0
  weston_layer_mask_is_infinite@Base 6.0
  weston_layer_set_mask@Base 1.12.0
@@ -198,8 +234,11 @@ libweston-9.so.0 libweston-9-0 #MINVER#
  weston_output_mode_switch_to_native@Base 1.12.0
  weston_output_mode_switch_to_temporary@Base 1.12.0
  weston_output_move@Base 1.12.0
+ weston_output_region_from_global@Base 10.0.0
  weston_output_release@Base 4.0.0
+ weston_output_repaint_failed@Base 10.0.0
  weston_output_schedule_repaint@Base 1.12.0
+ weston_output_set_color_profile@Base 10.0.0
  weston_output_set_scale@Base 3.0.0
  weston_output_set_transform@Base 3.0.0
  weston_output_transform_coordinate@Base 1.12.0
@@ -283,11 +322,13 @@ libweston-9.so.0 libweston-9-0 #MINVER#
  weston_transformed_rect@Base 1.12.0
  weston_transformed_region@Base 1.12.0
  weston_version@Base 1.12.0
- weston_view_activate@Base 1.12.0
+#MISSING: 10.0.0# weston_view_activate@Base 1.12.0
+ weston_view_activate_input@Base 10.0.0
  weston_view_animation_destroy@Base 1.12.0
  weston_view_create@Base 1.12.0
  weston_view_damage_below@Base 1.12.0
  weston_view_destroy@Base 1.12.0
+ weston_view_find_paint_node@Base 10.0.0
  weston_view_from_global@Base 1.12.0
  weston_view_from_global_fixed@Base 1.12.0
  weston_view_from_global_float@Base 1.12.0
@@ -312,7 +353,7 @@ libweston-9.so.0 libweston-9-0 #MINVER#
  weston_zoom_run@Base 1.12.0
  wl_data_device_manager_init@Base 1.12.0
  wl_data_device_set_keyboard_focus@Base 1.12.0
-libweston-desktop-9.so.0 libweston-9-0 #MINVER#
+libweston-desktop-10.so.0 libweston-10-0 #MINVER#
  weston_desktop_client_for_each_surface@Base 9.0.0
  weston_desktop_client_get_client@Base 9.0.0
  weston_desktop_client_ping@Base 9.0.0

@@ -1,3 +1,11 @@
+weston (10.0.0-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Adjust files for version 10
+  * debian/control: adjust versioned build dependencies
+
+ -- Héctor Orón Martínez <zumbi@debian.org>  Mon, 07 Feb 2022 13:02:27 +0100
+
 weston (9.0.0-4) unstable; urgency=high
 
   * debian/rules: make tests non fatal

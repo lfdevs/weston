@@ -1,5 +1,5 @@
 if get_option('pipewire')
-	user_hint = 'If you rather not build this, set "pipewire=false".'
+	user_hint = 'If you rather not build this, set \'-Dpipewire=false\'.'
 
 	if not get_option('backend-drm')
 		error('Attempting to build the pipewire plugin without the required DRM backend. ' + user_hint)
@@ -9,17 +9,11 @@ if get_option('pipewire')
 
 	dep_libpipewire = dependency('libpipewire-0.3', required: false)
 	if not dep_libpipewire.found()
-		dep_libpipewire = dependency('libpipewire-0.2', required: false)
-	endif
-	if not dep_libpipewire.found()
 		error('Pipewire plugin requires libpipewire which was not found. ' + user_hint)
 	endif
 	deps_pipewire += dep_libpipewire
 
 	dep_libspa = dependency('libspa-0.2', required: false)
-	if not dep_libspa.found()
-		dep_libspa = dependency('libspa-0.1', required: false)
-	endif
 	if not dep_libspa.found()
 		error('Pipewire plugin requires libspa which was not found. ' + user_hint)
 	endif
@@ -35,5 +29,4 @@ if get_option('pipewire')
 		install_dir: dir_module_libweston
 	)
 	env_modmap += 'pipewire-plugin.so=@0@;'.format(plugin_pipewire.full_path())
-	install_headers('pipewire-plugin.h', subdir: dir_include_libweston_install)
 endif
