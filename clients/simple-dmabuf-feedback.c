@@ -26,11 +26,13 @@
 #include "config.h"
 
 #include <assert.h>
+#include <ctype.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <libudev.h>
 #include <sys/mman.h>
+#include <time.h>
 
 #include "shared/helpers.h"
 #include "shared/platform.h"
@@ -47,7 +49,7 @@
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 
-#define NUM_BUFFERS 3
+#define NUM_BUFFERS 4
 
 /* We have to hack the DRM-backend to pretend that planes of the underlying
  * hardware don't support this format. If you change the value of this constant,
@@ -140,7 +142,11 @@ struct display {
 struct buffer {
 	struct window *window;
 	struct wl_buffer *buffer;
-	bool busy;
+	enum {
+		NOT_CREATED,
+		IN_USE,
+		AVAILABLE
+	} status;
 	bool recreate;
 	int dmabuf_fds[4];
 	struct gbm_bo *bo;
@@ -469,7 +475,7 @@ buffer_release(void *data, struct wl_buffer *buffer)
 {
 	struct buffer *buf = data;
 
-	buf->busy = false;
+	buf->status = AVAILABLE;
 
 	if (buf->recreate)
 		buffer_recreate(buf);
@@ -485,6 +491,7 @@ create_succeeded(void *data, struct zwp_linux_buffer_params_v1 *params,
 {
 	struct buffer *buf = data;
 
+	buf->status = AVAILABLE;
 	buf->buffer = new_buffer;
 	wl_buffer_add_listener(buf->buffer, &buffer_listener, buf);
 	zwp_linux_buffer_params_v1_destroy(params);
@@ -516,6 +523,7 @@ create_dmabuf_buffer(struct window *window, struct buffer *buf, uint32_t width,
 	struct zwp_linux_buffer_params_v1 *params;
 	int i;
 
+	buf->status = NOT_CREATED;
 	buf->window = window;
 	buf->width = width;
 	buf->height = height;
@@ -573,8 +581,22 @@ window_next_buffer(struct window *window)
 	unsigned int i;
 
 	for (i = 0; i < NUM_BUFFERS; i++)
-		if (!window->buffers[i].busy)
+		if (window->buffers[i].status == AVAILABLE)
 			return &window->buffers[i];
+
+	/* In this client, we sometimes have to recreate the buffers. As we are
+	* not using the create_immed request from zwp_linux_dmabuf_v1, we need
+	* to wait an event from the server (what leads to create_succeeded()
+	* being called in this client). So if all buffers are busy, it may be
+	* the case in which all the buffers were recreated but the server still
+	* didn't send the events. This is very unlikely to happen, but a
+	* roundtrip() guarantees that we receive and process the events. */
+	wl_display_roundtrip(window->display->display);
+
+	for (i = 0; i < NUM_BUFFERS; i++)
+		if (window->buffers[i].status == AVAILABLE)
+			return &window->buffers[i];
+
 	return NULL;
 }
 
@@ -639,15 +661,13 @@ redraw(void *data, struct wl_callback *callback, uint32_t time)
 	window->callback = wl_surface_frame(window->surface);
 	wl_callback_add_listener(window->callback, &frame_listener, window);
 	wl_surface_commit(window->surface);
-	buf->busy = true;
+	buf->status = IN_USE;
 
 	region = wl_compositor_create_region(window->display->compositor);
 	wl_region_add(region, 0, 0, window->display->output.width,
 		      window->display->output.height);
 	wl_surface_set_opaque_region(window->surface, region);
 	wl_region_destroy(region);
-
-	window->n_redraws++;
 }
 
 static const struct wl_callback_listener frame_listener = {
@@ -1050,18 +1070,54 @@ dmabuf_feedback_tranche_formats(void *data,
 	}
 }
 
+static char
+bits2graph(uint32_t value, unsigned bitoffset)
+{
+	int c = (value >> bitoffset) & 0xff;
+
+	if (isgraph(c) || isspace(c))
+		return c;
+
+	return '?';
+}
+
+static void
+fourcc2str(uint32_t format, char *str, int len)
+{
+	int i;
+
+	assert(len >= 5);
+
+	for (i = 0; i < 4; i++)
+		str[i] = bits2graph(format, i * 8);
+	str[i] = '\0';
+}
+
 static void
 print_tranche_format_modifier(uint32_t format, uint64_t modifier)
 {
 	const struct pixel_format_info *fmt_info;
+	char *format_str;
 	char *mod_name;
+	int len;
 
-	fmt_info = pixel_format_get_info(format);
 	mod_name = pixel_format_get_modifier(modifier);
+	fmt_info = pixel_format_get_info(format);
+
+	if (fmt_info) {
+		len = asprintf(&format_str, "%s", fmt_info->drm_format_name);
+	} else {
+		char fourcc_str[5];
+
+		fourcc2str(format, fourcc_str, sizeof(fourcc_str));
+		len = asprintf(&format_str, "0x%08x (%s)", format, fourcc_str);
+	}
+	assert(len > 0);
 
 	fprintf(stderr, "│	├────────tranche format/modifier pair - format %s, modifier %s\n",
-			fmt_info ? fmt_info->drm_format_name : "UNKNOWN", mod_name);
+			format_str, mod_name);
 
+	free(format_str);
 	free(mod_name);
 }
 
@@ -1103,7 +1159,7 @@ dmabuf_feedback_tranche_done(void *data,
 	dmabuf_feedback_tranche_init(&feedback->pending_tranche);
 }
 
-static void
+static bool
 pick_initial_format_from_renderer_tranche(struct window *window,
 					  struct dmabuf_feedback_tranche *tranche)
 {
@@ -1117,13 +1173,12 @@ pick_initial_format_from_renderer_tranche(struct window *window,
 		window->format.format = fmt->format;
 		wl_array_copy(&window->format.modifiers, &fmt->modifiers);
 
-		return;
+		return true;
 	}
-
-	assert(0 && "error: INITIAL_BUFFER_FORMAT not supported by the hardware");
+	return false;
 }
 
-static void
+static bool
 pick_format_from_scanout_tranche(struct window *window,
 				 struct dmabuf_feedback_tranche *tranche)
 {
@@ -1132,8 +1187,9 @@ pick_format_from_scanout_tranche(struct window *window,
 
 	wl_array_for_each(fmt, &tranche->formats.arr) {
 
-		/* Ignore format that we're already using. */
-		if (fmt->format == window->format.format)
+		/* Ignore the format that we want to pick from the render
+		 * tranche. */
+		if (fmt->format == INITIAL_BUFFER_FORMAT)
 			continue;
 
 		/* Format should be supported by the compositor. */
@@ -1147,10 +1203,9 @@ pick_format_from_scanout_tranche(struct window *window,
 		window->format.format = fmt->format;
 		wl_array_copy(&window->format.modifiers, &fmt->modifiers);
 
-		return;
+		return true;
 	}
-
-	assert(0 && "error: no valid pair of format/modifier in the scanout tranche");
+	return false;
 }
 
 static void
@@ -1158,25 +1213,37 @@ dmabuf_feedback_done(void *data, struct zwp_linux_dmabuf_feedback_v1 *dmabuf_fee
 {
 	struct window *window = data;
 	struct dmabuf_feedback_tranche *tranche;
+	bool got_scanout_tranche = false;
 	unsigned int i;
 
 	fprintf(stderr, "└end of dma-buf feedback\n\n");
 
 	/* The first time that we receive dma-buf feedback for a surface it
-	 * contains only the renderer tranche. We pick the INITIAL_BUFFER_FORMAT
+	 * contains only the renderer tranches. We pick the INITIAL_BUFFER_FORMAT
 	 * from there. Then the compositor should detect that the format is
 	 * unsupported by the underlying hardware (not actually, but you should
-	 * have faked this in the DRM-backend) and send the scanout tranche. We
-	 * use the formats/modifiers of the scanout tranche to reallocate our
+	 * have faked this in the DRM-backend) and send the scanout tranches. We
+	 * use the formats/modifiers of the scanout tranches to reallocate our
 	 * buffers. */
 	wl_array_for_each(tranche, &window->pending_dmabuf_feedback.tranches) {
 		if (tranche->is_scanout_tranche) {
-			pick_format_from_scanout_tranche(window, tranche);
-			for (i = 0; i < NUM_BUFFERS; i++)
-				window->buffers[i].recreate = true;
-			break;
+			got_scanout_tranche = true;
+			if (pick_format_from_scanout_tranche(window, tranche)) {
+				for (i = 0; i < NUM_BUFFERS; i++)
+					window->buffers[i].recreate = true;
+				break;
+			}
 		}
-		pick_initial_format_from_renderer_tranche(window, tranche);
+		if (pick_initial_format_from_renderer_tranche(window, tranche))
+			break;
+	}
+
+	if (got_scanout_tranche) {
+		assert(window->format.format != INITIAL_BUFFER_FORMAT &&
+		       "error: no valid pair of format/modifier in the scanout tranches");
+	} else {
+		assert(window->format.format == INITIAL_BUFFER_FORMAT &&
+		       "error: INITIAL_BUFFER_FORMAT not supported by the hardware");
 	}
 
 	dmabuf_feedback_fini(&window->dmabuf_feedback);
@@ -1383,6 +1450,9 @@ main(int argc, char **argv)
 	struct display *display;
 	struct window *window;
 	int ret = 0;
+	struct timespec start_time, current_time;
+	const time_t MAX_TIME_SECONDS = 3;
+	time_t delta_time = 0;
 
 	fprintf(stderr, "This client was written with the purpose of manually test " \
 			"Weston's dma-buf feedback implementation. See main() " \
@@ -1391,9 +1461,14 @@ main(int argc, char **argv)
 	display = create_display();
 	window = create_window(display);
 
+	clock_gettime(CLOCK_MONOTONIC, &start_time);
+
 	redraw(window, NULL, 0);
-	while (ret != -1 && window->n_redraws < 200)
+	while (ret != -1 && delta_time < MAX_TIME_SECONDS) {
 		ret = wl_display_dispatch(display->display);
+		clock_gettime(CLOCK_MONOTONIC, &current_time);
+		delta_time = current_time.tv_sec - start_time.tv_sec;
+	}
 
 	destroy_window(window);
 	destroy_display(display);

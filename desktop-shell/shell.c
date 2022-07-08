@@ -101,6 +101,8 @@ struct shell_surface {
 
 	struct weston_desktop_surface *desktop_surface;
 	struct weston_view *view;
+	struct weston_surface *wsurface_anim_fade;
+	struct weston_view *wview_anim_fade;
 	int32_t last_width, last_height;
 
 	struct desktop_shell *shell;
@@ -194,6 +196,10 @@ struct shell_seat {
 };
 
 
+static struct weston_view *
+shell_fade_create_fade_out_view(struct shell_surface *shsurf,
+				struct weston_surface *surface);
+
 static struct desktop_shell *
 shell_surface_get_shell(struct shell_surface *shsurf);
 
@@ -261,10 +267,12 @@ desktop_shell_destroy_surface(struct shell_surface *shsurf)
 		wl_list_init(&shsurf_child->children_link);
 	}
 	wl_list_remove(&shsurf->children_link);
+	weston_desktop_surface_unlink_view(shsurf->view);
+	weston_view_destroy(shsurf->view);
 
 	wl_signal_emit(&shsurf->destroy_signal, shsurf);
+	weston_surface_destroy(shsurf->wsurface_anim_fade);
 
-	weston_view_destroy(shsurf->view);
 	if (shsurf->output_destroy_listener.notify) {
 		wl_list_remove(&shsurf->output_destroy_listener.link);
 		shsurf->output_destroy_listener.notify = NULL;
@@ -877,7 +885,7 @@ animate_focus_change(struct desktop_shell *shell, struct workspace *ws,
 }
 
 static void
-desktop_shell_destroy_views_on_layer(struct weston_layer *layer);
+desktop_shell_destroy_layer(struct weston_layer *layer);
 
 static void
 workspace_destroy(struct workspace *ws)
@@ -892,7 +900,7 @@ workspace_destroy(struct workspace *ws)
 	if (ws->fsurf_back)
 		focus_surface_destroy(ws->fsurf_back);
 
-	desktop_shell_destroy_views_on_layer(&ws->layer);
+	desktop_shell_destroy_layer(&ws->layer);
 	free(ws);
 }
 
@@ -1381,7 +1389,7 @@ touch_move_grab_motion(struct weston_touch_grab *grab,
 	int dx = wl_fixed_to_int(grab->touch->grab_x + move->dx);
 	int dy = wl_fixed_to_int(grab->touch->grab_y + move->dy);
 
-	if (!shsurf || !move->active)
+	if (!shsurf || !shsurf->desktop_surface || !move->active)
 		return;
 
 	es = weston_desktop_surface_get_surface(shsurf->desktop_surface);
@@ -1513,7 +1521,7 @@ move_grab_motion(struct weston_pointer_grab *grab,
 	int cx, cy;
 
 	weston_pointer_move(pointer, event);
-	if (!shsurf)
+	if (!shsurf || !shsurf->desktop_surface)
 		return;
 
 	surface = weston_desktop_surface_get_surface(shsurf->desktop_surface);
@@ -2253,8 +2261,8 @@ fade_out_done(struct weston_view_animation *animation, void *data)
 
 	loop = wl_display_get_event_loop(shsurf->shell->compositor->wl_display);
 
-	if (weston_view_is_mapped(shsurf->view)) {
-		weston_view_unmap(shsurf->view);
+	if (weston_view_is_mapped(shsurf->wview_anim_fade)) {
+		weston_view_unmap(shsurf->wview_anim_fade);
 		wl_event_loop_add_idle(loop, fade_out_done_idle_cb, shsurf);
 	}
 }
@@ -2364,7 +2372,6 @@ desktop_surface_removed(struct weston_desktop_surface *desktop_surface,
 	weston_desktop_surface_set_user_data(shsurf->desktop_surface, NULL);
 	shsurf->desktop_surface = NULL;
 
-	weston_desktop_surface_unlink_view(shsurf->view);
 	if (weston_surface_is_mapped(surface) &&
 	    shsurf->shell->win_close_animation_type == ANIMATION_FADE) {
 
@@ -2373,11 +2380,26 @@ desktop_surface_removed(struct weston_desktop_surface *desktop_surface,
 			pixman_region32_init(&surface->pending.input);
 			pixman_region32_fini(&surface->input);
 			pixman_region32_init(&surface->input);
-			weston_fade_run(shsurf->view, 1.0, 0.0, 300.0,
+
+			/* its location might have changed, but also might've
+			 * migrated to a different output, so re-compute  this
+			 * as the animation requires having the same output as
+			 * the view */
+			weston_view_set_output(shsurf->wview_anim_fade,
+					       shsurf->view->output);
+			weston_view_set_position(shsurf->wview_anim_fade,
+						 shsurf->view->geometry.x,
+						 shsurf->view->geometry.y);
+
+			weston_layer_entry_insert(&shsurf->view->layer_link,
+						  &shsurf->wview_anim_fade->layer_link);
+
+			/* unmap the "original" view */
+			weston_view_unmap(shsurf->view);
+			weston_fade_run(shsurf->wview_anim_fade, 1.0, 0.0, 300.0,
 					fade_out_done, shsurf);
+
 			return;
-		} else {
-			weston_surface_destroy(surface);
 		}
 	}
 
@@ -2500,8 +2522,14 @@ desktop_surface_committed(struct weston_desktop_surface *desktop_surface,
 	if (!weston_surface_is_mapped(surface)) {
 		map(shell, shsurf, sx, sy);
 		surface->is_mapped = true;
-		if (shsurf->shell->win_close_animation_type == ANIMATION_FADE)
-			++surface->ref_count;
+		/* as we need to survive the weston_surface destruction we'll
+		 * need to take another reference */
+		if (shsurf->shell->win_close_animation_type == ANIMATION_FADE) {
+			surface->ref_count++;
+			shsurf->wsurface_anim_fade = surface;
+			shsurf->wview_anim_fade =
+				shell_fade_create_fade_out_view(shsurf, surface);
+		}
 		return;
 	}
 
@@ -3992,6 +4020,29 @@ shell_fade_create_surface_for_output(struct desktop_shell *shell, struct shell_o
 	return view;
 }
 
+static struct weston_view *
+shell_fade_create_fade_out_view(struct shell_surface *shsurf,
+				struct weston_surface *surface)
+{
+	struct weston_view *view;
+	struct weston_output *woutput;
+
+	view = weston_view_create(surface);
+	if (!view)
+		return NULL;
+
+	woutput = get_focused_output(surface->compositor);
+	/* set the initial position and output just in case we happen to not
+	 * move it around and just destroy it */
+	weston_view_set_output(view, woutput);
+	weston_view_set_position(view,
+				 shsurf->view->geometry.x,
+				 shsurf->view->geometry.y);
+	view->is_mapped = true;
+
+	return view;
+}
+
 static void
 shell_fade(struct desktop_shell *shell, enum fade_type type)
 {
@@ -4905,7 +4956,7 @@ setup_output_destroy_handler(struct weston_compositor *ec,
 }
 
 static void
-desktop_shell_destroy_views_on_layer(struct weston_layer *layer)
+desktop_shell_destroy_layer(struct weston_layer *layer)
 {
 	struct weston_view *view, *view_next;
 
@@ -4916,9 +4967,17 @@ desktop_shell_destroy_views_on_layer(struct weston_layer *layer)
 		 * additional black_view created and added to its layer_link
 		 * fullscreen view. See shell_ensure_fullscreen_black_view()
 		 *
-		 * As that black_view it is not a weston_desktop_surface
-		 * we can't have a shsurf for it so we just destroy it like
-		 * we do it in desktop_surface_removed() */
+		 * Note that we do not choose to destroy all other potential
+		 * views we find in the layer, but instead we explicitly verify
+		 * if the view in question was explicitly created by
+		 * desktop-shell, rather than libweston-desktop (in
+		 * desktop_surface_added()).
+		 *
+		 * This is particularly important because libweston-desktop
+		 * could create additional views, which are managed implicitly,
+		 * but which are still being added to the layer list.
+		 *
+		 */
 		if (shsurf)
 			desktop_shell_destroy_surface(shsurf);
 		else
@@ -4970,12 +5029,12 @@ shell_destroy(struct wl_listener *listener, void *data)
 		workspace_destroy(*ws);
 	wl_array_release(&shell->workspaces.array);
 
-	desktop_shell_destroy_views_on_layer(&shell->panel_layer);
-	desktop_shell_destroy_views_on_layer(&shell->background_layer);
-	desktop_shell_destroy_views_on_layer(&shell->lock_layer);
-	desktop_shell_destroy_views_on_layer(&shell->input_panel_layer);
-	desktop_shell_destroy_views_on_layer(&shell->minimized_layer);
-	desktop_shell_destroy_views_on_layer(&shell->fullscreen_layer);
+	desktop_shell_destroy_layer(&shell->panel_layer);
+	desktop_shell_destroy_layer(&shell->background_layer);
+	desktop_shell_destroy_layer(&shell->lock_layer);
+	desktop_shell_destroy_layer(&shell->input_panel_layer);
+	desktop_shell_destroy_layer(&shell->minimized_layer);
+	desktop_shell_destroy_layer(&shell->fullscreen_layer);
 
 	free(shell->client);
 	free(shell);

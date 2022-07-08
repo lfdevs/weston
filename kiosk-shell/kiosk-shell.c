@@ -173,8 +173,10 @@ kiosk_shell_surface_find_best_output(struct kiosk_shell_surface *shsurf)
 	app_id = weston_desktop_surface_get_app_id(shsurf->desktop_surface);
 	if (app_id) {
 		wl_list_for_each(shoutput, &shsurf->shell->output_list, link) {
-			if (kiosk_shell_output_has_app_id(shoutput, app_id))
+			if (kiosk_shell_output_has_app_id(shoutput, app_id)) {
+				shsurf->appid_output_assigned = true;
 				return shoutput->output;
+			}
 		}
 	}
 
@@ -354,6 +356,7 @@ kiosk_shell_surface_create(struct kiosk_shell *shell,
 	shsurf->desktop_surface = desktop_surface;
 	shsurf->view = view;
 	shsurf->shell = shell;
+	shsurf->appid_output_assigned = false;
 
 	weston_desktop_surface_set_user_data(desktop_surface, shsurf);
 
@@ -387,8 +390,10 @@ kiosk_shell_surface_activate(struct kiosk_shell_surface *shsurf,
 
 		/* removes it from the normal_layer and move it to inactive
 		 * one, without occluding the top-level window if the new one
-		 * is a child to that */
-		if (!shsurf->parent) {
+		 * is a child to that. Also, do not occlude another view
+		 * (currently focused one) on a different output when activating
+		 * a new one. */
+		if (!shsurf->parent && (shsurf->output == current_focus->output)) {
 			weston_layer_entry_remove(&current_focus->view->layer_link);
 			weston_layer_entry_insert(&shsurf->shell->inactive_layer.view_list,
 						  &current_focus->view->layer_link);
@@ -645,12 +650,18 @@ find_focus_successor(struct weston_layer *layer,
 	struct weston_view *top_view = NULL;
 	struct weston_view *view;
 
+
 	/* we need to take into account that the surface being destroyed it not
 	 * always the same as the focus_surface, which could result in picking
 	 * and *activating* the wrong window, so avoid returning a view for
 	 * that case. A particular case is when a top-level child window, would
-	 * pick a parent window below the focused_surface. */
-	if (focused_surface != shsurf->view->surface)
+	 * pick a parent window below the focused_surface.
+	 *
+	 * Apply that only on the same output to avoid incorrectly returning an
+	 * invalid/empty view, which could happen if the view being destroyed
+	 * is on a output different than the focused_surface output */
+	if (focused_surface && focused_surface != shsurf->view->surface &&
+	    shsurf->output == focused_surface->output)
 		return top_view;
 
 	wl_list_for_each(view, &layer->view_list.link, layer_link.link) {
@@ -658,6 +669,10 @@ find_focus_successor(struct weston_layer *layer,
 		struct kiosk_shell_surface *root;
 
 		if (!view->is_mapped || view == shsurf->view)
+			continue;
+
+		/* pick views only on the same output */
+		if (view->output != shsurf->output)
 			continue;
 
 		view_shsurf = get_kiosk_shell_surface(view->surface);
@@ -721,6 +736,8 @@ desktop_surface_committed(struct weston_desktop_surface *desktop_surface,
 		weston_desktop_surface_get_user_data(desktop_surface);
 	struct weston_surface *surface =
 		weston_desktop_surface_get_surface(desktop_surface);
+	const char *app_id =
+		weston_desktop_surface_get_app_id(desktop_surface);
 	bool is_resized;
 	bool is_fullscreen;
 
@@ -728,6 +745,24 @@ desktop_surface_committed(struct weston_desktop_surface *desktop_surface,
 
 	if (surface->width == 0)
 		return;
+
+	if (!shsurf->appid_output_assigned && app_id) {
+		struct weston_output *output = NULL;
+
+		/* reset previous output being set in _added() as the output is
+		 * being cached */
+		shsurf->output = NULL;
+		output = kiosk_shell_surface_find_best_output(shsurf);
+
+		kiosk_shell_surface_set_output(shsurf, output);
+		weston_desktop_surface_set_size(shsurf->desktop_surface,
+						shsurf->output->width,
+						shsurf->output->height);
+		/* even if we couldn't find an appid set for a particular
+		 * output still flag the shsurf as to a avoid changing the
+		 * output every time */
+		shsurf->appid_output_assigned = true;
+	}
 
 	/* TODO: When the top-level surface is committed with a new size after an
 	 * output resize, sometimes the view appears scaled. What state are we not

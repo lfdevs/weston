@@ -2306,6 +2306,10 @@ weston_surface_destroy(struct weston_surface *surface)
 	struct weston_pointer_constraint *constraint, *next_constraint;
 	struct weston_paint_node *pnode, *pntmp;
 
+	if (!surface)
+		return;
+
+	assert(surface->ref_count > 0);
 	if (--surface->ref_count > 0)
 		return;
 
@@ -4044,54 +4048,22 @@ static const struct wl_surface_interface surface_interface = {
 	surface_damage_buffer
 };
 
-static int
-create_surface_dmabuf_feedback(struct weston_compositor *ec,
-			       struct weston_surface *surface)
-{
-	struct weston_dmabuf_feedback_tranche *tranche;
-	dev_t main_device = ec->default_dmabuf_feedback->main_device;
-	uint32_t flags = 0;
-
-	surface->dmabuf_feedback = weston_dmabuf_feedback_create(main_device);
-	if (!surface->dmabuf_feedback)
-		return -1;
-
-	tranche = weston_dmabuf_feedback_tranche_create(surface->dmabuf_feedback,
-							ec->dmabuf_feedback_format_table,
-							main_device, flags,
-							RENDERER_PREF);
-	if (!tranche) {
-		weston_dmabuf_feedback_destroy(surface->dmabuf_feedback);
-		surface->dmabuf_feedback = NULL;
-		return -1;
-	}
-
-	return 0;
-}
-
 static void
 compositor_create_surface(struct wl_client *client,
 			  struct wl_resource *resource, uint32_t id)
 {
 	struct weston_compositor *ec = wl_resource_get_user_data(resource);
 	struct weston_surface *surface;
-	int ret;
 
 	surface = weston_surface_create(ec);
 	if (surface == NULL)
 		goto err;
 
-	if (ec->default_dmabuf_feedback) {
-		ret = create_surface_dmabuf_feedback(ec, surface);
-		if (ret < 0)
-			goto err_dmabuf_feedback;
-	}
-
 	surface->resource =
 		wl_resource_create(client, &wl_surface_interface,
 				   wl_resource_get_version(resource), id);
 	if (surface->resource == NULL)
-		goto err_dmabuf_feedback;
+		goto err_res;
 	wl_resource_set_implementation(surface->resource, &surface_interface,
 				       surface, destroy_surface);
 
@@ -4099,7 +4071,7 @@ compositor_create_surface(struct wl_client *client,
 
 	return;
 
-err_dmabuf_feedback:
+err_res:
 	weston_surface_destroy(surface);
 err:
 	wl_resource_post_no_memory(resource);
@@ -4211,6 +4183,11 @@ weston_subsurface_commit_to_cache(struct weston_subsurface *sub)
 			      &surface->pending.damage_surface);
 	pixman_region32_clear(&surface->pending.damage_surface);
 
+	pixman_region32_union(&sub->cached.damage_buffer,
+			      &sub->cached.damage_buffer,
+			      &surface->pending.damage_buffer);
+	pixman_region32_clear(&surface->pending.damage_buffer);
+
 	if (surface->pending.newly_attached) {
 		sub->cached.newly_attached = 1;
 		weston_surface_state_set_buffer(&sub->cached,
@@ -4232,8 +4209,6 @@ weston_subsurface_commit_to_cache(struct weston_subsurface *sub)
 	assert(surface->pending.buffer_release_ref.buffer_release == NULL);
 	sub->cached.sx += surface->pending.sx;
 	sub->cached.sy += surface->pending.sy;
-
-	apply_damage_buffer(&sub->cached.damage_surface, surface, &surface->pending);
 
 	sub->cached.buffer_viewport.changed |=
 		surface->pending.buffer_viewport.changed;
@@ -4361,7 +4336,7 @@ subsurface_committed(struct weston_surface *surface, int32_t dx, int32_t dy)
 	 */
 
 	if (!weston_surface_is_mapped(surface)) {
-		surface->is_mapped = true;
+		surface->is_mapped = surface->buffer_ref.buffer != NULL;
 
 		/* Cannot call weston_view_update_transform(),
 		 * because that would call it also for the parent surface,
