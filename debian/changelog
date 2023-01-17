@@ -1,3 +1,15 @@
+weston (11.0.0-2) experimental; urgency=medium
+
+  * Add signing-key by emersion.
+
+ -- Timo Aaltonen <tjaalton@debian.org>  Tue, 17 Jan 2023 20:10:49 +0200
+
+weston (11.0.0-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Héctor Orón Martínez <zumbi@debian.org>  Fri, 14 Oct 2022 18:26:54 +0200
+
 weston (10.0.1-1) unstable; urgency=medium
 
   * New upstream release.
