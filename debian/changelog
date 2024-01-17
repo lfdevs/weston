@@ -1,3 +1,19 @@
+weston (13.0.0-1~exp1) experimental; urgency=medium
+
+  [ Dylan Aïssi ]
+  * New upstream release. (Closes: #1054695)
+  * Bump SONAME to libweston-13-0
+  * Update symbols file
+  * Use format: 3.0 (quilt)
+  * Import Marius Vlad's key
+  * Add myself in Uploaders
+
+  [ Timo Aaltonen ]
+  * rules: Drop the workaround to drop includedir from
+      libweston-NN-protocols.pc. (LP: #1887301)
+
+ -- Dylan Aïssi <daissi@debian.org>  Wed, 17 Jan 2024 20:56:05 +0100
+
 weston (12.0.1-1) unstable; urgency=medium
 
   * New upstream release.
