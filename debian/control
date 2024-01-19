@@ -6,12 +6,12 @@ Uploaders: Mike Gabriel <sunweaver@debian.org>,
            Héctor Orón Martínez <zumbi@debian.org>,
            Emilio Pozuelo Monfort <pochu@debian.org>,
            Dylan Aïssi <daissi@debian.org>
-Build-Depends: debhelper (>= 10),
+Build-Depends: debhelper-compat (= 13),
                freerdp2-dev,
                libcairo2-dev (>= 1.10.0),
                libcolord-dev (>= 0.1.27),
                libdbus-1-dev,
-               libdrm-dev (>= 2.4.95),
+               libdrm-dev (>= 2.4.108),
                libegl1-mesa-dev (>= 9.0~),
                libgbm-dev (>= 17.2),
                libgdk-pixbuf-2.0-dev,
@@ -19,10 +19,10 @@ Build-Depends: debhelper (>= 10),
                libglu1-mesa-dev,
                libgstreamer-plugins-base1.0-dev,
                libgstreamer1.0-dev,
-               libinput-dev (>= 0.8.0),
+               libinput-dev (>= 1.2.0),
                libjpeg-dev,
                liblcms2-dev,
-               libneatvnc-dev,
+               libneatvnc-dev (>= 0.7.0) [!ia64 !sparc64],
                libpam0g-dev,
                libpango1.0-dev,
                libpixman-1-dev (>= 0.25.2),
@@ -33,7 +33,7 @@ Build-Depends: debhelper (>= 10),
                libudev-dev (>= 136),
                libva-dev,
                libvpx-dev,
-               libwayland-dev (>= 1.18.0),
+               libwayland-dev (>= 1.22.0),
                libwebp-dev,
                libx11-dev,
                libx11-xcb-dev,
@@ -47,25 +47,24 @@ Build-Depends: debhelper (>= 10),
                libxkbcommon-dev (>= 0.3.0),
                libxml2-dev,
                mesa-common-dev,
-               meson (>= 0.52.1),
+               meson (>= 0.63.0),
                pkg-config,
-               quilt,
-               wayland-protocols (>= 1.18)
-Standards-Version: 4.4.0
+               wayland-protocols (>= 1.31)
+Standards-Version: 4.6.2
 Rules-Requires-Root: no
-Homepage: http://wayland.freedesktop.org/
+Homepage: https://wayland.freedesktop.org/
 Vcs-Git: https://salsa.debian.org/xorg-team/wayland/weston.git
 Vcs-Browser: https://salsa.debian.org/xorg-team/wayland/weston
 
 Package: weston
 Architecture: linux-any
-Depends: adduser,
-         ${misc:Depends},
+Depends: ${misc:Depends},
          ${shlibs:Depends}
 Breaks: libweston-8-dev
 Conflicts: libweston-8-dev
 Replaces: libweston-8-dev
 Recommends: libgl1-mesa-dri
+Suggests: wayland-utils
 Description: reference implementation of a wayland compositor
  Part of the Wayland project is also the Weston reference implementation
  of a Wayland compositor. Weston can run as an X client or under Linux
@@ -76,6 +75,7 @@ Description: reference implementation of a wayland compositor
 Package: libweston-13-0
 Section: libs
 Architecture: linux-any
+Multi-Arch: same
 Depends: ${misc:Depends}, ${shlibs:Depends}
 Replaces: weston (<< 1.12.0-1)
 Breaks: weston (<< 1.12.0-1)
@@ -99,7 +99,7 @@ Depends: libpixman-1-dev,
          ${shlibs:Depends}
 Replaces: weston (<< 1.12.0-1)
 Breaks: weston (<< 1.12.0-1)
-Description: reference implementation of a wayland compositor (shared libs)
+Description: reference implementation of a wayland compositor (headers)
  Part of the Wayland project is also the Weston reference implementation
  of a Wayland compositor. Weston can run as an X client or under Linux
  KMS and ships with a few demo clients. The Weston compositor is a minimal
