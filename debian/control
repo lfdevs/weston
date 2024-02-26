@@ -7,7 +7,7 @@ Uploaders: Mike Gabriel <sunweaver@debian.org>,
            Emilio Pozuelo Monfort <pochu@debian.org>,
            Dylan Aïssi <daissi@debian.org>
 Build-Depends: debhelper-compat (= 13),
-               freerdp2-dev,
+               freerdp2-dev [!ia64],
                libcairo2-dev (>= 1.10.0),
                libcolord-dev (>= 0.1.27),
                libdbus-1-dev,
@@ -48,7 +48,7 @@ Build-Depends: debhelper-compat (= 13),
                libxml2-dev,
                mesa-common-dev,
                meson (>= 0.63.0),
-               pkg-config,
+               pkgconf,
                wayland-protocols (>= 1.31)
 Standards-Version: 4.6.2
 Rules-Requires-Root: no
