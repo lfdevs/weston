@@ -1,0 +1,19 @@
+Description: Remove upper limit of required neatvnc version.
+ neatvnc 0.8.1 was released with only 1 breaking change:
+ nvnc_client_get_hostname has been replaced with nvnc_client_get_address
+ Since it's not used in weston, let's not block on this limit.
+Bug: https://gitlab.freedesktop.org/wayland/weston/-/issues/890
+Bug-Debian: http://bugs.debian.org/1065816
+Author: Dylan Aïssi <daissi@debian.org>
+
+--- a/libweston/backend-vnc/meson.build
++++ b/libweston/backend-vnc/meson.build
+@@ -3,7 +3,7 @@
+ endif
+ 
+ config_h.set('BUILD_VNC_COMPOSITOR', '1')
+-dep_neatvnc = dependency('neatvnc', version: ['>= 0.7.0', '< 0.8.0'], required: false, fallback: ['neatvnc', 'neatvnc_dep'])
++dep_neatvnc = dependency('neatvnc', version: ['>= 0.7.0'], required: false, fallback: ['neatvnc', 'neatvnc_dep'])
+ if not dep_neatvnc.found()
+ 	error('VNC backend requires neatvnc which was not found. Or, you can use \'-Dbackend-vnc=false\'.')
+ endif

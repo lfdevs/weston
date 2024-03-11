@@ -2,13 +2,13 @@
 
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 
-ifneq (,$(filter i64,$(DEB_HOST_ARCH)))
+ifneq (,$(filter ia64,$(DEB_HOST_ARCH)))
 BACKEND_RDP=false
 else
 BACKEND_RDP=true
 endif
 
-ifneq (,$(filter i64 sparc64,$(DEB_HOST_ARCH)))
+ifneq (,$(filter ia64 sparc64,$(DEB_HOST_ARCH)))
 BACKEND_VNC=false
 else
 BACKEND_VNC=true

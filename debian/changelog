@@ -1,3 +1,10 @@
+weston (13.0.0-5) unstable; urgency=medium
+
+  * Don't install disabled features on ia64 and sparc64
+  * Do not check the upper limit for neatvnc version (Closes: #1065816)
+
+ -- Dylan Aïssi <daissi@debian.org>  Mon, 11 Mar 2024 12:01:23 +0100
+
 weston (13.0.0-4) unstable; urgency=medium
 
   * Fix syntax of non fatal tests
@@ -7,7 +14,7 @@ weston (13.0.0-4) unstable; urgency=medium
 weston (13.0.0-3) unstable; urgency=medium
 
   * Retrict architectures where tests are run
-  * Disable backend-rdp for i64 and backend-vnc for i64 and sparc64,
+  * Disable backend-rdp for ia64 and backend-vnc for ia64 and sparc64,
       because of Build-Deps not available.
   * Mark Skip_xwayland_test.patch as 'Forwarded: not-needed'
   * Switch from pkg-config to pkgconf
