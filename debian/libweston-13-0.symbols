@@ -313,6 +313,7 @@ libweston-13.so.0 libweston-13-0 #MINVER#
  weston_output_finish_frame@Base 12.0.0
  weston_output_finish_frame_from_timer@Base 13.0.0
  weston_output_flush_damage_for_plane@Base 13.0.0
+ weston_output_flush_damage_for_primary_plane@Base 13.0.1
  weston_output_get_color_characteristics@Base 12.0.0
  weston_output_get_destroy_listener@Base 12.0.0
  weston_output_get_eotf_mode@Base 12.0.0

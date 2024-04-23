@@ -51,7 +51,7 @@ Build-Depends: debhelper-compat (= 13),
                meson (>= 0.63.0),
                pkgconf,
                wayland-protocols (>= 1.31)
-Standards-Version: 4.6.2
+Standards-Version: 4.7.0
 Rules-Requires-Root: no
 Homepage: https://wayland.freedesktop.org/
 Vcs-Git: https://salsa.debian.org/xorg-team/wayland/weston.git
