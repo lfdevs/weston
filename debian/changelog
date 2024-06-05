@@ -1,3 +1,9 @@
+weston (13.0.3-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Dylan Aïssi <daissi@debian.org>  Wed, 05 Jun 2024 17:25:19 +0200
+
 weston (13.0.1-1) unstable; urgency=medium
 
   * New upstream release.
