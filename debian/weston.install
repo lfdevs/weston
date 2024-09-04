@@ -1,5 +1,5 @@
 #! /usr/bin/dh-exec
-[!ia64 !sparc64] etc/pam.d/weston-remote-access
+[!sparc64] etc/pam.d/weston-remote-access
 usr/bin/wcap-decode
 usr/bin/weston
 usr/bin/weston-*

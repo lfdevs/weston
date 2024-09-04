@@ -2,13 +2,7 @@
 
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 
-ifneq (,$(filter ia64,$(DEB_HOST_ARCH)))
-BACKEND_RDP=false
-else
-BACKEND_RDP=true
-endif
-
-ifneq (,$(filter ia64 sparc64,$(DEB_HOST_ARCH)))
+ifneq (,$(filter sparc64,$(DEB_HOST_ARCH)))
 BACKEND_VNC=false
 else
 BACKEND_VNC=true
@@ -16,7 +10,7 @@ endif
 
 override_dh_auto_configure:
 	dh_auto_configure -- \
-	        -Dbackend-rdp=$(BACKEND_RDP) \
+	        -Dbackend-rdp=true \
 	        -Dbackend-vnc=$(BACKEND_VNC) \
 	        -Dscreenshare=true \
 		-Dsystemd=true
@@ -35,16 +29,10 @@ override_dh_missing:
 	dh_missing --fail-missing -X.la
 
 override_dh_makeshlibs:
-	dh_makeshlibs -Xlibweston-13/ -- -c4 -ldebian/weston/usr/lib/$(DEB_TARGET_MULTIARCH)/weston/
+	dh_makeshlibs -Xlibweston-14/ -- -c4 -ldebian/weston/usr/lib/$(DEB_TARGET_MULTIARCH)/weston/
 
 override_dh_shlibdeps:
 	dh_shlibdeps -O--buildsystem=meson -- -ldebian/weston/usr/lib/$(DEB_TARGET_MULTIARCH)/weston/
 
 %:
 	dh $@ --buildsystem=meson
-
-# For maintainer use only, generate a tarball:
-gentarball: SOURCE=$(shell dpkg-parsechangelog|awk '/^Source:/ {print $$2}')
-gentarball: UV=$(shell dpkg-parsechangelog|awk '/^Version:/ {print $$2}'|sed 's/-.*$$//')
-gentarball:
-	git archive --format=tar upstream-unstable --prefix=$(SOURCE)-$(UV)/ | gzip -9 > ../$(SOURCE)_$(UV).orig.tar.gz

@@ -8,10 +8,11 @@ Uploaders: Mike Gabriel <sunweaver@debian.org>,
            Dylan Aïssi <daissi@debian.org>
 Build-Depends: debhelper-compat (= 13),
                dh-exec,
-               freerdp2-dev [!ia64],
+               freerdp2-dev,
                libcairo2-dev (>= 1.10.0),
                libcolord-dev (>= 0.1.27),
                libdbus-1-dev,
+               libdisplay-info-dev,
                libdrm-dev (>= 2.4.108),
                libegl1-mesa-dev (>= 9.0~),
                libgbm-dev (>= 17.2),
@@ -23,7 +24,7 @@ Build-Depends: debhelper-compat (= 13),
                libinput-dev (>= 1.2.0),
                libjpeg-dev,
                liblcms2-dev,
-               libneatvnc-dev (>= 0.7.0) [!ia64 !sparc64],
+               libneatvnc-dev (>= 0.7.0) [!sparc64],
                libpam0g-dev,
                libpango1.0-dev,
                libpipewire-0.3-dev,
@@ -50,7 +51,7 @@ Build-Depends: debhelper-compat (= 13),
                mesa-common-dev,
                meson (>= 0.63.0),
                pkgconf,
-               wayland-protocols (>= 1.31)
+               wayland-protocols (>= 1.33)
 Standards-Version: 4.7.0
 Rules-Requires-Root: no
 Homepage: https://wayland.freedesktop.org/
@@ -73,7 +74,7 @@ Description: reference implementation of a wayland compositor
  and fast compositor and is suitable for many embedded and mobile use
  cases.
 
-Package: libweston-13-0
+Package: libweston-14-0
 Section: libs
 Architecture: linux-any
 Multi-Arch: same
@@ -90,13 +91,13 @@ Description: reference implementation of a wayland compositor (shared libs)
  .
  This package includes the libweston shared libraries.
 
-Package: libweston-13-dev
+Package: libweston-14-dev
 Section: libdevel
 Architecture: linux-any
 Multi-Arch: same
 Depends: libpixman-1-dev,
          libwayland-dev,
-         libweston-13-0 (= ${binary:Version}),
+         libweston-14-0 (= ${binary:Version}),
          libxkbcommon-dev,
          ${misc:Depends},
          ${shlibs:Depends}

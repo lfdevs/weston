@@ -1,5 +1,5 @@
-libweston-13.so.0 libweston-13-0 #MINVER#
-* Build-Depends-Package: libweston-13-dev
+libweston-14.so.0 libweston-14-0 #MINVER#
+* Build-Depends-Package: libweston-14-dev
  clear_pointer_focus@Base 12.0.0
  convert_size_by_transform_scale@Base 12.0.0
  linux_dmabuf_buffer_get@Base 12.0.0
@@ -69,14 +69,25 @@ libweston-13.so.0 libweston-13-0 #MINVER#
  weston_capture_task_get_buffer@Base 12.0.0
  weston_capture_task_retire_complete@Base 12.0.0
  weston_capture_task_retire_failed@Base 12.0.0
+ weston_cm_send_icc_file@Base 14.0.0
+ weston_cm_send_primaries@Base 14.0.0
+ weston_cm_send_primaries_named@Base 14.0.0
+ weston_cm_send_tf_named@Base 14.0.0
+ weston_color_feature_info_from@Base 14.0.0
+ weston_color_primaries_info_from@Base 14.0.0
  weston_color_profile_get_description@Base 12.0.0
  weston_color_profile_init@Base 12.0.0
  weston_color_profile_ref@Base 12.0.0
  weston_color_profile_unref@Base 12.0.0
+ weston_color_tf_info_from@Base 14.0.0
  weston_color_transform_init@Base 12.0.0
  weston_color_transform_ref@Base 12.0.0
  weston_color_transform_string@Base 12.0.0
  weston_color_transform_unref@Base 12.0.0
+ weston_colorimetry_mask_to_str@Base 14.0.0
+ weston_colorimetry_mode_info_get@Base 14.0.0
+ weston_colorimetry_mode_info_get_by_wdrm@Base 14.0.0
+ weston_colorimetry_mode_to_str@Base 14.0.0
  weston_compositor_add_axis_binding@Base 12.0.0
  weston_compositor_add_button_binding@Base 12.0.0
  weston_compositor_add_debug_binding@Base 12.0.0
@@ -209,10 +220,12 @@ libweston-13.so.0 libweston-13-0 #MINVER#
  weston_eotf_mode_to_str@Base 12.0.0
  weston_fade_run@Base 12.0.0
  weston_fade_update@Base 12.0.0
+ weston_get_backend_type@Base 14.0.0
  weston_head_add_destroy_listener@Base 12.0.0
  weston_head_detach@Base 12.0.0
  weston_head_from_resource@Base 12.0.0
  weston_head_get_destroy_listener@Base 12.0.0
+ weston_head_get_display_info@Base 14.0.0
  weston_head_get_name@Base 12.0.0
  weston_head_get_output@Base 12.0.0
  weston_head_get_transform@Base 12.0.0
@@ -231,8 +244,13 @@ libweston-13.so.0 libweston-13-0 #MINVER#
  weston_head_set_non_desktop@Base 12.0.0
  weston_head_set_physical_size@Base 12.0.0
  weston_head_set_subpixel@Base 12.0.0
+ weston_head_set_supported_colorimetry_mask@Base 14.0.0
  weston_head_set_supported_eotf_mask@Base 12.0.0
  weston_head_set_transform@Base 12.0.0
+ weston_idalloc_create@Base 14.0.0
+ weston_idalloc_destroy@Base 14.0.0
+ weston_idalloc_get_id@Base 14.0.0
+ weston_idalloc_put_id@Base 14.0.0
  weston_install_debug_key_binding@Base 12.0.0
  weston_keyboard_end_grab@Base 12.0.0
  weston_keyboard_has_focus_resource@Base 12.0.0
@@ -242,8 +260,8 @@ libweston-13.so.0 libweston-13-0 #MINVER#
  weston_keyboard_set_focus@Base 12.0.0
  weston_keyboard_set_locks@Base 12.0.0
  weston_keyboard_start_grab@Base 12.0.0
- weston_layer_entry_insert@Base 12.0.0
- weston_layer_entry_remove@Base 12.0.0
+#MISSING: 14.0.0#  weston_layer_entry_insert@Base 12.0.0
+#MISSING: 14.0.0#  weston_layer_entry_remove@Base 12.0.0
  weston_layer_fini@Base 12.0.0
  weston_layer_init@Base 12.0.0
  weston_layer_mask_is_infinite@Base 12.0.0
@@ -304,6 +322,7 @@ libweston-13.so.0 libweston-13-0 #MINVER#
  weston_output_contains_point@Base 12.0.0
  weston_output_contains_coord@Base 13.0.0
 #MISSING: 13.0.0# weston_output_contains_point@Base 12.0.0
+ weston_output_copy_native_mode@Base 14.0.0
  weston_output_damage@Base 12.0.0
  weston_output_destroy@Base 12.0.0
  weston_output_disable@Base 12.0.0
@@ -315,10 +334,12 @@ libweston-13.so.0 libweston-13-0 #MINVER#
  weston_output_flush_damage_for_plane@Base 13.0.0
  weston_output_flush_damage_for_primary_plane@Base 13.0.1
  weston_output_get_color_characteristics@Base 12.0.0
+ weston_output_get_colorimetry_mode@Base 14.0.0
  weston_output_get_destroy_listener@Base 12.0.0
  weston_output_get_eotf_mode@Base 12.0.0
  weston_output_get_first_head@Base 12.0.0
  weston_output_get_hdr_metadata_type1@Base 12.0.0
+ weston_output_get_supported_colorimetry_modes@Base 14.0.0
  weston_output_get_supported_eotf_modes@Base 12.0.0
  weston_output_has_renderer_capture_tasks@Base 12.0.0
  weston_output_init@Base 12.0.0
@@ -333,10 +354,14 @@ libweston-13.so.0 libweston-13-0 #MINVER#
  weston_output_release@Base 12.0.0
  weston_output_repaint_failed@Base 12.0.0
  weston_output_schedule_repaint@Base 12.0.0
+ weston_output_schedule_repaint_reset@Base 14.0.0
+ weston_output_schedule_repaint_restart@Base 14.0.0
  weston_output_set_color_characteristics@Base 12.0.0
  weston_output_set_color_outcome@Base 12.0.0
  weston_output_set_color_profile@Base 12.0.0
+ weston_output_set_colorimetry_mode@Base 14.0.0
  weston_output_set_eotf_mode@Base 12.0.0
+ weston_output_set_position@Base 14.0.0
  weston_output_set_scale@Base 12.0.0
  weston_output_set_single_mode@Base 13.0.0
  weston_output_set_transform@Base 12.0.0
@@ -365,6 +390,8 @@ libweston-13.so.0 libweston-13-0 #MINVER#
  weston_recorder_start@Base 12.0.0
  weston_recorder_stop@Base 12.0.0
  weston_region_global_to_output@Base 12.0.0
+ weston_render_intent_info_from@Base 14.0.0
+ weston_render_intent_info_from_protocol@Base 14.0.0
  weston_renderbuffer_ref@Base 12.0.0
  weston_renderbuffer_unref@Base 12.0.0
  weston_renderer_resize_output@Base 12.0.0

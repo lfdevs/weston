@@ -37,7 +37,7 @@
 #include <sys/types.h>
 
 #include "shell.h"
-#include "compositor/weston.h"
+#include "frontend/weston.h"
 #include "weston-desktop-shell-server-protocol.h"
 #include <libweston/config-parser.h>
 #include "shared/helpers.h"
@@ -398,13 +398,13 @@ get_output_work_area(struct desktop_shell *shell,
 	switch (shell->panel_position) {
 	case WESTON_DESKTOP_SHELL_PANEL_POSITION_TOP:
 		area->y += sh_output->panel_surface->height;
-		/* fallthrough */
+		FALLTHROUGH;
 	case WESTON_DESKTOP_SHELL_PANEL_POSITION_BOTTOM:
 		area->height -= sh_output->panel_surface->height;
 		break;
 	case WESTON_DESKTOP_SHELL_PANEL_POSITION_LEFT:
 		area->x += sh_output->panel_surface->width;
-		/* fallthrough */
+		FALLTHROUGH;
 	case WESTON_DESKTOP_SHELL_PANEL_POSITION_RIGHT:
 		area->width -= sh_output->panel_surface->width;
 		break;
@@ -657,7 +657,7 @@ animate_focus_change(struct desktop_shell *shell, struct workspace *ws,
 		weston_view_move_to_layer(front, &ws->layer.view_list);
 		weston_view_move_to_layer(back, NULL);
 		ws->focus_animation =
-			weston_fade_run(front, front->alpha, 0.0, 300,
+			weston_fade_run(front, front->alpha, 0.0,
 					focus_animation_done, ws);
 	}
 }
@@ -1692,6 +1692,8 @@ notify_output_destroy(struct wl_listener *listener, void *data)
 
 	shsurf->output = NULL;
 	shsurf->output_destroy_listener.notify = NULL;
+
+	shsurf->fullscreen_output = NULL;
 }
 
 static void
@@ -2163,7 +2165,7 @@ desktop_surface_removed(struct weston_desktop_surface *desktop_surface,
 	weston_desktop_surface_set_user_data(shsurf->desktop_surface, NULL);
 	shsurf->desktop_surface = NULL;
 
-	if (weston_surface_is_mapped(surface) &&
+	if (weston_view_is_mapped(shsurf->view) &&
 	    shsurf->shell->win_close_animation_type == ANIMATION_FADE) {
 
 		if (shsurf->shell->compositor->state == WESTON_COMPOSITOR_ACTIVE &&
@@ -2191,7 +2193,7 @@ desktop_surface_removed(struct weston_desktop_surface *desktop_surface,
 			/* unmap the "original" view, which is owned by
 			 * libweston-desktop */
 			weston_view_move_to_layer(shsurf->view, NULL);
-			weston_fade_run(shsurf->wview_anim_fade, 1.0, 0.0, 300.0,
+			weston_fade_run(shsurf->wview_anim_fade, 1.0, 0.0,
 					fade_out_done, shsurf);
 
 			return;
@@ -2282,7 +2284,7 @@ map(struct desktop_shell *shell, struct shell_surface *shsurf)
 	if (!shsurf->state.fullscreen && !shsurf->state.maximized) {
 		switch (shell->win_animation_type) {
 		case ANIMATION_FADE:
-			weston_fade_run(shsurf->view, 0.0, 1.0, 300.0, NULL, NULL);
+			weston_fade_run(shsurf->view, 0.0, 1.0, NULL, NULL);
 			break;
 		case ANIMATION_ZOOM:
 			weston_zoom_run(shsurf->view, 0.5, 1.0, NULL, NULL);
@@ -3838,7 +3840,7 @@ shell_fade_create_view(struct desktop_shell *shell)
 		.surface_committed = black_surface_committed,
 		.get_label = fade_surface_get_label,
 		.surface_private = shell,
-		.capture_input = false,
+		.capture_input = true,
 	};
 	struct weston_curtain *curtain;
 	bool first = true;
@@ -3905,7 +3907,7 @@ shell_fade(struct desktop_shell *shell, enum fade_type type)
 	} else {
 		shell->fade.animation =
 			weston_fade_run(shell->fade.curtain->view,
-					1.0 - tint, tint, 300.0,
+					1.0 - tint, tint,
 					shell_fade_done, shell);
 	}
 }
@@ -4776,6 +4778,7 @@ shell_destroy(struct wl_listener *listener, void *data)
 	wl_list_remove(&shell->output_create_listener.link);
 	wl_list_remove(&shell->output_move_listener.link);
 	wl_list_remove(&shell->resized_listener.link);
+	wl_list_remove(&shell->session_listener.link);
 
 	wl_list_for_each_safe(shseat, shseat_next, &shell->seat_list, link)
 		desktop_shell_destroy_seat(shseat);
@@ -4868,6 +4871,35 @@ shell_add_bindings(struct weston_compositor *ec, struct desktop_shell *shell)
 				          force_kill_binding, shell);
 
 	weston_install_debug_key_binding(ec, mod);
+}
+
+static void
+desktop_shell_notify_session(struct wl_listener *listener, void *data)
+{
+	struct desktop_shell *shell =
+		container_of(listener, struct desktop_shell, session_listener);
+	struct weston_compositor *compositor = data;
+	struct shell_seat *shseat;
+
+	if (!compositor->session_active)
+		return;
+
+	wl_list_for_each(shseat, &shell->seat_list, link) {
+		if (!shseat)
+			 continue;
+
+		if (shseat->focused_surface) {
+			struct shell_surface *current_focus =
+				get_shell_surface(shseat->focused_surface);
+
+			if (!current_focus)
+				continue;
+
+			weston_view_activate_input(current_focus->view,
+						   shseat->seat,
+						   WESTON_ACTIVATE_FLAG_NONE);
+		}
+	}
 }
 
 static void
@@ -4970,6 +5002,8 @@ wet_shell_init(struct weston_compositor *ec,
 	shell->resized_listener.notify = handle_output_resized;
 	wl_signal_add(&ec->output_resized_signal, &shell->resized_listener);
 
+	shell->session_listener.notify = desktop_shell_notify_session;
+	wl_signal_add(&ec->session_signal, &shell->session_listener);
 	screenshooter_create(ec);
 
 	shell_add_bindings(ec, shell);

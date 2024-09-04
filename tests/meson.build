@@ -36,6 +36,8 @@ lib_test_client = static_library(
 		weston_output_capture_protocol_c,
 		viewporter_client_protocol_h,
 		viewporter_protocol_c,
+		xdg_shell_client_protocol_h,
+		xdg_shell_protocol_c,
 		'color_util.h',
 		'color_util.c',
 	],
@@ -152,7 +154,6 @@ tests = [
 		'name': 'color-metadata-errors',
 		'dep_objs': dep_libexec_weston,
 	},
-	{	'name': 'color-manager', },
 	{
 		'name': 'constraints',
 		'sources': [
@@ -179,6 +180,14 @@ tests = [
 			input_timestamps_unstable_v1_protocol_c,
 		],
 	},
+	{
+		'name': 'kiosk-shell',
+		'sources': [
+			'kiosk-shell-test.c',
+			xdg_shell_client_protocol_h,
+			xdg_shell_protocol_c,
+		],
+        },
 	{
 		'name': 'linux-explicit-synchronization',
 		'sources': [
@@ -309,6 +318,14 @@ if get_option('color-management-lcms')
 		{
 			'name': 'color-lcms-optimizer',
 			'link_with': plugin_color_lcms,
+			'dep_objs': [ dep_lcms_util ]
+		},
+		{	'name': 'color-management',
+			'sources': [
+				'color-management-test.c',
+				color_management_v1_client_protocol_h,
+				color_management_v1_protocol_c,
+			],
 			'dep_objs': [ dep_lcms_util ]
 		},
 		{	'name': 'color-metadata-parsing' },

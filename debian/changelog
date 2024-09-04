@@ -1,3 +1,18 @@
+weston (14.0.0-1~exp1) experimental; urgency=medium
+
+  * New upstream release.
+  * Drop Remove_upper_limit_of_required_neatvnc_version.patch,
+      no longer required.
+  * Add new Build-Deps: libdisplay-info-dev
+  * Bump SONAME to libweston-14-0
+  * Update symbols file
+  * Drop gentarball target in rules since we use upstream signed tarballs
+  * Drop packaging tweaks for architecture ia64
+  * Update minimum version of Build-Deps
+      - wayland-protocols >= 1.33
+
+ -- Dylan Aïssi <daissi@debian.org>  Wed, 04 Sep 2024 17:17:11 +0200
+
 weston (13.0.3-1) unstable; urgency=medium
 
   * New upstream release.
