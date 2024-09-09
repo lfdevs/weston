@@ -8,7 +8,7 @@ Uploaders: Mike Gabriel <sunweaver@debian.org>,
            Dylan Aïssi <daissi@debian.org>
 Build-Depends: debhelper-compat (= 13),
                dh-exec,
-               freerdp2-dev,
+               freerdp3-dev,
                libcairo2-dev (>= 1.10.0),
                libcolord-dev (>= 0.1.27),
                libdbus-1-dev,
