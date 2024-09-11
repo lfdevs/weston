@@ -1,3 +1,9 @@
+weston (14.0.0-1) unstable; urgency=medium
+
+  * Upload to unstable
+
+ -- Dylan Aïssi <daissi@debian.org>  Wed, 11 Sep 2024 11:30:18 +0200
+
 weston (14.0.0-1~exp2) experimental; urgency=medium
 
   * Switch to freerdp3-dev from freerdp2-dev in Build-Deps
