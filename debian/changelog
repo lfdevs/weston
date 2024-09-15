@@ -1,3 +1,12 @@
+weston (14.0.0-2) unstable; urgency=medium
+
+  [ Simon McVittie ]
+  * d/p/libweston-noop-renderer-Check-shm_buffer-for-NULL.patch:
+    Add proposed patch fixing a crash while running the gtk4 test suite.
+    Thanks to Jan Alexander Steffens (heftig) (Closes: #1081515)
+
+ -- Dylan Aïssi <daissi@debian.org>  Sun, 15 Sep 2024 14:20:35 +0200
+
 weston (14.0.0-1) unstable; urgency=medium
 
   * Upload to unstable

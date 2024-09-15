@@ -1,1 +1,2 @@
 Skip_xwayland_test.patch
+libweston-noop-renderer-Check-shm_buffer-for-NULL.patch
