@@ -1,3 +1,15 @@
+weston (14.0.0-3) experimental; urgency=medium
+
+  * Enable tests (build time and autopkgtest) on armhf since
+      they are now successful.
+  * Bump minimum version of libdisplay-info-dev to 0.2.0,
+      it's required to get a better color management like HDR support.
+  * Move weston headers for plugin development into their
+      own package weston-dev. (Closes: #952530)
+  * cme fix dpkg-control
+
+ -- Dylan Aïssi <daissi@debian.org>  Thu, 17 Oct 2024 22:15:06 +0200
+
 weston (14.0.0-2) unstable; urgency=medium
 
   [ Simon McVittie ]

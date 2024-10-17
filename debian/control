@@ -1,18 +1,18 @@
 Source: weston
-Section: x11
-Priority: optional
 Maintainer: Debian X Strike Force <debian-x@lists.debian.org>
 Uploaders: Mike Gabriel <sunweaver@debian.org>,
            Héctor Orón Martínez <zumbi@debian.org>,
            Emilio Pozuelo Monfort <pochu@debian.org>,
            Dylan Aïssi <daissi@debian.org>
+Section: x11
+Priority: optional
 Build-Depends: debhelper-compat (= 13),
                dh-exec,
                freerdp3-dev,
                libcairo2-dev (>= 1.10.0),
                libcolord-dev (>= 0.1.27),
                libdbus-1-dev,
-               libdisplay-info-dev,
+               libdisplay-info-dev (>= 0.2.0),
                libdrm-dev (>= 2.4.108),
                libegl1-mesa-dev (>= 9.0~),
                libgbm-dev (>= 17.2),
@@ -53,18 +53,15 @@ Build-Depends: debhelper-compat (= 13),
                pkgconf,
                wayland-protocols (>= 1.33)
 Standards-Version: 4.7.0
-Rules-Requires-Root: no
-Homepage: https://wayland.freedesktop.org/
-Vcs-Git: https://salsa.debian.org/xorg-team/wayland/weston.git
 Vcs-Browser: https://salsa.debian.org/xorg-team/wayland/weston
+Vcs-Git: https://salsa.debian.org/xorg-team/wayland/weston.git
+Homepage: https://wayland.freedesktop.org/
+Rules-Requires-Root: no
 
 Package: weston
 Architecture: linux-any
 Depends: ${misc:Depends},
          ${shlibs:Depends}
-Breaks: libweston-8-dev
-Conflicts: libweston-8-dev
-Replaces: libweston-8-dev
 Recommends: libgl1-mesa-dri
 Suggests: wayland-utils
 Description: reference implementation of a wayland compositor
@@ -74,14 +71,29 @@ Description: reference implementation of a wayland compositor
  and fast compositor and is suitable for many embedded and mobile use
  cases.
 
+Package: weston-dev
+Architecture: linux-any
+Depends: weston,
+         libweston-14-dev,
+         ${misc:Depends},
+         ${shlibs:Depends}
+Breaks: weston (<< 14.0.0-3)
+Replaces: weston (<< 14.0.0-3)
+Description: reference implementation of a wayland compositor (headers)
+ Part of the Wayland project is also the Weston reference implementation
+ of a Wayland compositor. Weston can run as an X client or under Linux
+ KMS and ships with a few demo clients. The Weston compositor is a minimal
+ and fast compositor and is suitable for many embedded and mobile use
+ cases.
+ .
+ This package includes the weston headers for plugin development.
+
 Package: libweston-14-0
-Section: libs
 Architecture: linux-any
 Multi-Arch: same
+Section: libs
 Depends: ${misc:Depends},
          ${shlibs:Depends}
-Replaces: weston (<< 1.12.0-1)
-Breaks: weston (<< 1.12.0-1)
 Description: reference implementation of a wayland compositor (shared libs)
  Part of the Wayland project is also the Weston reference implementation
  of a Wayland compositor. Weston can run as an X client or under Linux
@@ -92,17 +104,15 @@ Description: reference implementation of a wayland compositor (shared libs)
  This package includes the libweston shared libraries.
 
 Package: libweston-14-dev
-Section: libdevel
 Architecture: linux-any
 Multi-Arch: same
+Section: libdevel
 Depends: libpixman-1-dev,
          libwayland-dev,
          libweston-14-0 (= ${binary:Version}),
          libxkbcommon-dev,
          ${misc:Depends},
          ${shlibs:Depends}
-Replaces: weston (<< 1.12.0-1)
-Breaks: weston (<< 1.12.0-1)
 Description: reference implementation of a wayland compositor (headers)
  Part of the Wayland project is also the Weston reference implementation
  of a Wayland compositor. Weston can run as an X client or under Linux
