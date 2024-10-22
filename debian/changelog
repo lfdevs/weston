@@ -1,3 +1,12 @@
+weston (14.0.1-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Update Homepage in debian/control.
+  * Drop libweston-noop-renderer-Check-shm_buffer-for-NULL.patch,
+      included in upstream release.
+
+ -- Dylan Aïssi <daissi@debian.org>  Tue, 22 Oct 2024 17:50:04 +0200
+
 weston (14.0.0-3) experimental; urgency=medium
 
   * Enable tests (build time and autopkgtest) on armhf since
