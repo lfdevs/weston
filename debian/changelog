@@ -1,3 +1,18 @@
+weston (14.0.1-2) unstable; urgency=medium
+
+  [ Carlos Henrique Lima Melara ]
+  * d/control: Recommends xwayland so it works out-of-the-box
+
+  [ Dylan Aïssi ]
+  * Run autopkgtest on failing architectures but marked as flaky
+  * Add xwayland in Build-Deps to ensure that HAVE_XWAYLAND_LISTENFD
+      is properly defined
+  * Re-enable xwayland test
+  * Enable tests (build time and autopkgtest) on riscv64 since they are
+      now successful
+
+ -- Dylan Aïssi <daissi@debian.org>  Fri, 08 Nov 2024 15:49:46 +0100
+
 weston (14.0.1-1) unstable; urgency=medium
 
   * New upstream release.
