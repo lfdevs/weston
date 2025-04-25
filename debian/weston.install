@@ -15,6 +15,5 @@ usr/libexec/weston-desktop-shell
 usr/libexec/weston-ivi-shell-user-interface
 usr/libexec/weston-keyboard
 usr/libexec/weston-simple-im
-usr/share/man
 usr/share/wayland-sessions/weston.desktop
 usr/share/weston
