@@ -1,3 +1,13 @@
+weston (14.0.2-2) experimental; urgency=medium
+
+  * Build Weston documentation and install it in weston-doc.
+  * Add new Build-Deps-Indep: python3-breathe, python3-sphinx and
+      python3-sphinx-rtd-theme.
+  * Cherry-pick upstream patch to fix compatibility with sphinx 8.x.
+  * salsa-ci: add jobs to test nodoc profile and cross-build.
+
+ -- Dylan Aïssi <daissi@debian.org>  Thu, 18 Sep 2025 14:55:41 +0200
+
 weston (14.0.2-1) unstable; urgency=medium
 
   * New upstream release.

@@ -8,12 +8,19 @@ else
 BACKEND_VNC=true
 endif
 
+ifeq (,$(filter weston-doc,$(shell dh_listpackages)))
+CONFIGURE_FLAGS = -Ddoc=false
+else
+CONFIGURE_FLAGS = -Ddoc=true
+endif
+
 override_dh_auto_configure:
 	dh_auto_configure -- \
 	        -Dbackend-rdp=true \
 	        -Dbackend-vnc=$(BACKEND_VNC) \
 	        -Dscreenshare=true \
-		-Dsystemd=true
+		-Dsystemd=true \
+		$(CONFIGURE_FLAGS)
 
 override_dh_auto_test:
 	mkdir -p $(CURDIR)/debian/tmp/tmp/xdgruntimedir
