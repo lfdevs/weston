@@ -1,3 +1,9 @@
+weston (14.0.2-3) unstable; urgency=medium
+
+  * Upload to unstable.
+
+ -- Dylan Aïssi <daissi@debian.org>  Tue, 23 Sep 2025 09:47:16 +0200
+
 weston (14.0.2-2) experimental; urgency=medium
 
   * Build Weston documentation and install it in weston-doc.
