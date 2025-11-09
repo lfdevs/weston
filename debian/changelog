@@ -1,3 +1,10 @@
+weston (14.0.2-5) unstable; urgency=high
+
+  * Team upload
+  * Increase build test timeout because of riscv64 (Closes: #1120434)
+
+ -- Jeremy Bícha <jbicha@ubuntu.com>  Sun, 09 Nov 2025 14:31:47 -0500
+
 weston (14.0.2-4) unstable; urgency=high
 
   * Team upload
