@@ -1,11 +1,20 @@
-Description: Fix compatibility with sphinx 8.x. Otherwise it FTBFS with:
- ERROR: Invalid value `None` in intersphinx_mapping['https://docs.python.org/'].
+From: =?utf-8?q?Dylan_A=C3=AFssi?= <daissi@debian.org>
+Date: Tue, 16 Sep 2025 13:42:50 +0200
+Subject: Fix compatibility with sphinx 8.x. Otherwise it FTBFS with:
+
+ERROR: Invalid value `None` in intersphinx_mapping['https://docs.python.org/'].
+
 Forwarded: not-needed
 Origin: upstream, https://gitlab.freedesktop.org/wayland/weston/-/commit/a40c6380
+---
+ doc/sphinx/conf.py.in | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
 
+diff --git a/doc/sphinx/conf.py.in b/doc/sphinx/conf.py.in
+index a08ab1f..7fff85a 100644
 --- a/doc/sphinx/conf.py.in
 +++ b/doc/sphinx/conf.py.in
-@@ -196,7 +196,7 @@
+@@ -196,7 +196,7 @@ epub_exclude_files = ['search.html']
  # -- Options for intersphinx extension ---------------------------------------
  
  # Example configuration for intersphinx: refer to the Python standard library.

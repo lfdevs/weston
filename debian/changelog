@@ -1,3 +1,16 @@
+weston (14.0.2-4) unstable; urgency=high
+
+  * Team upload
+
+  [ Jeremy Bícha ]
+  * Cherry-pick patch to allow building with libdisplay-info 0.3
+  * Update debian/gbp.conf
+
+  [ Dylan Aïssi ]
+  * Convert watch to version 5 and use Gitlab template
+
+ -- Jeremy Bícha <jbicha@ubuntu.com>  Sun, 09 Nov 2025 07:53:33 -0500
+
 weston (14.0.2-3) unstable; urgency=medium
 
   * Upload to unstable.
