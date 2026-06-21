@@ -68,6 +68,7 @@
 #include <libweston/backend-vnc.h>
 #include <libweston/backend-x11.h>
 #include <libweston/backend-wayland.h>
+#include <libweston/backend-anland.h>
 #include <libweston/windowed-output-api.h>
 #include <libweston/weston-log.h>
 #include <libweston/remoting-plugin.h>
@@ -4922,6 +4923,91 @@ load_wayland_backend(struct weston_compositor *c,
 
 
 static int
+anland_backend_output_configure(struct weston_output *output)
+{
+	const struct weston_windowed_output_api *api;
+	struct weston_config *wc = wet_get_config(output->compositor);
+	struct weston_config_section *section;
+	struct wet_compositor *wet = to_wet_compositor(output->compositor);
+	struct wet_output_config *parsed_options = wet->parsed_options;
+	int width = 1280, height = 720;
+
+	api = (const struct weston_windowed_output_api *)
+		weston_plugin_api_get(output->compositor,
+			"weston_windowed_output_api_anland_v2",
+			sizeof(struct weston_windowed_output_api));
+	if (!api)
+		return -1;
+
+	section = weston_config_get_section(wc, "output", "name", output->name);
+	if (section) {
+		weston_config_section_get_int(section, "width", &width, width);
+		weston_config_section_get_int(section, "height", &height, height);
+	}
+	if (parsed_options) {
+		if (parsed_options->width > 0) width = parsed_options->width;
+		if (parsed_options->height > 0) height = parsed_options->height;
+	}
+
+	weston_output_set_scale(output, 1);
+	weston_output_set_transform(output, WL_OUTPUT_TRANSFORM_NORMAL);
+
+	return api->output_set_size(output, width, height);
+}
+
+static int
+load_anland_backend(struct weston_compositor *c,
+			  int *argc, char **argv, struct weston_config *wc,
+			  enum weston_renderer_type renderer)
+{
+	const struct weston_windowed_output_api *api;
+	struct weston_anland_backend_config config = {{ 0, }};
+	struct wet_backend *wb;
+	char *socket_path = NULL;
+
+	struct wet_output_config *parsed_options = wet_init_parsed_options(c);
+	if (!parsed_options)
+		return -1;
+
+	const struct weston_option options[] = {
+		{ WESTON_OPTION_INTEGER, "width", 0, &parsed_options->width },
+		{ WESTON_OPTION_INTEGER, "height", 0, &parsed_options->height },
+		{ WESTON_OPTION_STRING, "disp-sock", 0, &socket_path },
+	};
+
+	parse_options(options, ARRAY_LENGTH(options), argc, argv);
+
+	config.socket_path = socket_path;
+	config.refresh = 60000;
+	config.renderer = renderer;
+
+	config.base.struct_version = WESTON_ANLAND_BACKEND_CONFIG_VERSION;
+	config.base.struct_size = sizeof(struct weston_anland_backend_config);
+
+	wb = wet_compositor_load_backend(c, WESTON_BACKEND_ANLAND,
+					 &config.base, simple_heads_changed,
+					 anland_backend_output_configure);
+	free(socket_path);
+
+	if (!wb)
+		return -1;
+
+	api = (const struct weston_windowed_output_api *)
+		weston_plugin_api_get(c,
+			"weston_windowed_output_api_anland_v2",
+			sizeof(struct weston_windowed_output_api));
+	if (!api) {
+		weston_log("Cannot use anland windowed output API.\n");
+		return -1;
+	}
+
+	if (api->create_head(wb->backend, "anland-1") < 0)
+		return -1;
+
+	return 0;
+}
+
+static int
 load_backend(struct weston_compositor *compositor, const char *name,
 	     int *argc, char **argv, struct weston_config *config,
 	     const char *renderer_name)
@@ -4961,6 +5047,9 @@ load_backend(struct weston_compositor *compositor, const char *name,
 	case WESTON_BACKEND_X11:
 		return load_x11_backend(compositor, argc, argv, config,
 					renderer);
+	case WESTON_BACKEND_ANLAND:
+		return load_anland_backend(compositor, argc, argv, config,
+						renderer);
 	default:
 		unreachable("unknown backend type in load_backend()");
 	}

@@ -142,15 +142,19 @@ config_h.set_quoted('LIBWESTON_MODULEDIR', dir_module_libweston)
 
 backend_default = get_option('backend-default')
 if backend_default == 'auto'
-	foreach b : [ 'headless', 'x11', 'wayland', 'drm' ]
-		if get_option('backend-' + b)
-			backend_default = b
-		endif
-	endforeach
+	if get_option('backend-anland')
+		backend_default = 'anland'
+	else
+		foreach b : [ 'headless', 'x11', 'wayland', 'drm' ]
+			if get_option('backend-' + b)
+				backend_default = b
+			endif
+		endforeach
+	endif
 endif
 config_h.set_quoted('WESTON_NATIVE_BACKEND', backend_default)
 message('The default backend is ' + backend_default)
-if not get_option('backend-' + backend_default)
+if backend_default != 'anland' and not get_option('backend-' + backend_default)
 	error('Backend @0@ was chosen as native but is not being built.'.format(backend_default))
 endif
 

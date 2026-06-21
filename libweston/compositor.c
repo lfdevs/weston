@@ -11088,6 +11088,7 @@ static const char * const backend_map[] = {
 	[WESTON_BACKEND_VNC] =		"vnc-backend.so",
 	[WESTON_BACKEND_WAYLAND] =	"wayland-backend.so",
 	[WESTON_BACKEND_X11] =		"x11-backend.so",
+	[WESTON_BACKEND_ANLAND] =	"anland-backend.so",
 };
 
 /** Load a backend into a weston_compositor

@@ -45,6 +45,12 @@ option(
 	description: 'Weston backend: X11 (nested)'
 )
 option(
+	'backend-anland',
+	type: 'boolean',
+	value: true,
+	description: 'Weston backend: anland zero-copy display'
+)
+option(
 	'backend-default',
 	type: 'combo',
 	choices: [ 'auto', 'drm', 'wayland', 'x11', 'headless', 'rdp' ],
