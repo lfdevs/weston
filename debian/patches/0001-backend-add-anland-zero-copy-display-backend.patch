@@ -1,0 +1,2028 @@
+From: superturtlee <160681686+superturtlee@users.noreply.github.com>
+Date: Mon, 22 Jun 2026 00:52:12 +0800
+Subject: backend: add anland zero-copy display backend (ported from 15.0.90)
+
+Add the anland backend, which provides a zero-copy display path via
+shared DMA-BUFs and a Unix domain socket protocol to an external display
+daemon (libdisplay_producer).
+
+The backend was originally developed against Weston 15.0.90 and has been
+adapted to the 14.0.2 API surface with the following changes:
+
+  - Remove Vulkan renderer support (not available in 14.x).
+  - Convert input notification calls from the 15.x event-struct API
+    (weston_*_event_init + notify) to the 14.x direct-call API
+    (notify_motion, notify_button, notify_key, notify_touch).
+  - Replace weston_renderbuffer_t typedef with struct weston_renderbuffer *.
+  - Adjust create_renderbuffer_dmabuf() call from 4 args to 2 args.
+  - Replace renderer->destroy_renderbuffer() with weston_renderbuffer_unref().
+  - Adjust weston_touch_create_touch_device() from 5 args to 4 args.
+
+New files:
+  - libweston/backend-anland/anland.c
+  - libweston/backend-anland/meson.build
+  - libweston/backend-anland/vendor/display_producer.c
+  - libweston/backend-anland/vendor/display_producer.h
+  - libweston/backend-anland/vendor/protocol.h
+  - libweston/backend-anland/vendor/socket_utils.c
+  - libweston/backend-anland/vendor/socket_utils.h
+  - include/libweston/backend-anland.h
+
+Based-on-patch: https://github.com/lfdevs/weston/commit/776599ab62a6dc8f6bb1d36c8b14ea354c190301
+
+Co-authored-by: lfdevs <lfdevs@lfdevs.com>
+---
+ frontend/config-helpers.c                          |    1 +
+ frontend/main.c                                    |   89 ++
+ include/libweston/backend-anland.h                 |   24 +
+ include/libweston/libweston.h                      |    1 +
+ include/libweston/meson.build                      |    1 +
+ libweston/backend-anland/anland.c                  | 1000 ++++++++++++++++++++
+ libweston/backend-anland/meson.build               |   33 +
+ libweston/backend-anland/vendor/display_producer.c |  359 +++++++
+ libweston/backend-anland/vendor/display_producer.h |   59 ++
+ libweston/backend-anland/vendor/protocol.h         |   88 ++
+ libweston/backend-anland/vendor/socket_utils.c     |  121 +++
+ libweston/backend-anland/vendor/socket_utils.h     |   18 +
+ libweston/compositor.c                             |    1 +
+ libweston/meson.build                              |    1 +
+ meson.build                                        |   16 +-
+ meson_options.txt                                  |    6 +
+ 16 files changed, 1812 insertions(+), 6 deletions(-)
+ create mode 100644 include/libweston/backend-anland.h
+ create mode 100644 libweston/backend-anland/anland.c
+ create mode 100644 libweston/backend-anland/meson.build
+ create mode 100644 libweston/backend-anland/vendor/display_producer.c
+ create mode 100644 libweston/backend-anland/vendor/display_producer.h
+ create mode 100644 libweston/backend-anland/vendor/protocol.h
+ create mode 100644 libweston/backend-anland/vendor/socket_utils.c
+ create mode 100644 libweston/backend-anland/vendor/socket_utils.h
+
+diff --git a/frontend/config-helpers.c b/frontend/config-helpers.c
+index 21a0512..1edc3ab 100644
+--- a/frontend/config-helpers.c
++++ b/frontend/config-helpers.c
+@@ -45,6 +45,7 @@ struct {
+ 	{ "vnc", "vnc-backend.so", WESTON_BACKEND_VNC },
+ 	{ "wayland", "wayland-backend.so", WESTON_BACKEND_WAYLAND },
+ 	{ "x11", "x11-backend.so", WESTON_BACKEND_X11 },
++	{ "anland", "anland-backend.so", WESTON_BACKEND_ANLAND },
+ };
+
+ bool
+diff --git a/frontend/main.c b/frontend/main.c
+index d135e77..87b1bb4 100644
+--- a/frontend/main.c
++++ b/frontend/main.c
+@@ -66,6 +66,7 @@
+ #include <libweston/backend-vnc.h>
+ #include <libweston/backend-x11.h>
+ #include <libweston/backend-wayland.h>
++#include <libweston/backend-anland.h>
+ #include <libweston/windowed-output-api.h>
+ #include <libweston/weston-log.h>
+ #include <libweston/remoting-plugin.h>
+@@ -4165,6 +4166,91 @@ load_wayland_backend(struct weston_compositor *c,
+ }
+
+
++static int
++anland_backend_output_configure(struct weston_output *output)
++{
++	const struct weston_windowed_output_api *api;
++	struct weston_config *wc = wet_get_config(output->compositor);
++	struct weston_config_section *section;
++	struct wet_compositor *wet = to_wet_compositor(output->compositor);
++	struct wet_output_config *parsed_options = wet->parsed_options;
++	int width = 1280, height = 720;
++
++	api = (const struct weston_windowed_output_api *)
++		weston_plugin_api_get(output->compositor,
++			"weston_windowed_output_api_anland_v2",
++			sizeof(struct weston_windowed_output_api));
++	if (!api)
++		return -1;
++
++	section = weston_config_get_section(wc, "output", "name", output->name);
++	if (section) {
++		weston_config_section_get_int(section, "width", &width, width);
++		weston_config_section_get_int(section, "height", &height, height);
++	}
++	if (parsed_options) {
++		if (parsed_options->width > 0) width = parsed_options->width;
++		if (parsed_options->height > 0) height = parsed_options->height;
++	}
++
++	weston_output_set_scale(output, 1);
++	weston_output_set_transform(output, WL_OUTPUT_TRANSFORM_NORMAL);
++
++	return api->output_set_size(output, width, height);
++}
++
++static int
++load_anland_backend(struct weston_compositor *c,
++			  int *argc, char **argv, struct weston_config *wc,
++			  enum weston_renderer_type renderer)
++{
++	const struct weston_windowed_output_api *api;
++	struct weston_anland_backend_config config = {{ 0, }};
++	struct wet_backend *wb;
++	char *socket_path = NULL;
++
++	struct wet_output_config *parsed_options = wet_init_parsed_options(c);
++	if (!parsed_options)
++		return -1;
++
++	const struct weston_option options[] = {
++		{ WESTON_OPTION_INTEGER, "width", 0, &parsed_options->width },
++		{ WESTON_OPTION_INTEGER, "height", 0, &parsed_options->height },
++		{ WESTON_OPTION_STRING, "disp-sock", 0, &socket_path },
++	};
++
++	parse_options(options, ARRAY_LENGTH(options), argc, argv);
++
++	config.socket_path = socket_path;
++	config.refresh = 60000;
++	config.renderer = renderer;
++
++	config.base.struct_version = WESTON_ANLAND_BACKEND_CONFIG_VERSION;
++	config.base.struct_size = sizeof(struct weston_anland_backend_config);
++
++	wb = wet_compositor_load_backend(c, WESTON_BACKEND_ANLAND,
++					 &config.base, simple_heads_changed,
++					 anland_backend_output_configure);
++	free(socket_path);
++
++	if (!wb)
++		return -1;
++
++	api = (const struct weston_windowed_output_api *)
++		weston_plugin_api_get(c,
++			"weston_windowed_output_api_anland_v2",
++			sizeof(struct weston_windowed_output_api));
++	if (!api) {
++		weston_log("Cannot use anland windowed output API.\n");
++		return -1;
++	}
++
++	if (api->create_head(wb->backend, "anland-1") < 0)
++		return -1;
++
++	return 0;
++}
++
+ static int
+ load_backend(struct weston_compositor *compositor, const char *name,
+ 	     int *argc, char **argv, struct weston_config *config,
+@@ -4205,6 +4291,9 @@ load_backend(struct weston_compositor *compositor, const char *name,
+ 	case WESTON_BACKEND_X11:
+ 		return load_x11_backend(compositor, argc, argv, config,
+ 					renderer);
++	case WESTON_BACKEND_ANLAND:
++		return load_anland_backend(compositor, argc, argv, config,
++						renderer);
+ 	default:
+ 		unreachable("unknown backend type in load_backend()");
+ 	}
+diff --git a/include/libweston/backend-anland.h b/include/libweston/backend-anland.h
+new file mode 100644
+index 0000000..2f55557
+--- /dev/null
++++ b/include/libweston/backend-anland.h
+@@ -0,0 +1,24 @@
++#ifndef WESTON_COMPOSITOR_ANLAND_H
++#define WESTON_COMPOSITOR_ANLAND_H
++
++#ifdef  __cplusplus
++extern "C" {
++#endif
++
++#include <stdint.h>
++#include <libweston/libweston.h>
++
++#define WESTON_ANLAND_BACKEND_CONFIG_VERSION 1
++
++struct weston_anland_backend_config {
++	struct weston_backend_config base;
++	const char *socket_path;
++	int refresh; /* mHz, 0 = 60000 */
++	enum weston_renderer_type renderer;
++};
++
++#ifdef  __cplusplus
++}
++#endif
++
++#endif /* WESTON_COMPOSITOR_ANLAND_H */
+diff --git a/include/libweston/libweston.h b/include/libweston/libweston.h
+index 4d3930d..6a34067 100644
+--- a/include/libweston/libweston.h
++++ b/include/libweston/libweston.h
+@@ -2460,6 +2460,7 @@ enum weston_compositor_backend {
+ 	WESTON_BACKEND_VNC,
+ 	WESTON_BACKEND_WAYLAND,
+ 	WESTON_BACKEND_X11,
++	WESTON_BACKEND_ANLAND,
+ };
+
+ enum weston_renderer_type {
+diff --git a/include/libweston/meson.build b/include/libweston/meson.build
+index fc1070c..52644ff 100644
+--- a/include/libweston/meson.build
++++ b/include/libweston/meson.build
+@@ -20,6 +20,7 @@ backend_rdp_h =      files('backend-rdp.h')
+ backend_vnc_h =      files('backend-vnc.h')
+ backend_wayland_h =  files('backend-wayland.h')
+ backend_x11_h =      files('backend-x11.h')
++backend_anland_h = files('backend-anland.h')
+
+ xwayland_api_h = files('xwayland-api.h')
+
+diff --git a/libweston/backend-anland/anland.c b/libweston/backend-anland/anland.c
+new file mode 100644
+index 0000000..12c5c7b
+--- /dev/null
++++ b/libweston/backend-anland/anland.c
+@@ -0,0 +1,1000 @@
++#include "config.h"
++
++#include <assert.h>
++#include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/time.h>
++#include <sys/eventfd.h>
++#include <stdbool.h>
++#include <linux/input.h>
++
++#include <libweston/libweston.h>
++#include <libweston/backend-anland.h>
++#include "shared/helpers.h"
++#include "pixel-formats.h"
++#include "renderer-gl/gl-renderer.h"
++
++#include "linux-dmabuf.h"
++#include "shared/weston-drm-fourcc.h"
++#include "shared/weston-egl-ext.h"
++#include "shared/xalloc.h"
++#include "shared/timespec-util.h"
++#include "presentation-time-server-protocol.h"
++#include <libweston/windowed-output-api.h>
++
++#include "display_producer.h"
++
++#define DEFAULT_SOCKET_PATH "/tmp/display_daemon.sock"
++#define DEFAULT_REFRESH 120000
++
++/* Cadence of the reconnect loop that polls try_exit_fallback() while no
++ * consumer is present. */
++#define RECONNECT_INTERVAL_MS 200
++
++static const uint32_t anland_formats[] = {
++	DRM_FORMAT_XRGB8888,
++	DRM_FORMAT_ARGB8888,
++	DRM_FORMAT_ABGR8888,
++	DRM_FORMAT_XBGR8888,
++};
++
++struct anland_backend {
++	struct weston_backend base;
++	struct weston_compositor *compositor;
++
++	struct weston_seat seat;
++
++	display_ctx *display;
++	char *socket_path;
++	int refresh;
++	int screen_w;
++	int screen_h;
++
++	struct wl_event_source *input_fd_source;
++	struct wl_event_source *reconnect_timer;
++	struct weston_touch_device *touch_device;
++
++	struct wl_event_source *buf_ready_source;
++	bool consumer_ready;
++
++	const struct pixel_format_info **formats;
++	unsigned int formats_count;
++};
++
++struct anland_head {
++	struct weston_head base;
++};
++
++struct anland_output {
++	struct weston_output base;
++	struct anland_backend *backend;
++
++	struct weston_mode mode;
++	struct wl_event_source *finish_frame_timer;
++
++	int buf_count;
++	struct weston_renderbuffer *renderbuffers[MAX_BUFS];
++	struct dmabuf_attributes dmabuf_attrs_arr[MAX_BUFS];
++	struct linux_dmabuf_memory dmabuf_mem_arr[MAX_BUFS];
++
++	/* Per-renderbuffer accumulated damage (buffer-age). The consumer
++	 * rotates the buffer index externally, so each buffer must remember
++	 * everything that changed since it was last rendered. */
++	pixman_region32_t accum_damage[MAX_BUFS];
++};
++
++static void
++anland_destroy(struct weston_backend *backend);
++
++static inline struct anland_head *
++to_anland_head(struct weston_head *base)
++{
++	if (base->backend->destroy != anland_destroy)
++		return NULL;
++	return container_of(base, struct anland_head, base);
++}
++
++static void
++anland_output_destroy(struct weston_output *base);
++
++static inline struct anland_output *
++to_anland_output(struct weston_output *base)
++{
++	if (base->destroy != anland_output_destroy)
++		return NULL;
++	return container_of(base, struct anland_output, base);
++}
++
++static inline struct anland_backend *
++to_anland_backend(struct weston_backend *base)
++{
++	return container_of(base, struct anland_backend, base);
++}
++
++static void
++anland_handle_pointer_motion(struct anland_backend *b, const struct InputEvent *ev)
++{
++	struct timespec ts;
++	struct weston_pointer_motion_event motion;
++	struct weston_coord_global abs;
++	struct weston_output *output;
++
++	weston_compositor_get_time(&ts);
++
++	output = weston_compositor_find_output_by_name(b->compositor,
++						       "anland-1");
++	if (!output)
++		return;
++
++	abs = weston_coord_global_from_output_point(ev->pointer_motion.x,
++						    ev->pointer_motion.y,
++						    output);
++
++	motion.mask = WESTON_POINTER_MOTION_ABS;
++	motion.time = ts;
++	motion.abs = abs;
++
++	if (ev->pointer_motion.dx != 0.0f || ev->pointer_motion.dy != 0.0f) {
++		motion.mask |= WESTON_POINTER_MOTION_REL | WESTON_POINTER_MOTION_REL_UNACCEL;
++		motion.rel.x = ev->pointer_motion.dx;
++		motion.rel.y = ev->pointer_motion.dy;
++		motion.rel_unaccel.x = ev->pointer_motion.dx;
++		motion.rel_unaccel.y = ev->pointer_motion.dy;
++	}
++
++	notify_motion(&b->seat, &ts, &motion);
++	notify_pointer_frame(&b->seat);
++}
++
++static void
++anland_handle_pointer_button(struct anland_backend *b, const struct InputEvent *ev)
++{
++	struct timespec ts;
++
++	weston_compositor_get_time(&ts);
++	notify_button(&b->seat, &ts,
++		      ev->pointer_button.button,
++		      ev->pointer_button.pressed ?
++		      WL_POINTER_BUTTON_STATE_PRESSED :
++		      WL_POINTER_BUTTON_STATE_RELEASED);
++	notify_pointer_frame(&b->seat);
++}
++
++static void
++anland_handle_pointer_axis(struct anland_backend *b, const struct InputEvent *ev)
++{
++	struct timespec ts;
++	struct weston_pointer_axis_event axis;
++
++	weston_compositor_get_time(&ts);
++
++	axis.axis = ev->pointer_axis.axis;
++	axis.value = (double)ev->pointer_axis.value;
++	axis.has_discrete = (ev->pointer_axis.discrete != 0);
++	axis.discrete = ev->pointer_axis.discrete;
++
++	notify_axis(&b->seat, &ts, &axis);
++	notify_pointer_frame(&b->seat);
++}
++
++static void
++anland_handle_key(struct anland_backend *b, const struct InputEvent *ev)
++{
++	struct timespec ts;
++
++	weston_compositor_get_time(&ts);
++	notify_key(&b->seat, &ts,
++		   ev->key.keycode,
++		   ev->key.action == INPUT_ACTION_DOWN ?
++		   WL_KEYBOARD_KEY_STATE_PRESSED :
++		   WL_KEYBOARD_KEY_STATE_RELEASED,
++		   STATE_UPDATE_AUTOMATIC);
++}
++
++static void
++anland_handle_touch(struct anland_backend *b, const struct InputEvent *ev)
++{
++	struct timespec ts;
++	struct weston_output *output;
++	int32_t type;
++
++	if (!b->touch_device)
++		return;
++
++	weston_compositor_get_time(&ts);
++
++	output = weston_compositor_find_output_by_name(b->compositor,
++						       "anland-1");
++	if (!output)
++		return;
++
++	switch (ev->touch.action) {
++	case INPUT_ACTION_DOWN:
++		type = WL_TOUCH_DOWN;
++		break;
++	case INPUT_ACTION_UP:
++		type = WL_TOUCH_UP;
++		break;
++	case INPUT_ACTION_MOVE:
++		type = WL_TOUCH_MOTION;
++		break;
++	default:
++		return;
++	}
++
++	struct weston_coord_global pos =
++		weston_coord_global_from_output_point(ev->touch.x, ev->touch.y,
++						      output);
++
++	notify_touch(b->touch_device, &ts, ev->touch.pointer_id, &pos, type);
++}
++
++static void
++anland_handle_touch_frame(struct anland_backend *b)
++{
++	if (b->touch_device)
++		notify_touch_frame(b->touch_device);
++}
++
++static void
++anland_process_input_event(struct anland_backend *b, const struct InputEvent *ev)
++{
++	switch (ev->type) {
++	case INPUT_TYPE_POINTER_MOTION:
++		anland_handle_pointer_motion(b, ev);
++		break;
++	case INPUT_TYPE_POINTER_BUTTON:
++		anland_handle_pointer_button(b, ev);
++		break;
++	case INPUT_TYPE_POINTER_AXIS:
++		anland_handle_pointer_axis(b, ev);
++		break;
++	case INPUT_TYPE_KEY:
++		anland_handle_key(b, ev);
++		break;
++	case INPUT_TYPE_TOUCH:
++		anland_handle_touch(b, ev);
++		break;
++	case INPUT_TYPE_TOUCH_FRAME:
++		anland_handle_touch_frame(b);
++		break;
++	}
++}
++
++static int
++anland_input_fd_handler(int fd, uint32_t mask, void *data);
++
++static int
++anland_buf_ready_handler(int fd, uint32_t mask, void *data);
++
++static void
++anland_import_dmabufs(struct anland_backend *b);
++
++static void
++anland_fallback_cb(void *data)
++{
++	struct anland_backend *b = data;
++
++	weston_log("anland: consumer disconnected, entering fallback\n");
++
++	if (b->touch_device && b->seat.touch_state &&
++	    b->seat.touch_state->num_tp > 0) {
++		notify_touch_cancel(b->touch_device);
++		weston_touch_set_focus(b->seat.touch_state, NULL);
++		b->seat.touch_state->num_tp = 0;
++	}
++
++	if (b->seat.pointer_state)
++		clear_pointer_focus(&b->seat);
++
++	if (b->buf_ready_source) {
++		wl_event_source_remove(b->buf_ready_source);
++		b->buf_ready_source = NULL;
++	}
++	if (b->input_fd_source) {
++		wl_event_source_remove(b->input_fd_source);
++		b->input_fd_source = NULL;
++	}
++	b->consumer_ready = false;
++
++	/* The producer dropped us back to fallback already; resume the reconnect
++	 * loop. Normal input is dead until try_exit_fallback() succeeds. */
++	if (b->reconnect_timer)
++		wl_event_source_timer_update(b->reconnect_timer,
++					     RECONNECT_INTERVAL_MS);
++}
++
++static void
++anland_drop_renderbuffers(struct anland_backend *b)
++{
++	struct weston_output *output;
++
++	wl_list_for_each(output, &b->compositor->output_list, link) {
++		struct anland_output *vout = to_anland_output(output);
++		if (vout) {
++			memset(vout->renderbuffers, 0,
++			       sizeof(vout->renderbuffers));
++			vout->buf_count = 0;
++			break;
++		}
++	}
++}
++
++/* try_exit_fallback() just succeeded: the context now owns the consumer fds and
++ * the dmabuf set. Wire up the fd sources, import the dmabufs, and stop the
++ * reconnect poll. */
++static void
++anland_consumer_connected(struct anland_backend *b)
++{
++	struct wl_event_loop *loop =
++		wl_display_get_event_loop(b->compositor->wl_display);
++
++	weston_log("anland: consumer connected\n");
++
++	int buf_ready_fd = get_buffer_ready_fd(b->display);
++	if (buf_ready_fd >= 0) {
++		b->buf_ready_source = wl_event_loop_add_fd(loop, buf_ready_fd,
++							    WL_EVENT_READABLE,
++							    anland_buf_ready_handler, b);
++	}
++
++	int data_fd = get_data_fd(b->display);
++	if (data_fd >= 0) {
++		b->input_fd_source = wl_event_loop_add_fd(loop, data_fd,
++							   WL_EVENT_READABLE,
++							   anland_input_fd_handler, b);
++	}
++
++	/* The dmabufs arrived with the handshake (try_exit_fallback received
++	 * them), so they are ready to import right away. */
++	anland_import_dmabufs(b);
++
++	/* Stop the reconnect timer — we're back in business. */
++	if (b->reconnect_timer)
++		wl_event_source_timer_update(b->reconnect_timer, 0);
++}
++
++static int
++anland_input_fd_handler(int fd, uint32_t mask, void *data)
++{
++	struct anland_backend *b = data;
++	struct InputEvent ev;
++
++	if (is_fallback(b->display))
++		return 0;
++
++	while (poll_input_event(b->display, &ev, 0) > 0)
++		anland_process_input_event(b, &ev);
++
++	return 0;
++}
++
++static int
++anland_reconnect_timer_handler(void *data)
++{
++	struct anland_backend *b = data;
++
++	if (!is_fallback(b->display))
++		return 0;
++
++	anland_drop_renderbuffers(b);
++
++	if (try_exit_fallback(b->display) == 0)
++		anland_consumer_connected(b);
++
++	/* Still no consumer — keep polling. */
++	if (is_fallback(b->display) && b->reconnect_timer)
++		wl_event_source_timer_update(b->reconnect_timer,
++					     RECONNECT_INTERVAL_MS);
++
++	return 0;
++}
++
++static int
++anland_output_start_repaint_loop(struct weston_output *output)
++{
++	struct timespec ts;
++
++	weston_compositor_read_presentation_clock(output->compositor, &ts);
++	weston_output_finish_frame(output, &ts, WP_PRESENTATION_FEEDBACK_INVALID);
++
++	return 0;
++}
++
++static int
++finish_frame_handler(void *data)
++{
++	struct anland_output *output = data;
++
++	weston_output_finish_frame_from_timer(&output->base);
++
++	if (output->backend->consumer_ready)
++		weston_output_schedule_repaint(&output->base);
++
++	return 1;
++}
++
++static uint32_t
++protocol_format_to_drm(uint32_t fmt)
++{
++	switch (fmt) {
++	case 1: /* PIXEL_FORMAT_RGBA_8888 (Android R8G8B8A8 memory layout) */
++		return DRM_FORMAT_ABGR8888;
++	default:
++		return DRM_FORMAT_XRGB8888;
++	}
++}
++
++static int
++anland_output_import_dmabufs(struct anland_output *output)
++{
++	struct anland_backend *b = output->backend;
++	struct weston_renderer *renderer = b->compositor->renderer;
++	int count = get_buf_count(b->display);
++	const struct weston_mode *mode = output->base.current_mode;
++
++	if (count <= 0)
++		return -1;
++
++	for (int i = 0; i < count; i++) {
++		int fd = get_dmabuf_fd_at(b->display, i);
++		struct buf_info info;
++		if (fd < 0 || get_dmabuf_info_at(b->display, i, &info) < 0)
++			return -1;
++
++		struct dmabuf_attributes *attrs = &output->dmabuf_attrs_arr[i];
++		memset(attrs, 0, sizeof(*attrs));
++		attrs->width = mode->width;
++		attrs->height = mode->height;
++		attrs->format = protocol_format_to_drm(info.format);
++		attrs->n_planes = 1;
++		attrs->fd[0] = fd;
++		attrs->offset[0] = info.offset;
++		attrs->stride[0] = info.stride;
++		attrs->modifier = info.modifier;
++
++		output->dmabuf_mem_arr[i].attributes = attrs;
++		output->dmabuf_mem_arr[i].destroy = NULL;
++
++		weston_log("anland: importing buf[%d] fd=%d %dx%d stride=%u fmt=0x%x mod=0x%lx\n",
++			   i, fd, mode->width, mode->height,
++			   info.stride, attrs->format,
++			   (unsigned long)info.modifier);
++
++		output->renderbuffers[i] =
++			renderer->create_renderbuffer_dmabuf(&output->base,
++							     &output->dmabuf_mem_arr[i]);
++		if (!output->renderbuffers[i]) {
++			weston_log("anland: failed to create renderbuffer[%d]\n", i);
++			return -1;
++		}
++
++		/* Freshly imported dmabuf has undefined contents: owe it a full
++		 * frame so the first paint into it is complete. */
++		pixman_region32_clear(&output->accum_damage[i]);
++		pixman_region32_union(&output->accum_damage[i],
++				      &output->accum_damage[i],
++				      &output->base.region);
++	}
++	output->buf_count = count;
++	return 0;
++}
++
++/* Import the dmabuf set (received by try_exit_fallback) into the output's
++ * renderbuffers. Safe to call repeatedly: a no-op once imported (buf_count set),
++ * while still in fallback, or before the output exists. */
++static void
++anland_import_dmabufs(struct anland_backend *b)
++{
++	struct weston_output *output;
++
++	if (is_fallback(b->display) || get_buf_count(b->display) <= 0)
++		return;
++
++	wl_list_for_each(output, &b->compositor->output_list, link) {
++		struct anland_output *vout = to_anland_output(output);
++		if (!vout)
++			continue;
++		if (vout->buf_count == 0 &&
++		    anland_output_import_dmabufs(vout) < 0)
++			weston_log("anland: dmabuf import failed\n");
++		break;
++	}
++}
++
++static int
++anland_buf_ready_handler(int fd, uint32_t mask, void *data)
++{
++	struct anland_backend *b = data;
++	eventfd_t val;
++
++	eventfd_read(fd, &val);
++
++	if (is_fallback(b->display))
++		return 0;
++
++	/* The output may not have existed yet when we left fallback, so the
++	 * import in anland_consumer_connected() could have been deferred. Make
++	 * sure the dmabufs are imported before the first frame. */
++	anland_import_dmabufs(b);
++
++	b->consumer_ready = true;
++
++	struct weston_output *output;
++	wl_list_for_each(output, &b->compositor->output_list, link) {
++		if (to_anland_output(output)) {
++			weston_output_schedule_repaint(output);
++			break;
++		}
++	}
++
++	return 0;
++}
++
++static void
++finish_frame_idle(void *data)
++{
++	struct anland_output *output = data;
++	struct timespec ts;
++
++	weston_compositor_read_presentation_clock(output->base.compositor, &ts);
++	weston_output_finish_frame(&output->base, &ts, 0);
++}
++
++static int
++anland_output_repaint(struct weston_output *output_base)
++{
++	struct anland_output *output = to_anland_output(output_base);
++	struct anland_backend *b = output->backend;
++	struct weston_compositor *ec = output->base.compositor;
++	pixman_region32_t damage;
++
++	assert(output);
++
++	if (output->buf_count == 0) {
++		weston_output_arm_frame_timer(output_base,
++					      output->finish_frame_timer);
++		return 0;
++	}
++
++	int idx = get_selected_idx(b->display);
++	struct weston_renderbuffer *rb = output->renderbuffers[idx];
++
++	pixman_region32_init(&damage);
++	weston_output_flush_damage_for_primary_plane(output_base, &damage);
++
++	/*
++	 * The consumer rotates the renderbuffer index externally, so this
++	 * frame's damage must be accumulated per buffer: every buffer owes
++	 * all changes since it was last rendered. Add this frame's damage to
++	 * each buffer's pending region, repaint the selected buffer with its
++	 * full accumulated debt, then clear only that buffer's debt. This is
++	 * the buffer-age equivalent that avoids redrawing the whole screen.
++	 */
++	for (int i = 0; i < output->buf_count; i++)
++		pixman_region32_union(&output->accum_damage[i],
++				      &output->accum_damage[i], &damage);
++	pixman_region32_fini(&damage);
++
++	ec->renderer->repaint_output(&output->base, &output->accum_damage[idx], rb);
++	pixman_region32_clear(&output->accum_damage[idx]);
++
++	if (b->consumer_ready) {
++		trigger_refresh(b->display);
++		b->consumer_ready = false;
++	}
++
++	if (b->refresh == 0) {
++		struct wl_event_loop *loop =
++			wl_display_get_event_loop(ec->wl_display);
++		wl_event_loop_add_idle(loop, finish_frame_idle, output);
++	} else {
++		weston_output_arm_frame_timer(output_base,
++					      output->finish_frame_timer);
++	}
++
++	return 0;
++}
++
++static void
++anland_output_disable_renderer(struct anland_output *output)
++{
++	struct weston_renderer *renderer = output->base.compositor->renderer;
++
++	for (int i = 0; i < output->buf_count; i++) {
++		if (output->renderbuffers[i]) {
++			weston_renderbuffer_unref(output->renderbuffers[i]);
++			output->renderbuffers[i] = NULL;
++		}
++	}
++	output->buf_count = 0;
++
++	switch (renderer->type) {
++	case WESTON_RENDERER_GL:
++		renderer->gl->output_destroy(&output->base);
++		break;
++	default:
++		break;
++	}
++}
++
++static int
++anland_output_disable(struct weston_output *base)
++{
++	struct anland_output *output = to_anland_output(base);
++
++	assert(output);
++
++	if (!output->base.enabled)
++		return 0;
++
++	wl_event_source_remove(output->finish_frame_timer);
++	anland_output_disable_renderer(output);
++
++	return 0;
++}
++
++static void
++anland_output_destroy(struct weston_output *base)
++{
++	struct anland_output *output = to_anland_output(base);
++
++	assert(output);
++
++	anland_output_disable(&output->base);
++
++	for (int i = 0; i < MAX_BUFS; i++)
++		pixman_region32_fini(&output->accum_damage[i]);
++
++	weston_output_release(&output->base);
++	free(output);
++}
++
++static int
++anland_output_enable_renderer(struct anland_output *output)
++{
++	struct anland_backend *b = output->backend;
++	const struct weston_renderer *renderer = b->compositor->renderer;
++	const struct weston_mode *mode = output->base.current_mode;
++
++	switch (renderer->type) {
++	case WESTON_RENDERER_GL: {
++		struct gl_renderer_fbo_options gl_opts = {
++			.fb_size = { .width = mode->width, .height = mode->height },
++			.area = { .x = 0, .y = 0,
++				  .width = mode->width, .height = mode->height },
++		};
++		if (renderer->gl->output_fbo_create(&output->base, &gl_opts) < 0) {
++			weston_log("anland: failed to create GL FBO output\n");
++			return -1;
++		}
++		break;
++	}
++	default:
++		weston_log("anland: unsupported renderer type %d\n", renderer->type);
++		return -1;
++	}
++
++	return 0;
++}
++
++static int
++anland_output_enable(struct weston_output *base)
++{
++	struct anland_output *output = to_anland_output(base);
++	struct wl_event_loop *loop;
++
++	assert(output);
++
++	loop = wl_display_get_event_loop(output->backend->compositor->wl_display);
++	output->finish_frame_timer =
++		wl_event_loop_add_timer(loop, finish_frame_handler, output);
++
++	if (!output->finish_frame_timer) {
++		weston_log("anland: failed to add finish frame timer\n");
++		return -1;
++	}
++
++	if (anland_output_enable_renderer(output) < 0) {
++		wl_event_source_remove(output->finish_frame_timer);
++		return -1;
++	}
++
++	return 0;
++}
++
++static int
++anland_output_set_size(struct weston_output *base, int width, int height)
++{
++	struct anland_output *output = to_anland_output(base);
++	struct weston_head *head;
++
++	if (!output)
++		return -1;
++
++	if (output->backend->screen_w > 0 && output->backend->screen_h > 0) {
++		width = output->backend->screen_w;
++		height = output->backend->screen_h;
++	}
++
++	assert(!output->base.current_mode);
++	assert(output->base.current_scale);
++
++	wl_list_for_each(head, &output->base.head_list, output_link) {
++		weston_head_set_monitor_strings(head, "anland", "anland",
++						NULL);
++		weston_head_set_physical_size(head, width, height);
++	}
++
++	output->mode.flags =
++		WL_OUTPUT_MODE_CURRENT | WL_OUTPUT_MODE_PREFERRED;
++	output->mode.width = width * output->base.current_scale;
++	output->mode.height = height * output->base.current_scale;
++	output->mode.refresh = output->backend->refresh > 0 ?
++			       output->backend->refresh : DEFAULT_REFRESH;
++	wl_list_insert(&output->base.mode_list, &output->mode.link);
++
++	output->base.current_mode = &output->mode;
++
++	output->base.start_repaint_loop = anland_output_start_repaint_loop;
++	output->base.repaint = anland_output_repaint;
++	output->base.assign_planes = NULL;
++	output->base.set_backlight = NULL;
++	output->base.set_dpms = NULL;
++	output->base.switch_mode = NULL;
++
++	return 0;
++}
++
++static struct weston_output *
++anland_output_create(struct weston_backend *backend, const char *name)
++{
++	struct anland_backend *b = to_anland_backend(backend);
++	struct anland_output *output;
++
++	assert(name);
++
++	output = zalloc(sizeof *output);
++	if (!output)
++		return NULL;
++
++	weston_output_init(&output->base, b->compositor, name);
++
++	output->base.destroy = anland_output_destroy;
++	output->base.disable = anland_output_disable;
++	output->base.enable = anland_output_enable;
++	output->base.attach_head = NULL;
++
++	output->backend = b;
++
++	for (int i = 0; i < MAX_BUFS; i++)
++		pixman_region32_init(&output->accum_damage[i]);
++
++	weston_compositor_add_pending_output(&output->base, b->compositor);
++
++	return &output->base;
++}
++
++static int
++anland_head_create(struct weston_backend *base, const char *name)
++{
++	struct anland_backend *backend = to_anland_backend(base);
++	struct anland_head *head;
++
++	assert(name);
++
++	head = zalloc(sizeof *head);
++	if (!head)
++		return -1;
++
++	weston_head_init(&head->base, name);
++	head->base.backend = &backend->base;
++	weston_head_set_connection_status(&head->base, true);
++	weston_head_set_supported_eotf_mask(&head->base,
++					    WESTON_EOTF_MODE_ALL_MASK);
++	weston_head_set_supported_colorimetry_mask(&head->base,
++						   WESTON_COLORIMETRY_MODE_ALL_MASK);
++
++	weston_compositor_add_head(backend->compositor, &head->base);
++
++	return 0;
++}
++
++static void
++anland_head_destroy(struct weston_head *base)
++{
++	struct anland_head *head = to_anland_head(base);
++
++	assert(head);
++
++	weston_head_release(&head->base);
++	free(head);
++}
++
++static bool
++anland_input_init(struct anland_backend *b)
++{
++	weston_seat_init(&b->seat, b->compositor, "default");
++	weston_seat_init_pointer(&b->seat);
++
++	if (weston_seat_init_keyboard(&b->seat, NULL) < 0)
++		return false;
++
++	weston_seat_init_touch(&b->seat);
++
++	b->touch_device = weston_touch_create_touch_device(
++		b->seat.touch_state, "anland-touch", NULL, NULL);
++
++	return true;
++}
++
++static void
++anland_input_destroy(struct anland_backend *b)
++{
++	if (b->touch_device) {
++		weston_touch_device_destroy(b->touch_device);
++		b->touch_device = NULL;
++	}
++	weston_seat_release(&b->seat);
++}
++
++static void
++anland_destroy(struct weston_backend *backend)
++{
++	struct anland_backend *b = to_anland_backend(backend);
++	struct weston_compositor *ec = b->compositor;
++	struct weston_head *base, *next;
++
++	wl_list_remove(&b->base.link);
++
++	if (b->buf_ready_source)
++		wl_event_source_remove(b->buf_ready_source);
++	if (b->input_fd_source)
++		wl_event_source_remove(b->input_fd_source);
++	if (b->reconnect_timer)
++		wl_event_source_remove(b->reconnect_timer);
++
++	wl_list_for_each_safe(base, next, &ec->head_list, compositor_link) {
++		if (to_anland_head(base))
++			anland_head_destroy(base);
++	}
++
++	anland_input_destroy(b);
++
++	if (b->display)
++		disconnect(b->display);
++
++	free(b->formats);
++	free(b->socket_path);
++	free(b);
++}
++
++#define WESTON_WINDOWED_OUTPUT_API_NAME_ANLAND \
++	"weston_windowed_output_api_anland_v2"
++
++static const struct weston_windowed_output_api api = {
++	anland_output_set_size,
++	anland_head_create,
++};
++
++static struct anland_backend *
++anland_backend_create(struct weston_compositor *compositor,
++		    struct weston_anland_backend_config *config)
++{
++	struct anland_backend *b;
++	int ret;
++
++	b = zalloc(sizeof *b);
++	if (!b)
++		return NULL;
++
++	b->compositor = compositor;
++	wl_list_insert(&compositor->backend_list, &b->base.link);
++
++	b->base.supported_presentation_clocks =
++		WESTON_PRESENTATION_CLOCKS_SOFTWARE;
++
++	b->socket_path = strdup(config->socket_path ?
++				config->socket_path : DEFAULT_SOCKET_PATH);
++	b->refresh = config->refresh > 0 ? config->refresh : DEFAULT_REFRESH;
++
++	b->formats_count = ARRAY_LENGTH(anland_formats);
++	b->formats = pixel_format_get_array(anland_formats, b->formats_count);
++
++	if (!anland_input_init(b))
++		goto err_free;
++
++	b->base.destroy = anland_destroy;
++	b->base.create_output = anland_output_create;
++
++	if (connect_to_deamon(&b->display, b->socket_path) < 0) {
++		weston_log("anland: failed to connect to daemon at %s\n",
++			   b->socket_path);
++		goto err_input;
++	}
++
++	set_fallback_callback(b->display, anland_fallback_cb, b);
++
++	uint32_t sw, sh, sf, sr;
++	get_screen_info(b->display, &sw, &sh, &sf, &sr);
++	b->refresh = sr;
++	b->screen_w = sw;
++	b->screen_h = sh;
++
++	weston_log("anland: connected to daemon at %s, refresh=%d mHz\n",
++		   b->socket_path, b->refresh);
++
++	{
++		const struct gl_renderer_display_options gl_options = {
++			.egl_platform = EGL_PLATFORM_SURFACELESS_MESA,
++			.egl_native_display = NULL,
++			.formats = b->formats,
++			.formats_count = b->formats_count,
++		};
++		ret = weston_compositor_init_renderer(compositor,
++						      WESTON_RENDERER_GL,
++						      &gl_options.base);
++	}
++	if (ret < 0) {
++		weston_log("anland: GL renderer failed\n");
++		goto err_display;
++	}
++
++	struct wl_event_loop *loop =
++		wl_display_get_event_loop(compositor->wl_display);
++	b->reconnect_timer = wl_event_loop_add_timer(loop,
++						     anland_reconnect_timer_handler, b);
++	if (!b->reconnect_timer) {
++		weston_log("anland: failed to add reconnect timer\n");
++		goto err_display;
++	}
++
++	/* connect_to_deamon() did only the daemon handshake, so we start in
++	 * fallback with no consumer fds or dmabufs. Arm the reconnect loop to
++	 * pick them up via try_exit_fallback() once a consumer appears. */
++	wl_event_source_timer_update(b->reconnect_timer, RECONNECT_INTERVAL_MS);
++
++	ret = weston_plugin_api_register(compositor,
++					 WESTON_WINDOWED_OUTPUT_API_NAME_ANLAND,
++					 &api, sizeof(api));
++	if (ret < 0) {
++		weston_log("anland: failed to register output API\n");
++		goto err_display;
++	}
++
++	return b;
++
++err_display:
++	disconnect(b->display);
++	b->display = NULL;
++err_input:
++	anland_input_destroy(b);
++err_free:
++	wl_list_remove(&b->base.link);
++	free(b->formats);
++	free(b->socket_path);
++	free(b);
++	return NULL;
++}
++
++WL_EXPORT int
++weston_backend_init(struct weston_compositor *compositor,
++		    struct weston_backend_config *config_base)
++{
++	struct weston_anland_backend_config config = {{ 0, }};
++
++	if (!config_base ||
++	    config_base->struct_version != WESTON_ANLAND_BACKEND_CONFIG_VERSION ||
++	    config_base->struct_size > sizeof(struct weston_anland_backend_config)) {
++		weston_log("anland backend config structure is invalid\n");
++		return -1;
++	}
++
++	memcpy(&config, config_base, config_base->struct_size);
++
++	if (!anland_backend_create(compositor, &config))
++		return -1;
++
++	return 0;
++}
+diff --git a/libweston/backend-anland/meson.build b/libweston/backend-anland/meson.build
+new file mode 100644
+index 0000000..668739b
+--- /dev/null
++++ b/libweston/backend-anland/meson.build
+@@ -0,0 +1,33 @@
++if not get_option('backend-anland')
++	subdir_done()
++endif
++
++config_h.set('BUILD_ANLAND_COMPOSITOR', '1')
++
++srcs_anland = [
++	'anland.c',
++	'vendor/display_producer.c',
++	'vendor/socket_utils.c',
++	presentation_time_server_protocol_h,
++]
++
++plugin_anland = shared_library(
++	'anland-backend',
++	srcs_anland,
++	include_directories: [common_inc, include_directories('vendor')],
++	c_args: [
++		'-O3',
++		'-flto',
++	],
++	link_args: ['-flto'],
++	dependencies: [
++		dep_libweston_private,
++		dep_libdrm_headers,
++		dep_lib_cairo_shared,
++	],
++	name_prefix: '',
++	install: true,
++	install_dir: dir_module_libweston,
++)
++env_modmap += 'anland-backend.so=@0@;'.format(plugin_anland.full_path())
++install_headers(backend_anland_h, subdir: dir_include_libweston_install)
+diff --git a/libweston/backend-anland/vendor/display_producer.c b/libweston/backend-anland/vendor/display_producer.c
+new file mode 100644
+index 0000000..396bdf5
+--- /dev/null
++++ b/libweston/backend-anland/vendor/display_producer.c
+@@ -0,0 +1,359 @@
++#define _GNU_SOURCE
++#include "display_producer.h"
++#include "socket_utils.h"
++
++#include <errno.h>
++#include <poll.h>
++#include <stdbool.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/eventfd.h>
++#include <sys/mman.h>
++#include <sys/socket.h>
++#include <unistd.h>
++
++/* poll() timeout (ms) for the two reconnect handshake steps. Kept short so the
++ * caller's reconnect loop stays responsive when no consumer is present yet. */
++#define HANDSHAKE_TIMEOUT_MS 100
++
++struct display_ctx {
++    int      ctrl_fd;
++    int      data_fd;
++    int      buf_ready_efd;
++    int      refresh_done_efd;
++    int      shm_fd;
++    volatile uint32_t *shm_ptr;
++    uint32_t screen_w, screen_h;
++    uint32_t pixel_format;
++    uint32_t refresh;
++    bool     fallback;
++
++    int      dmabuf_fds[MAX_BUFS];
++    struct buf_info dmabuf_infos[MAX_BUFS];
++    int      buf_count;
++
++    void (*fallback_cb)(void *);
++    void  *fallback_userdata;
++};
++
++/*
++ * Release every consumer-side resource (dmabuf fds, the four picked-up fds and the
++ * shm mapping), leaving the context holding only the daemon ctrl_fd. Does NOT touch
++ * the fallback flag or fire the fallback callback — callers decide that. Idempotent.
++ */
++static void release_consumer_resources(display_ctx *ctx)
++{
++    for (int i = 0; i < ctx->buf_count; i++) {
++        if (ctx->dmabuf_fds[i] >= 0) {
++            close(ctx->dmabuf_fds[i]);
++            ctx->dmabuf_fds[i] = -1;
++        }
++    }
++    ctx->buf_count = 0;
++
++    if (ctx->data_fd >= 0)          { close(ctx->data_fd);          ctx->data_fd = -1; }
++    if (ctx->buf_ready_efd >= 0)    { close(ctx->buf_ready_efd);    ctx->buf_ready_efd = -1; }
++    if (ctx->refresh_done_efd >= 0) { close(ctx->refresh_done_efd); ctx->refresh_done_efd = -1; }
++    if (ctx->shm_ptr)               { munmap((void *)ctx->shm_ptr, sizeof(uint32_t)); ctx->shm_ptr = NULL; }
++    if (ctx->shm_fd >= 0)           { close(ctx->shm_fd);           ctx->shm_fd = -1; }
++}
++
++static void enter_fallback(display_ctx *ctx)
++{
++    if (ctx->fallback)
++        return;
++    ctx->fallback = true;
++
++    release_consumer_resources(ctx);
++
++    if (ctx->fallback_cb)
++        ctx->fallback_cb(ctx->fallback_userdata);
++}
++
++/*
++ * Ask the daemon for the consumer-side fds and map the shm index. Polls ctrl_fd
++ * with a short timeout so it returns promptly when no consumer is up yet. On
++ * success the four fds and shm_ptr are installed on ctx; the caller releases them
++ * via release_consumer_resources() on any later failure. Returns 0 / -1.
++ */
++static int pickup_fds(display_ctx *ctx)
++{
++    struct ctrl_msg hdr = { .type = CTRL_MSG_PICKUP_FDS, .size = 0 };
++    if (send_all(ctx->ctrl_fd, &hdr, sizeof(hdr)) < 0)
++        return -1;
++
++    struct pollfd pfd = { .fd = ctx->ctrl_fd, .events = POLLIN };
++    if (poll(&pfd, 1, HANDSHAKE_TIMEOUT_MS) <= 0)
++        return -1;
++
++    int fds[4];
++    int fd_count = 0;
++    struct ctrl_msg resp;
++    int n = recv_fds(ctx->ctrl_fd, &resp, sizeof(resp), fds, 4, &fd_count);
++    if (n <= 0 || resp.type != CTRL_MSG_FDS_READY || fd_count < 4) {
++        for (int i = 0; i < fd_count; i++)
++            close(fds[i]);
++        return -1;
++    }
++
++    ctx->buf_ready_efd    = fds[0];
++    ctx->refresh_done_efd = fds[1];
++    ctx->data_fd          = fds[2];
++    ctx->shm_fd           = fds[3];
++
++    ctx->shm_ptr = mmap(NULL, sizeof(uint32_t), PROT_READ, MAP_SHARED, ctx->shm_fd, 0);
++    if (ctx->shm_ptr == MAP_FAILED) {
++        ctx->shm_ptr = NULL;
++        return -1;
++    }
++    return 0;
++}
++
++/*
++ * Receive the dmabuf set the consumer pushes onto the data channel right after the
++ * fd handshake. Polls data_fd with a short timeout. On failure the caller releases
++ * the partially-acquired consumer resources. Returns 0 / -1.
++ */
++static int receive_dmabufs(display_ctx *ctx)
++{
++    if (ctx->buf_count > 0)
++        return 0;
++
++    struct pollfd pfd = { .fd = ctx->data_fd, .events = POLLIN | POLLHUP | POLLERR };
++    if (poll(&pfd, 1, HANDSHAKE_TIMEOUT_MS) <= 0)
++        return -1;
++    if (pfd.revents & (POLLHUP | POLLERR))
++        return -1;
++
++    struct data_msg dhdr;
++    int fds[MAX_BUFS];
++    int fd_count = 0;
++
++    int n = recv_fds(ctx->data_fd, &dhdr, sizeof(dhdr), fds, MAX_BUFS, &fd_count);
++    if (n < (int)sizeof(struct data_msg) || fd_count < 1)
++        return -1;
++
++    if (dhdr.type != DATA_MSG_BUFS_READY) {
++        for (int i = 0; i < fd_count; i++)
++            close(fds[i]);
++        return -1;
++    }
++
++    int count = dhdr.size / sizeof(struct buf_info);
++    if (count != fd_count || count > MAX_BUFS) {
++        for (int i = 0; i < fd_count; i++)
++            close(fds[i]);
++        return -1;
++    }
++
++    struct buf_info infos[MAX_BUFS];
++    if (recv_all(ctx->data_fd, infos, dhdr.size) < 0) {
++        for (int i = 0; i < fd_count; i++)
++            close(fds[i]);
++        return -1;
++    }
++
++    for (int i = 0; i < count; i++) {
++        ctx->dmabuf_fds[i] = fds[i];
++        ctx->dmabuf_infos[i] = infos[i];
++    }
++    ctx->buf_count = count;
++    return 0;
++}
++
++int connect_to_deamon(display_ctx **out, const char *socket_path)
++{
++    display_ctx *ctx = calloc(1, sizeof(*ctx));
++    if (!ctx)
++        return -1;
++
++    ctx->ctrl_fd = -1;
++    ctx->data_fd = -1;
++    ctx->buf_ready_efd = -1;
++    ctx->refresh_done_efd = -1;
++    ctx->shm_fd = -1;
++    ctx->shm_ptr = NULL;
++    ctx->fallback = true; // stay in fallback until try_exit_fallback() succeeds
++    for (int i = 0; i < MAX_BUFS; i++)
++        ctx->dmabuf_fds[i] = -1;
++
++    ctx->ctrl_fd = connect_unix(socket_path);
++    if (ctx->ctrl_fd < 0)
++        goto fail;
++
++    struct ctrl_msg hdr = { .type = CTRL_MSG_PRODUCER_HELLO, .size = 0 };
++    if (send_all(ctx->ctrl_fd, &hdr, sizeof(hdr)) < 0)
++        goto fail;
++
++    uint8_t buf[sizeof(struct ctrl_msg) + sizeof(struct screen_info)];
++    if (recv_all(ctx->ctrl_fd, buf, sizeof(buf)) < 0)
++        goto fail;
++
++    struct ctrl_msg resp;
++    memcpy(&resp, buf, sizeof(resp));
++    if (resp.type != CTRL_MSG_SCREEN_INFO || resp.size != sizeof(struct screen_info))
++        goto fail;
++
++    struct screen_info si;
++    memcpy(&si, buf + sizeof(struct ctrl_msg), sizeof(si));
++    ctx->screen_w = si.width;
++    ctx->screen_h = si.height;
++    ctx->pixel_format = si.format;
++    ctx->refresh = si.refresh;
++
++    // Daemon handshake only: screen info is in hand, but the consumer fds and
++    // dmabufs are deliberately left for try_exit_fallback() so the backend brings
++    // the consumer up through the single reconnect path. Stay in fallback.
++    *out = ctx;
++    return 0;
++
++fail:
++    if (ctx->ctrl_fd >= 0)
++        close(ctx->ctrl_fd);
++    free(ctx);
++    return -1;
++}
++
++void disconnect(display_ctx *ctx)
++{
++    if (!ctx)
++        return;
++    release_consumer_resources(ctx);
++    if (ctx->ctrl_fd >= 0)
++        close(ctx->ctrl_fd);
++    free(ctx);
++}
++
++int get_screen_info(display_ctx *ctx, uint32_t *width, uint32_t *height, uint32_t *format, uint32_t *refresh)
++{
++    *width  = ctx->screen_w;
++    *height = ctx->screen_h;
++    *format = ctx->pixel_format;
++    *refresh = ctx->refresh;
++    return 0;
++}
++
++int trigger_refresh(display_ctx *ctx)
++{
++    if (ctx->fallback)
++        return 0;
++
++    eventfd_t val = 1;
++    eventfd_write(ctx->refresh_done_efd, val);
++    return 0;
++}
++
++int poll_input_event(display_ctx *ctx, struct InputEvent *event, int timeout_ms)
++{
++    if (ctx->fallback)
++        return 0;
++
++    struct pollfd pfd = { .fd = ctx->data_fd, .events = POLLIN };
++    int ret = poll(&pfd, 1, timeout_ms);
++    if (ret <= 0)
++        return 0;
++
++    if (pfd.revents & (POLLHUP | POLLERR)) {
++        enter_fallback(ctx);
++        return -1;
++    }
++
++    uint8_t msg_buf[sizeof(struct data_msg) + sizeof(struct InputEvent)];
++    ssize_t n = recv(ctx->data_fd, msg_buf, sizeof(msg_buf), MSG_PEEK);
++    if (n < (ssize_t)sizeof(struct data_msg))
++        return 0;
++
++    struct data_msg hdr;
++    memcpy(&hdr, msg_buf, sizeof(hdr));
++    if (hdr.type != DATA_MSG_INPUT_EVENT)
++        return 0;
++
++    if (recv_all(ctx->data_fd, msg_buf, sizeof(struct data_msg) + sizeof(struct InputEvent)) < 0)
++        return -1;
++
++    memcpy(event, msg_buf + sizeof(struct data_msg), sizeof(*event));
++    return 1;
++}
++
++int set_fallback_callback(display_ctx *ctx, void (*on_fallback)(void *), void *userdata)
++{
++    ctx->fallback_cb = on_fallback;
++    ctx->fallback_userdata = userdata;
++    return 0;
++}
++
++bool is_fallback(display_ctx *ctx)
++{
++    return ctx->fallback;
++}
++
++int try_exit_fallback(display_ctx *ctx)
++{
++    if (!ctx->fallback)
++        return 0;
++
++    // Step 1: ask the daemon to hand over the consumer-side fds.
++    if (pickup_fds(ctx) < 0) {
++        release_consumer_resources(ctx);
++        return -1;
++    }
++
++    // Step 2: immediately pull the dmabuf set the consumer pushes right after the
++    // fd handshake. Only leave fallback once both fds and dmabufs are in hand, so
++    // the backend can import straight away.
++    if (receive_dmabufs(ctx) < 0) {
++        release_consumer_resources(ctx);
++        return -1;
++    }
++
++    ctx->fallback = false;
++    return 0;
++}
++
++int get_data_fd(display_ctx *ctx)
++{
++    return ctx->data_fd;
++}
++
++int get_buffer_ready_fd(display_ctx *ctx)
++{
++    return ctx->buf_ready_efd;
++}
++
++int get_buf_count(display_ctx *ctx)
++{
++    return ctx->buf_count;
++}
++
++int get_selected_idx(display_ctx *ctx)
++{
++    if (!ctx->shm_ptr)
++        return 0;
++    uint32_t idx = *ctx->shm_ptr;
++    return (idx < (uint32_t)ctx->buf_count) ? (int)idx : 0;
++}
++
++int get_dmabuf_fd(display_ctx *ctx)
++{
++    return get_dmabuf_fd_at(ctx, get_selected_idx(ctx));
++}
++
++int get_dmabuf_fd_at(display_ctx *ctx, int idx)
++{
++    if (idx < 0 || idx >= ctx->buf_count)
++        return -1;
++    return ctx->dmabuf_fds[idx];
++}
++
++int get_dmabuf_info(display_ctx *ctx, struct buf_info *info)
++{
++    return get_dmabuf_info_at(ctx, get_selected_idx(ctx), info);
++}
++
++int get_dmabuf_info_at(display_ctx *ctx, int idx, struct buf_info *info)
++{
++    if (idx < 0 || idx >= ctx->buf_count)
++        return -1;
++    *info = ctx->dmabuf_infos[idx];
++    return 0;
++}
+diff --git a/libweston/backend-anland/vendor/display_producer.h b/libweston/backend-anland/vendor/display_producer.h
+new file mode 100644
+index 0000000..32096f1
+--- /dev/null
++++ b/libweston/backend-anland/vendor/display_producer.h
+@@ -0,0 +1,59 @@
++#ifndef DISPLAY_PRODUCER_H
++#define DISPLAY_PRODUCER_H
++
++#include <stdbool.h>
++#include <stdint.h>
++#include "protocol.h"
++
++typedef struct display_ctx display_ctx;
++
++/*
++ * Producer-side state machine
++ * ----------------------------
++ * connect_to_deamon() performs only the daemon handshake: it fetches the screen
++ * info and leaves the context in *fallback* (no consumer fds, no dmabufs). The
++ * backend then drives a reconnect loop that polls try_exit_fallback(); once that
++ * call succeeds the context owns the consumer fds and the dmabuf set, and
++ * is_fallback() returns false. Losing the consumer drops the context back to
++ * fallback (see set_fallback_callback) and the loop resumes.
++ */
++
++/* Connect to the daemon and fetch screen info only. Leaves the context in
++ * fallback: it does NOT pick up consumer fds or dmabufs. Returns 0 / -1. */
++int  connect_to_deamon(display_ctx **ctx, const char *socket_path);
++
++/* Tear down everything and disconnect from the daemon. */
++void disconnect(display_ctx *ctx);
++
++int  get_screen_info(display_ctx *ctx, uint32_t *width, uint32_t *height, uint32_t *format, uint32_t *refresh);
++
++/* Signal the consumer that the current frame is done. No-op in fallback. */
++int  trigger_refresh(display_ctx *ctx);
++
++/* Pull one pending input event. Returns 1 if an event was written, 0 if none was
++ * available, -1 on consumer loss. No-op (returns 0) in fallback. */
++int  poll_input_event(display_ctx *ctx, struct InputEvent *event, int timeout_ms);
++
++/* Register a callback invoked when the consumer is lost and the context drops
++ * back to fallback. */
++int  set_fallback_callback(display_ctx *ctx, void (*on_fallback)(void *), void *userdata);
++
++bool is_fallback(display_ctx *ctx);
++
++/* Attempt to leave fallback: pick up the consumer fds and immediately receive the
++ * dmabuf set (the consumer sends the dmabufs right after the fd handshake). Clears
++ * fallback only when BOTH the fds and the dmabufs are in hand, so on a 0 return the
++ * dmabufs are ready to import right away. Returns 0 on success, -1 if there is
++ * still no consumer (stays in fallback; safe to retry on the next tick). */
++int  try_exit_fallback(display_ctx *ctx);
++
++int  get_data_fd(display_ctx *ctx);
++int  get_buffer_ready_fd(display_ctx *ctx);
++int  get_buf_count(display_ctx *ctx);
++int  get_selected_idx(display_ctx *ctx);
++int  get_dmabuf_fd(display_ctx *ctx);
++int  get_dmabuf_fd_at(display_ctx *ctx, int idx);
++int  get_dmabuf_info(display_ctx *ctx, struct buf_info *info);
++int  get_dmabuf_info_at(display_ctx *ctx, int idx, struct buf_info *info);
++
++#endif
+diff --git a/libweston/backend-anland/vendor/protocol.h b/libweston/backend-anland/vendor/protocol.h
+new file mode 100644
+index 0000000..744179a
+--- /dev/null
++++ b/libweston/backend-anland/vendor/protocol.h
+@@ -0,0 +1,88 @@
++#ifndef DISPLAY_PROTOCOL_H
++#define DISPLAY_PROTOCOL_H
++
++#include <stdint.h>
++
++#define CTRL_MSG_CONSUMER_HELLO  1
++#define CTRL_MSG_PRODUCER_HELLO  2
++#define CTRL_MSG_SCREEN_INFO     7
++#define CTRL_MSG_REJECT          8
++#define CTRL_MSG_PICKUP_FDS      9
++#define CTRL_MSG_FDS_READY      10
++
++#define DATA_MSG_BUF_READY       100
++#define DATA_MSG_REFRESH_DONE    101
++#define DATA_MSG_INPUT_EVENT     102
++#define DATA_MSG_BUFS_READY      200
++
++#define MAX_BUFS 8
++
++struct ctrl_msg {
++    uint32_t type;
++    uint32_t size;
++    uint8_t  payload[];
++} __attribute__((packed));
++
++struct data_msg {
++    uint32_t type;
++    uint32_t size;
++    uint8_t  payload[];
++} __attribute__((packed));
++
++struct screen_info {
++    uint32_t width;
++    uint32_t height;
++    uint32_t format;
++    uint32_t refresh;
++} __attribute__((packed));
++
++struct buf_info {
++    uint32_t stride;
++    uint32_t format;
++    uint64_t modifier;
++    uint32_t offset;
++} __attribute__((packed));
++
++#define INPUT_TYPE_TOUCH          1
++#define INPUT_TYPE_KEY            2
++#define INPUT_TYPE_POINTER_MOTION 3
++#define INPUT_TYPE_POINTER_BUTTON 4
++#define INPUT_TYPE_POINTER_AXIS   5
++#define INPUT_TYPE_TOUCH_FRAME    6
++
++#define INPUT_ACTION_DOWN    0
++#define INPUT_ACTION_UP      1
++#define INPUT_ACTION_MOVE    2
++
++struct InputEvent {
++    uint32_t type;
++    union {
++        struct {
++            int32_t  action;
++            float    x;
++            float    y;
++            int32_t  pointer_id;
++        } touch;
++        struct {
++            int32_t  action;
++            int32_t  keycode;
++        } key;
++        struct {
++            float    x;
++            float    y;
++            float    dx;
++            float    dy;
++        } pointer_motion;
++        struct {
++            uint32_t button;
++            int32_t  pressed;
++        } pointer_button;
++        struct {
++            uint32_t axis;
++            float    value;
++            int32_t  discrete;
++        } pointer_axis;
++    };
++} __attribute__((packed));
++
++#endif
+diff --git a/libweston/backend-anland/vendor/socket_utils.c b/libweston/backend-anland/vendor/socket_utils.c
+new file mode 100644
+index 0000000..1b4ef31
+--- /dev/null
++++ b/libweston/backend-anland/vendor/socket_utils.c
+@@ -0,0 +1,121 @@
++#include "socket_utils.h"
++
++#include <errno.h>
++#include <stdint.h>
++#include <string.h>
++#include <sys/socket.h>
++#include <sys/un.h>
++#include <unistd.h>
++
++int send_fds(int sock, const void *data, size_t data_len,
++             const int *fds, int fd_count)
++{
++    struct iovec iov = {
++        .iov_base = (void *)data,
++        .iov_len  = data_len,
++    };
++
++    char cmsg_buf[CMSG_SPACE(sizeof(int) * fd_count)];
++    memset(cmsg_buf, 0, sizeof(cmsg_buf));
++
++    struct msghdr msg = {
++        .msg_iov        = &iov,
++        .msg_iovlen     = 1,
++        .msg_control    = cmsg_buf,
++        .msg_controllen = sizeof(cmsg_buf),
++    };
++
++    struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
++    cmsg->cmsg_level = SOL_SOCKET;
++    cmsg->cmsg_type  = SCM_RIGHTS;
++    cmsg->cmsg_len   = CMSG_LEN(sizeof(int) * fd_count);
++    memcpy(CMSG_DATA(cmsg), fds, sizeof(int) * fd_count);
++
++    ssize_t n = sendmsg(sock, &msg, MSG_NOSIGNAL);
++    return (n == (ssize_t)data_len) ? 0 : -1;
++}
++
++int recv_fds(int sock, void *data, size_t data_len,
++             int *fds, int fd_count, int *fds_received)
++{
++    struct iovec iov = {
++        .iov_base = data,
++        .iov_len  = data_len,
++    };
++
++    char cmsg_buf[CMSG_SPACE(sizeof(int) * fd_count)];
++    memset(cmsg_buf, 0, sizeof(cmsg_buf));
++
++    struct msghdr msg = {
++        .msg_iov        = &iov,
++        .msg_iovlen     = 1,
++        .msg_control    = cmsg_buf,
++        .msg_controllen = sizeof(cmsg_buf),
++    };
++
++    ssize_t n = recvmsg(sock, &msg, 0);
++    if (n <= 0)
++        return -1;
++
++    *fds_received = 0;
++    struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
++    if (cmsg && cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
++        int count = (cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int);
++        if (count > fd_count)
++            count = fd_count;
++        memcpy(fds, CMSG_DATA(cmsg), sizeof(int) * count);
++        *fds_received = count;
++    }
++
++    return (int)n;
++}
++
++int connect_unix(const char *path)
++{
++    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
++    if (fd < 0)
++        return -1;
++
++    struct sockaddr_un addr;
++    memset(&addr, 0, sizeof(addr));
++    addr.sun_family = AF_UNIX;
++    strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
++
++    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
++        close(fd);
++        return -1;
++    }
++    return fd;
++}
++
++int send_all(int fd, const void *buf, size_t len)
++{
++    const uint8_t *p = buf;
++    size_t sent = 0;
++    while (sent < len) {
++        ssize_t n = send(fd, p + sent, len - sent, MSG_NOSIGNAL);
++        if (n <= 0) {
++            if (n < 0 && errno == EINTR)
++                continue;
++            return -1;
++        }
++        sent += n;
++    }
++    return 0;
++}
++
++int recv_all(int fd, void *buf, size_t len)
++{
++    uint8_t *p = buf;
++    size_t got = 0;
++    while (got < len) {
++        ssize_t n = recv(fd, p + got, len - got, 0);
++        if (n <= 0) {
++            if (n < 0 && errno == EINTR)
++                continue;
++            return -1;
++        }
++        got += n;
++    }
++    return 0;
++}
+diff --git a/libweston/backend-anland/vendor/socket_utils.h b/libweston/backend-anland/vendor/socket_utils.h
+new file mode 100644
+index 0000000..06ba8f4
+--- /dev/null
++++ b/libweston/backend-anland/vendor/socket_utils.h
+@@ -0,0 +1,18 @@
++#ifndef DISPLAY_SOCKET_UTILS_H
++#define DISPLAY_SOCKET_UTILS_H
++
++#include <stddef.h>
++
++int send_fds(int sock, const void *data, size_t data_len,
++             const int *fds, int fd_count);
++
++int recv_fds(int sock, void *data, size_t data_len,
++             int *fds, int fd_count, int *fds_received);
++
++int connect_unix(const char *path);
++
++int send_all(int fd, const void *buf, size_t len);
++
++int recv_all(int fd, void *buf, size_t len);
++
++#endif
+diff --git a/libweston/compositor.c b/libweston/compositor.c
+index 84c25b6..c23a225 100644
+--- a/libweston/compositor.c
++++ b/libweston/compositor.c
+@@ -10186,6 +10186,7 @@ static const char * const backend_map[] = {
+ 	[WESTON_BACKEND_VNC] =		"vnc-backend.so",
+ 	[WESTON_BACKEND_WAYLAND] =	"wayland-backend.so",
+ 	[WESTON_BACKEND_X11] =		"x11-backend.so",
++	[WESTON_BACKEND_ANLAND] =	"anland-backend.so",
+ };
+
+ /** Load a backend into a weston_compositor
+diff --git a/libweston/meson.build b/libweston/meson.build
+index d1f126f..0318fe2 100644
+--- a/libweston/meson.build
++++ b/libweston/meson.build
+@@ -233,3 +233,4 @@ subdir('backend-rdp')
+ subdir('backend-vnc')
+ subdir('backend-wayland')
+ subdir('backend-x11')
++subdir('backend-anland')
+diff --git a/meson.build b/meson.build
+index fd14030..4dee646 100644
+--- a/meson.build
++++ b/meson.build
+@@ -127,15 +127,19 @@ config_h.set_quoted('LIBWESTON_MODULEDIR', dir_module_libweston)
+
+ backend_default = get_option('backend-default')
+ if backend_default == 'auto'
+-	foreach b : [ 'headless', 'x11', 'wayland', 'drm' ]
+-		if get_option('backend-' + b)
+-			backend_default = b
+-		endif
+-	endforeach
++	if get_option('backend-anland')
++		backend_default = 'anland'
++	else
++		foreach b : [ 'headless', 'x11', 'wayland', 'drm' ]
++			if get_option('backend-' + b)
++				backend_default = b
++			endif
++		endforeach
++	endif
+ endif
+ config_h.set_quoted('WESTON_NATIVE_BACKEND', backend_default)
+ message('The default backend is ' + backend_default)
+-if not get_option('backend-' + backend_default)
++if backend_default != 'anland' and not get_option('backend-' + backend_default)
+ 	error('Backend @0@ was chosen as native but is not being built.'.format(backend_default))
+ endif
+
+diff --git a/meson_options.txt b/meson_options.txt
+index 0fbd42a..c20138a 100644
+--- a/meson_options.txt
++++ b/meson_options.txt
+@@ -56,6 +56,12 @@ option(
+ 	value: true,
+ 	description: 'Weston backend: X11 (nested)'
+ )
++option(
++	'backend-anland',
++	type: 'boolean',
++	value: true,
++	description: 'Weston backend: anland zero-copy display'
++)
+ option(
+ 	'backend-default',
+ 	type: 'combo',
