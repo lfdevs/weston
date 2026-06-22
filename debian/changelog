@@ -1,3 +1,10 @@
+weston (14.0.2-90) unstable; urgency=medium
+
+  * backend: add anland zero-copy display backend (ported from 15.0.90).
+  * debian/rules: enable anland backend and set it as the default.
+
+ -- lfdevs <lfdevs@lfdevs.com>  Mon, 22 Jun 2026 14:11:00 +0800
+
 weston (14.0.2-1) unstable; urgency=medium
 
   * New upstream release.
