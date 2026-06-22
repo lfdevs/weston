@@ -2,25 +2,33 @@
 
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 
-ifneq (,$(filter sparc64,$(DEB_HOST_ARCH)))
-BACKEND_VNC=false
-else
-BACKEND_VNC=true
-endif
-
-ifeq (,$(filter weston-doc,$(shell dh_listpackages)))
-CONFIGURE_FLAGS = -Ddoc=false
-else
-CONFIGURE_FLAGS = -Ddoc=true
-endif
-
 override_dh_auto_configure:
 	dh_auto_configure -- \
-	        -Dbackend-rdp=true \
-	        -Dbackend-vnc=$(BACKEND_VNC) \
-	        -Dscreenshare=true \
-		-Dsystemd=true \
-		$(CONFIGURE_FLAGS)
+		-Dbackend-drm=false \
+		-Dbackend-headless=false \
+		-Dbackend-pipewire=false \
+		-Dbackend-rdp=false \
+		-Dbackend-vnc=false \
+		-Dbackend-wayland=false \
+		-Dbackend-x11=false \
+		-Dbackend-anland=true \
+		-Dbackend-default=auto \
+		-Drenderer-gl=true \
+		-Dxwayland=true \
+		-Dcolor-management-lcms=false \
+		-Dimage-jpeg=true \
+		-Dimage-webp=true \
+		-Dshell-desktop=true \
+		-Dshell-kiosk=true \
+		-Dshell-ivi=false \
+		-Ddemo-clients=false \
+		-Dsimple-clients=[] \
+		-Dtools=terminal \
+		-Dsystemd=false \
+		-Dtests=false \
+		-Ddoc=false \
+		-Dremoting=false \
+		-Dpipewire=false
 
 override_dh_auto_test:
 	mkdir -p $(CURDIR)/debian/tmp/tmp/xdgruntimedir
