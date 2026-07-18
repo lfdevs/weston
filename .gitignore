@@ -8,6 +8,4 @@ ctags
 cscope.out
 TAGS
 
-00*.patch
-
 build/
