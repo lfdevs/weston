@@ -68,7 +68,7 @@ index 21a0512..1edc3ab 100644
  	{ "x11", "x11-backend.so", WESTON_BACKEND_X11 },
 +	{ "anland", "anland-backend.so", WESTON_BACKEND_ANLAND },
  };
-
+ 
  bool
 diff --git a/frontend/main.c b/frontend/main.c
 index d135e77..87b1bb4 100644
@@ -84,8 +84,8 @@ index d135e77..87b1bb4 100644
  #include <libweston/remoting-plugin.h>
 @@ -4165,6 +4166,91 @@ load_wayland_backend(struct weston_compositor *c,
  }
-
-
+ 
+ 
 +static int
 +anland_backend_output_configure(struct weston_output *output)
 +{
@@ -224,7 +224,7 @@ index 4d3930d..6a34067 100644
  	WESTON_BACKEND_X11,
 +	WESTON_BACKEND_ANLAND,
  };
-
+ 
  enum weston_renderer_type {
 diff --git a/include/libweston/meson.build b/include/libweston/meson.build
 index fc1070c..52644ff 100644
@@ -235,9 +235,9 @@ index fc1070c..52644ff 100644
  backend_wayland_h =  files('backend-wayland.h')
  backend_x11_h =      files('backend-x11.h')
 +backend_anland_h = files('backend-anland.h')
-
+ 
  xwayland_api_h = files('xwayland-api.h')
-
+ 
 diff --git a/libweston/backend-anland/anland.c b/libweston/backend-anland/anland.c
 new file mode 100644
 index 0000000..12c5c7b
@@ -1968,7 +1968,7 @@ index 84c25b6..c23a225 100644
  	[WESTON_BACKEND_X11] =		"x11-backend.so",
 +	[WESTON_BACKEND_ANLAND] =	"anland-backend.so",
  };
-
+ 
  /** Load a backend into a weston_compositor
 diff --git a/libweston/meson.build b/libweston/meson.build
 index d1f126f..0318fe2 100644
@@ -1984,7 +1984,7 @@ index fd14030..4dee646 100644
 --- a/meson.build
 +++ b/meson.build
 @@ -127,15 +127,19 @@ config_h.set_quoted('LIBWESTON_MODULEDIR', dir_module_libweston)
-
+ 
  backend_default = get_option('backend-default')
  if backend_default == 'auto'
 -	foreach b : [ 'headless', 'x11', 'wayland', 'drm' ]
@@ -2008,7 +2008,7 @@ index fd14030..4dee646 100644
 +if backend_default != 'anland' and not get_option('backend-' + backend_default)
  	error('Backend @0@ was chosen as native but is not being built.'.format(backend_default))
  endif
-
+ 
 diff --git a/meson_options.txt b/meson_options.txt
 index 0fbd42a..c20138a 100644
 --- a/meson_options.txt
