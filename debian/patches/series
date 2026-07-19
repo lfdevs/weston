@@ -2,3 +2,4 @@
 0002-backend-anland-sync-transport-with-Anland-5.13.patch
 0003-backend-anland-import-resized-buffers-and-pass-rende.patch
 0004-backend-anland-handle-extended-input-and-runtime-ref.patch
+0005-backend-anland-bridge-clipboard-and-text-input.patch
