@@ -1,0 +1,267 @@
+From: lfdevs <lfdevs@lfdevs.com>
+Date: Sun, 19 Jul 2026 00:33:53 +0800
+Subject: backend-anland: import resized buffers and pass render fences
+
+Import dmabufs using the dimensions reported by the Anland consumer and
+switch the Weston output mode when a replacement buffer set changes
+size.
+
+Release renderbuffers through the renderer on disconnect and partial
+import failure so reconnects do not retain stale EGL resources. Mark
+newly imported buffers for full repaint and resize the renderer together
+with the output mode.
+
+Export the GL native fence after repaint and hand it to the transport
+before sending the frame-done notification, while retaining the
+fence-less fallback when native fence export is unavailable.
+---
+ libweston/backend-anland/anland.c | 142 ++++++++++++++++++++++++++++++--------
+ 1 file changed, 113 insertions(+), 29 deletions(-)
+
+diff --git a/libweston/backend-anland/anland.c b/libweston/backend-anland/anland.c
+index 12c5c7b..036400a 100644
+--- a/libweston/backend-anland/anland.c
++++ b/libweston/backend-anland/anland.c
+@@ -70,7 +70,6 @@ struct anland_output {
+ 	struct weston_output base;
+ 	struct anland_backend *backend;
+ 
+-	struct weston_mode mode;
+ 	struct wl_event_source *finish_frame_timer;
+ 
+ 	int buf_count;
+@@ -305,6 +304,26 @@ anland_fallback_cb(void *data)
+ 					     RECONNECT_INTERVAL_MS);
+ }
+ 
++static void
++anland_output_release_renderbuffers(struct anland_output *output)
++{
++	const struct weston_renderer *renderer =
++		output->base.compositor->renderer;
++
++	for (int i = 0; i < MAX_BUFS; i++) {
++		if (!output->renderbuffers[i])
++			continue;
++
++		renderer->remove_renderbuffer_dmabuf(&output->base,
++						     output->renderbuffers[i]);
++		weston_renderbuffer_unref(output->renderbuffers[i]);
++		output->renderbuffers[i] = NULL;
++		pixman_region32_clear(&output->accum_damage[i]);
++	}
++
++	output->buf_count = 0;
++}
++
+ static void
+ anland_drop_renderbuffers(struct anland_backend *b)
+ {
+@@ -313,9 +332,7 @@ anland_drop_renderbuffers(struct anland_backend *b)
+ 	wl_list_for_each(output, &b->compositor->output_list, link) {
+ 		struct anland_output *vout = to_anland_output(output);
+ 		if (vout) {
+-			memset(vout->renderbuffers, 0,
+-			       sizeof(vout->renderbuffers));
+-			vout->buf_count = 0;
++			anland_output_release_renderbuffers(vout);
+ 			break;
+ 		}
+ 	}
+@@ -426,27 +443,92 @@ protocol_format_to_drm(uint32_t fmt)
+ 	}
+ }
+ 
++static void
++anland_dmabuf_memory_destroy(struct linux_dmabuf_memory *dmabuf)
++{
++	/* The transport context owns and closes the received dmabuf fd. */
++	(void)dmabuf;
++}
++
++static int
++anland_output_switch_mode(struct weston_output *base,
++			  struct weston_mode *target_mode)
++{
++	struct weston_size fb_size = {
++		.width = target_mode->width,
++		.height = target_mode->height,
++	};
++
++	weston_output_set_single_mode(base, target_mode);
++	weston_renderer_resize_output(base, &fb_size, NULL);
++
++	return 0;
++}
++
++static int
++anland_output_resize(struct anland_output *output, int width, int height)
++{
++	struct weston_mode mode = {
++		.width = width,
++		.height = height,
++		.refresh = output->backend->refresh,
++	};
++
++	if (weston_output_mode_set_native(&output->base, &mode,
++					  output->base.current_scale) < 0) {
++		weston_log("anland: failed to resize output to %dx%d\n",
++			   width, height);
++		return -1;
++	}
++
++	weston_log("anland: resized output to %dx%d\n", width, height);
++	return 0;
++}
++
+ static int
+ anland_output_import_dmabufs(struct anland_output *output)
+ {
+ 	struct anland_backend *b = output->backend;
+ 	struct weston_renderer *renderer = b->compositor->renderer;
+ 	int count = get_buf_count(b->display);
+-	const struct weston_mode *mode = output->base.current_mode;
++	struct buf_info info;
++	int width;
++	int height;
+ 
+ 	if (count <= 0)
+ 		return -1;
++	if (get_dmabuf_info_at(b->display, 0, &info) < 0)
++		return -1;
++
++	width = info.width;
++	height = info.height;
++	if (width <= 0 || height <= 0)
++		return -1;
++
++	for (int i = 1; i < count; i++) {
++		if (get_dmabuf_info_at(b->display, i, &info) < 0 ||
++		    info.width != width || info.height != height) {
++			weston_log("anland: inconsistent dmabuf dimensions\n");
++			return -1;
++		}
++	}
++
++	if (output->base.current_mode->width != width ||
++	    output->base.current_mode->height != height) {
++		anland_output_release_renderbuffers(output);
++		if (anland_output_resize(output, width, height) < 0)
++			return -1;
++	}
+ 
+ 	for (int i = 0; i < count; i++) {
+ 		int fd = get_dmabuf_fd_at(b->display, i);
+-		struct buf_info info;
+ 		if (fd < 0 || get_dmabuf_info_at(b->display, i, &info) < 0)
+-			return -1;
++			goto fail;
+ 
+ 		struct dmabuf_attributes *attrs = &output->dmabuf_attrs_arr[i];
+ 		memset(attrs, 0, sizeof(*attrs));
+-		attrs->width = mode->width;
+-		attrs->height = mode->height;
++		attrs->width = info.width;
++		attrs->height = info.height;
+ 		attrs->format = protocol_format_to_drm(info.format);
+ 		attrs->n_planes = 1;
+ 		attrs->fd[0] = fd;
+@@ -455,10 +537,11 @@ anland_output_import_dmabufs(struct anland_output *output)
+ 		attrs->modifier = info.modifier;
+ 
+ 		output->dmabuf_mem_arr[i].attributes = attrs;
+-		output->dmabuf_mem_arr[i].destroy = NULL;
++		output->dmabuf_mem_arr[i].destroy =
++			anland_dmabuf_memory_destroy;
+ 
+ 		weston_log("anland: importing buf[%d] fd=%d %dx%d stride=%u fmt=0x%x mod=0x%lx\n",
+-			   i, fd, mode->width, mode->height,
++			   i, fd, info.width, info.height,
+ 			   info.stride, attrs->format,
+ 			   (unsigned long)info.modifier);
+ 
+@@ -467,7 +550,7 @@ anland_output_import_dmabufs(struct anland_output *output)
+ 							     &output->dmabuf_mem_arr[i]);
+ 		if (!output->renderbuffers[i]) {
+ 			weston_log("anland: failed to create renderbuffer[%d]\n", i);
+-			return -1;
++			goto fail;
+ 		}
+ 
+ 		/* Freshly imported dmabuf has undefined contents: owe it a full
+@@ -479,6 +562,10 @@ anland_output_import_dmabufs(struct anland_output *output)
+ 	}
+ 	output->buf_count = count;
+ 	return 0;
++
++fail:
++	anland_output_release_renderbuffers(output);
++	return -1;
+ }
+ 
+ /* Import the dmabuf set (received by try_exit_fallback) into the output's
+@@ -578,6 +665,12 @@ anland_output_repaint(struct weston_output *output_base)
+ 	pixman_region32_fini(&damage);
+ 
+ 	ec->renderer->repaint_output(&output->base, &output->accum_damage[idx], rb);
++	if (ec->renderer->type == WESTON_RENDERER_GL &&
++	    ec->renderer->gl->create_fence_fd)
++		set_render_fence(b->display,
++				 ec->renderer->gl->create_fence_fd(&output->base));
++	else
++		set_render_fence(b->display, -1);
+ 	pixman_region32_clear(&output->accum_damage[idx]);
+ 
+ 	if (b->consumer_ready) {
+@@ -602,13 +695,7 @@ anland_output_disable_renderer(struct anland_output *output)
+ {
+ 	struct weston_renderer *renderer = output->base.compositor->renderer;
+ 
+-	for (int i = 0; i < output->buf_count; i++) {
+-		if (output->renderbuffers[i]) {
+-			weston_renderbuffer_unref(output->renderbuffers[i]);
+-			output->renderbuffers[i] = NULL;
+-		}
+-	}
+-	output->buf_count = 0;
++	anland_output_release_renderbuffers(output);
+ 
+ 	switch (renderer->type) {
+ 	case WESTON_RENDERER_GL:
+@@ -709,6 +796,7 @@ anland_output_set_size(struct weston_output *base, int width, int height)
+ {
+ 	struct anland_output *output = to_anland_output(base);
+ 	struct weston_head *head;
++	struct weston_mode init_mode;
+ 
+ 	if (!output)
+ 		return -1;
+@@ -727,22 +815,18 @@ anland_output_set_size(struct weston_output *base, int width, int height)
+ 		weston_head_set_physical_size(head, width, height);
+ 	}
+ 
+-	output->mode.flags =
+-		WL_OUTPUT_MODE_CURRENT | WL_OUTPUT_MODE_PREFERRED;
+-	output->mode.width = width * output->base.current_scale;
+-	output->mode.height = height * output->base.current_scale;
+-	output->mode.refresh = output->backend->refresh > 0 ?
+-			       output->backend->refresh : DEFAULT_REFRESH;
+-	wl_list_insert(&output->base.mode_list, &output->mode.link);
+-
+-	output->base.current_mode = &output->mode;
++	init_mode.width = width * output->base.current_scale;
++	init_mode.height = height * output->base.current_scale;
++	init_mode.refresh = output->backend->refresh > 0 ?
++			    output->backend->refresh : DEFAULT_REFRESH;
++	weston_output_set_single_mode(base, &init_mode);
+ 
+ 	output->base.start_repaint_loop = anland_output_start_repaint_loop;
+ 	output->base.repaint = anland_output_repaint;
+ 	output->base.assign_planes = NULL;
+ 	output->base.set_backlight = NULL;
+ 	output->base.set_dpms = NULL;
+-	output->base.switch_mode = NULL;
++	output->base.switch_mode = anland_output_switch_mode;
+ 
+ 	return 0;
+ }
