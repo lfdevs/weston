@@ -1,0 +1,671 @@
+From: lfdevs <lfdevs@lfdevs.com>
+Date: Sun, 19 Jul 2026 02:37:35 +0800
+Subject: tests: cover Anland 5.13 transport and reconnects
+
+Add a standalone mock daemon and consumer around the vendored producer transport so the Anland 5.13 wire ABI and descriptor ordering are exercised without a compositor or Android device.
+
+Cover short handshake rejection, dmabuf metadata, extended input payloads and resource descriptors, output framing, audio and readiness channels, and render-fence delivery with and without an attached fd.
+
+Drive one hundred consumer disconnect and reconnect cycles, checking fallback callbacks and the process fd baseline after every release to catch descriptor leaks and stale transport state.
+---
+ tests/anland-transport-test.c | 616 ++++++++++++++++++++++++++++++++++++++++++
+ tests/meson.build             |  23 ++
+ 2 files changed, 639 insertions(+)
+ create mode 100644 tests/anland-transport-test.c
+
+diff --git a/tests/anland-transport-test.c b/tests/anland-transport-test.c
+new file mode 100644
+index 0000000..920bccc
+--- /dev/null
++++ b/tests/anland-transport-test.c
+@@ -0,0 +1,616 @@
++#define _GNU_SOURCE
++
++#include <dirent.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <pthread.h>
++#include <stdbool.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/mman.h>
++#include <sys/socket.h>
++#include <sys/stat.h>
++#include <sys/un.h>
++#include <unistd.h>
++
++#include "display_producer.h"
++#include "socket_utils.h"
++
++#define RECONNECT_CYCLES 100
++
++_Static_assert(sizeof(struct ctrl_msg) == 8,
++	       "Anland 5.13 control header changed");
++_Static_assert(sizeof(struct data_msg) == 8,
++	       "Anland 5.13 data header changed");
++_Static_assert(sizeof(struct screen_info) == 16,
++	       "Anland 5.13 screen info changed");
++_Static_assert(sizeof(struct buf_info) == 28,
++	       "Anland 5.13 buffer metadata changed");
++_Static_assert(sizeof(struct InputEvent) == 20,
++	       "Anland 5.13 input event changed");
++_Static_assert(sizeof(struct OutputEvent) == 20,
++	       "Anland 5.13 output event changed");
++_Static_assert(sizeof(struct audio_format) == 20,
++	       "Anland 5.13 audio format changed");
++_Static_assert(sizeof(struct audio_msg) == 8,
++	       "Anland 5.13 audio header changed");
++
++struct mock_peers {
++	int ready;
++	int fence;
++	int data;
++	int audio;
++};
++
++struct mock_daemon {
++	int listen_fd;
++	pthread_mutex_t lock;
++	struct mock_peers peers;
++	int pickup_count;
++	int error;
++};
++
++static void
++fail_check(const char *expression, int line)
++{
++	fprintf(stderr, "anland-transport-test:%d: check failed: %s\n",
++		line, expression);
++	exit(EXIT_FAILURE);
++}
++
++#define CHECK(expression) \
++	do { if (!(expression)) fail_check(#expression, __LINE__); } while (0)
++
++static int
++count_open_fds(void)
++{
++	DIR *dir = opendir("/proc/self/fd");
++	struct dirent *entry;
++	int count = 0;
++
++	CHECK(dir != NULL);
++	while ((entry = readdir(dir))) {
++		if (strcmp(entry->d_name, ".") && strcmp(entry->d_name, ".."))
++			count++;
++	}
++	closedir(dir);
++
++	/* Do not count the directory descriptor used by this function. */
++	return count - 1;
++}
++
++static int
++new_memfd(const char *name, size_t size)
++{
++	int fd = memfd_create(name, MFD_CLOEXEC);
++
++	if (fd < 0 || ftruncate(fd, (off_t)size) < 0) {
++		if (fd >= 0)
++			close(fd);
++		return -1;
++	}
++	return fd;
++}
++
++static void
++close_if_valid(int *fd)
++{
++	if (*fd >= 0) {
++		close(*fd);
++		*fd = -1;
++	}
++}
++
++static void
++close_mock_peers(struct mock_daemon *daemon)
++{
++	struct mock_peers peers;
++
++	pthread_mutex_lock(&daemon->lock);
++	peers = daemon->peers;
++	daemon->peers = (struct mock_peers) { -1, -1, -1, -1 };
++	pthread_mutex_unlock(&daemon->lock);
++
++	close_if_valid(&peers.ready);
++	close_if_valid(&peers.fence);
++	close_if_valid(&peers.data);
++	close_if_valid(&peers.audio);
++}
++
++static struct mock_peers
++get_mock_peers(struct mock_daemon *daemon)
++{
++	struct mock_peers peers;
++
++	pthread_mutex_lock(&daemon->lock);
++	peers = daemon->peers;
++	pthread_mutex_unlock(&daemon->lock);
++	return peers;
++}
++
++static int
++drop_mock_data_peer(struct mock_daemon *daemon)
++{
++	int fd;
++
++	pthread_mutex_lock(&daemon->lock);
++	fd = daemon->peers.data;
++	daemon->peers.data = -1;
++	pthread_mutex_unlock(&daemon->lock);
++
++	if (fd >= 0)
++		close(fd);
++	return fd;
++}
++
++static void
++set_daemon_error(struct mock_daemon *daemon)
++{
++	pthread_mutex_lock(&daemon->lock);
++	daemon->error = 1;
++	pthread_mutex_unlock(&daemon->lock);
++}
++
++static int
++send_screen_info(int ctrl_fd)
++{
++	struct {
++		struct ctrl_msg header;
++		struct screen_info info;
++	} response = {
++		.header = {
++			.type = CTRL_MSG_SCREEN_INFO,
++			.size = sizeof(struct screen_info),
++		},
++		.info = {
++			.width = 1920,
++			.height = 1080,
++			.format = 0x34325258,
++			.refresh = 120000,
++		},
++	};
++
++	return send_all(ctrl_fd, &response, sizeof(response));
++}
++
++static int
++publish_dmabufs(int data_fd)
++{
++	struct data_msg header = {
++		.type = DATA_MSG_BUFS_READY,
++		.size = 2 * sizeof(struct buf_info),
++	};
++	struct buf_info infos[2] = {
++		{
++			.stride = 5120,
++			.width = 1280,
++			.height = 720,
++			.format = 0x34325258,
++			.modifier = 0x0102030405060708ULL,
++			.offset = 64,
++		},
++		{
++			.stride = 5120,
++			.width = 1280,
++			.height = 720,
++			.format = 0x34325258,
++			.modifier = 0x1112131415161718ULL,
++			.offset = 128,
++		},
++	};
++	int fds[2] = {
++		new_memfd("anland-test-buffer-0", 4096),
++		new_memfd("anland-test-buffer-1", 4096),
++	};
++	int ret = -1;
++
++	if (fds[0] < 0 || fds[1] < 0)
++		goto out;
++	if (send_fds(data_fd, &header, sizeof(header), fds, 2) < 0)
++		goto out;
++	if (send_all(data_fd, infos, sizeof(infos)) < 0)
++		goto out;
++	ret = 0;
++
++out:
++	close_if_valid(&fds[0]);
++	close_if_valid(&fds[1]);
++	return ret;
++}
++
++static int
++publish_consumer(struct mock_daemon *daemon, int ctrl_fd, bool short_set)
++{
++	struct ctrl_msg response = { .type = CTRL_MSG_FDS_READY, .size = 0 };
++	int ready[2] = { -1, -1 };
++	int fence[2] = { -1, -1 };
++	int data[2] = { -1, -1 };
++	int audio[2] = { -1, -1 };
++	int shm_fd = -1;
++	int producer_fds[5];
++	uint32_t selected = 1;
++	int fd_count = short_set ? 4 : 5;
++	int ret = -1;
++
++	if (socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, ready) < 0 ||
++	    socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, fence) < 0 ||
++	    socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, data) < 0 ||
++	    socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, audio) < 0)
++		goto out;
++	shm_fd = new_memfd("anland-test-index", sizeof(selected));
++	if (shm_fd < 0 || pwrite(shm_fd, &selected, sizeof(selected), 0) !=
++	    (ssize_t)sizeof(selected))
++		goto out;
++
++	producer_fds[0] = ready[0];
++	producer_fds[1] = fence[0];
++	producer_fds[2] = data[0];
++	producer_fds[3] = shm_fd;
++	producer_fds[4] = audio[0];
++
++	pthread_mutex_lock(&daemon->lock);
++	daemon->peers = (struct mock_peers) {
++		.ready = ready[1],
++		.fence = fence[1],
++		.data = data[1],
++		.audio = short_set ? -1 : audio[1],
++	};
++	pthread_mutex_unlock(&daemon->lock);
++	ready[1] = fence[1] = data[1] = -1;
++	if (!short_set)
++		audio[1] = -1;
++
++	if (send_fds(ctrl_fd, &response, sizeof(response),
++		     producer_fds, fd_count) < 0)
++		goto out;
++	if (!short_set && publish_dmabufs(get_mock_peers(daemon).data) < 0)
++		goto out;
++	ret = 0;
++
++out:
++	close_if_valid(&ready[0]);
++	close_if_valid(&ready[1]);
++	close_if_valid(&fence[0]);
++	close_if_valid(&fence[1]);
++	close_if_valid(&data[0]);
++	close_if_valid(&data[1]);
++	close_if_valid(&audio[0]);
++	close_if_valid(&audio[1]);
++	close_if_valid(&shm_fd);
++	if (ret < 0)
++		close_mock_peers(daemon);
++	return ret;
++}
++
++static void *
++mock_daemon_thread(void *data)
++{
++	struct mock_daemon *daemon = data;
++	struct ctrl_msg message;
++	int ctrl_fd = accept4(daemon->listen_fd, NULL, NULL, SOCK_CLOEXEC);
++
++	if (ctrl_fd < 0)
++		goto fail;
++	if (recv_all(ctrl_fd, &message, sizeof(message)) < 0 ||
++	    message.type != CTRL_MSG_PRODUCER_HELLO || message.size != 0 ||
++	    send_screen_info(ctrl_fd) < 0)
++		goto fail;
++
++	while (recv_all(ctrl_fd, &message, sizeof(message)) == 0) {
++		bool short_set;
++
++		if (message.type != CTRL_MSG_PICKUP_FDS || message.size != 0)
++			goto fail;
++		short_set = daemon->pickup_count++ == 0;
++		if (publish_consumer(daemon, ctrl_fd, short_set) < 0)
++			goto fail;
++	}
++
++	close(ctrl_fd);
++	return NULL;
++
++fail:
++	if (ctrl_fd >= 0)
++		close(ctrl_fd);
++	set_daemon_error(daemon);
++	return NULL;
++}
++
++static int
++create_listener(const char *path)
++{
++	struct sockaddr_un address;
++	int fd;
++
++	fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
++	if (fd < 0)
++		return -1;
++	memset(&address, 0, sizeof(address));
++	address.sun_family = AF_UNIX;
++	if (strlen(path) >= sizeof(address.sun_path)) {
++		close(fd);
++		errno = ENAMETOOLONG;
++		return -1;
++	}
++	strcpy(address.sun_path, path);
++	if (bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 ||
++	    listen(fd, 1) < 0) {
++		close(fd);
++		return -1;
++	}
++	return fd;
++}
++
++static void
++send_data_message(int fd, uint32_t type, const void *payload, size_t size)
++{
++	struct data_msg header = { .type = type, .size = (uint32_t)size };
++
++	CHECK(size <= UINT32_MAX);
++	CHECK(send_all(fd, &header, sizeof(header)) == 0);
++	if (size > 0)
++		CHECK(send_all(fd, payload, size) == 0);
++}
++
++static void
++receive_output_event(int fd, struct OutputEvent *event,
++		     void *payload, size_t payload_size)
++{
++	struct data_msg header;
++
++	CHECK(recv_all(fd, &header, sizeof(header)) == 0);
++	CHECK(header.type == DATA_MSG_OUTPUT_EVENT);
++	CHECK(header.size == sizeof(*event));
++	CHECK(recv_all(fd, event, sizeof(*event)) == 0);
++	if (payload_size > 0)
++		CHECK(recv_all(fd, payload, payload_size) == 0);
++}
++
++static void
++test_fd_order(display_ctx *display, const struct mock_peers *peers)
++{
++	uint64_t ready_value = 0x1122334455667788ULL;
++	uint64_t received = 0;
++	char audio_value = 'A';
++	char audio_received = 0;
++
++	CHECK(send(peers->ready, &ready_value, sizeof(ready_value), 0) ==
++	      (ssize_t)sizeof(ready_value));
++	CHECK(recv(get_buffer_ready_fd(display), &received, sizeof(received), 0) ==
++	      (ssize_t)sizeof(received));
++	CHECK(received == ready_value);
++
++	CHECK(send(peers->audio, &audio_value, sizeof(audio_value), 0) == 1);
++	CHECK(recv(get_audio_fd(display), &audio_received,
++		   sizeof(audio_received), 0) == 1);
++	CHECK(audio_received == audio_value);
++}
++
++static void
++test_dmabuf_metadata(display_ctx *display)
++{
++	struct buf_info info;
++
++	CHECK(get_buf_count(display) == 2);
++	CHECK(get_selected_idx(display) == 1);
++	CHECK(get_dmabuf_fd_at(display, 0) >= 0);
++	CHECK(get_dmabuf_fd(display) == get_dmabuf_fd_at(display, 1));
++	CHECK(get_dmabuf_info_at(display, 0, &info) == 0);
++	CHECK(info.stride == 5120 && info.width == 1280 && info.height == 720);
++	CHECK(info.modifier == 0x0102030405060708ULL && info.offset == 64);
++	CHECK(get_dmabuf_info(display, &info) == 0);
++	CHECK(info.modifier == 0x1112131415161718ULL && info.offset == 128);
++}
++
++static void
++test_output_framing(display_ctx *display, int data_peer)
++{
++	struct OutputEvent event;
++	uint32_t args[3] = { 7, 8, 9 };
++	const char clipboard[] = "Anland 5.13 clipboard";
++	char received[sizeof(clipboard)] = { 0 };
++
++	CHECK(push_resources_request(display, SERVICE_TYPE_CAMERA, args) == 0);
++	receive_output_event(data_peer, &event, NULL, 0);
++	CHECK(event.type == OUTPUT_TYPE_RESOURCES_REQUEST);
++	CHECK(event.resources_request.type == SERVICE_TYPE_CAMERA);
++	CHECK(memcmp(event.resources_request.args, args, sizeof(args)) == 0);
++
++	memset(&event, 0, sizeof(event));
++	event.type = OUTPUT_TYPE_CLIPBOARD;
++	event.clipboard.size = sizeof(clipboard);
++	CHECK(push_output_event_with_length(display, &event, clipboard,
++					    sizeof(clipboard)) == 0);
++	receive_output_event(data_peer, &event, received, sizeof(received));
++	CHECK(event.type == OUTPUT_TYPE_CLIPBOARD);
++	CHECK(event.clipboard.size == sizeof(clipboard));
++	CHECK(memcmp(received, clipboard, sizeof(clipboard)) == 0);
++}
++
++static void
++test_extended_input(display_ctx *display, int data_peer)
++{
++	const char unknown[] = "skip";
++	const char text[] = "text\0";
++	char received[sizeof(text)] = { 0 };
++	struct InputEvent event = { 0 };
++	struct InputEvent got;
++	struct data_msg fd_header = {
++		.type = DATA_MSG_INPUT_EXTEND_FDS,
++		.size = 0,
++	};
++	int offered[2] = { -1, -1 };
++	int accepted[2] = { -1, -1 };
++	int accepted_count = 0;
++
++	send_data_message(data_peer, 0xf00d, unknown, sizeof(unknown));
++	event.type = INPUT_TYPE_TEXT_INPUT;
++	event.text_input.size = sizeof(text);
++	send_data_message(data_peer, DATA_MSG_INPUT_EVENT, &event, sizeof(event));
++	CHECK(send_all(data_peer, text, sizeof(text)) == 0);
++	CHECK(poll_input_event(display, &got, 100) == 1);
++	CHECK(got.type == INPUT_TYPE_TEXT_INPUT);
++	CHECK(got.text_input.size == sizeof(text));
++	CHECK(poll_input_event_extend_data(display, received,
++					   sizeof(received), 100) == 1);
++	CHECK(memcmp(received, text, sizeof(text)) == 0);
++
++	offered[0] = new_memfd("anland-test-resource-0", 1);
++	offered[1] = new_memfd("anland-test-resource-1", 1);
++	CHECK(offered[0] >= 0 && offered[1] >= 0);
++	memset(&event, 0, sizeof(event));
++	event.type = INPUT_TYPE_RESOURCE;
++	event.resource.type = SERVICE_TYPE_CAMERA;
++	event.resource.fdnum = 2;
++	send_data_message(data_peer, DATA_MSG_INPUT_EVENT, &event, sizeof(event));
++	CHECK(send_fds(data_peer, &fd_header, sizeof(fd_header), offered, 2) == 0);
++	close_if_valid(&offered[0]);
++	close_if_valid(&offered[1]);
++
++	CHECK(poll_input_event(display, &got, 100) == 1);
++	CHECK(got.type == INPUT_TYPE_RESOURCE && got.resource.fdnum == 2);
++	CHECK(poll_input_event_extend_fds(display, accepted, 2,
++					  &accepted_count, 100) == 1);
++	CHECK(accepted_count == 2);
++	CHECK((fcntl(accepted[0], F_GETFD) & FD_CLOEXEC) != 0);
++	CHECK((fcntl(accepted[1], F_GETFD) & FD_CLOEXEC) != 0);
++	close_if_valid(&accepted[0]);
++	close_if_valid(&accepted[1]);
++}
++
++static void
++test_render_fence(display_ctx *display, int fence_peer)
++{
++	int pipe_fds[2] = { -1, -1 };
++	int received_fds[1] = { -1 };
++	int received_count = 0;
++	char message = 1;
++	char pipe_value = 'F';
++	char received = 0;
++
++	CHECK(pipe2(pipe_fds, O_CLOEXEC) == 0);
++	set_render_fence(display, pipe_fds[0]);
++	pipe_fds[0] = -1;
++	CHECK(trigger_refresh(display) == 0);
++	CHECK(recv_fds(fence_peer, &message, sizeof(message), received_fds, 1,
++		       &received_count) == 1);
++	CHECK(message == 0 && received_count == 1);
++	CHECK((fcntl(received_fds[0], F_GETFD) & FD_CLOEXEC) != 0);
++	CHECK(write(pipe_fds[1], &pipe_value, 1) == 1);
++	CHECK(read(received_fds[0], &received, 1) == 1 && received == pipe_value);
++	close_if_valid(&received_fds[0]);
++	CHECK(close(pipe_fds[1]) == 0);
++	pipe_fds[1] = -1;
++
++	message = 1;
++	received_count = 0;
++	CHECK(trigger_refresh(display) == 0);
++	CHECK(recv_fds(fence_peer, &message, sizeof(message), received_fds, 1,
++		       &received_count) == 1);
++	CHECK(message == 0 && received_count == 0);
++}
++
++static void
++fallback_count(void *data)
++{
++	int *count = data;
++	(*count)++;
++}
++
++static void
++force_fallback(display_ctx *display, struct mock_daemon *daemon,
++	       int expected_callback_count, int *callback_count)
++{
++	struct InputEvent event;
++
++	CHECK(drop_mock_data_peer(daemon) >= 0);
++	CHECK(poll_input_event(display, &event, 100) == -1);
++	CHECK(is_fallback(display));
++	CHECK(get_audio_fd(display) == -1);
++	CHECK(get_data_fd(display) == -1);
++	CHECK(*callback_count == expected_callback_count);
++	close_mock_peers(daemon);
++}
++
++int
++main(void)
++{
++	char directory[] = "/tmp/weston-anland-transport-XXXXXX";
++	char socket_path[sizeof(directory) + 16];
++	struct mock_daemon daemon = {
++		.listen_fd = -1,
++		.lock = PTHREAD_MUTEX_INITIALIZER,
++		.peers = { -1, -1, -1, -1 },
++	};
++	struct mock_peers peers;
++	display_ctx *display = NULL;
++	pthread_t thread;
++	uint32_t screen_width, screen_height, screen_format, screen_refresh;
++	int callback_count = 0;
++	int initial_fds = count_open_fds();
++	int fallback_baseline;
++	int connected_baseline;
++
++	CHECK(mkdtemp(directory) != NULL);
++	snprintf(socket_path, sizeof(socket_path), "%s/display.sock", directory);
++	daemon.listen_fd = create_listener(socket_path);
++	if (daemon.listen_fd < 0)
++		perror("create_listener");
++	CHECK(daemon.listen_fd >= 0);
++	CHECK(pthread_create(&thread, NULL, mock_daemon_thread, &daemon) == 0);
++
++	CHECK(connect_to_deamon(&display, socket_path) == 0);
++	CHECK(display != NULL && is_fallback(display));
++	CHECK(get_screen_info(display, &screen_width, &screen_height,
++			      &screen_format, &screen_refresh) == 0);
++	CHECK(screen_width == 1920 && screen_height == 1080);
++	CHECK(screen_format == 0x34325258 && screen_refresh == 120000);
++	CHECK(set_fallback_callback(display, fallback_count, &callback_count) == 0);
++	fallback_baseline = count_open_fds();
++
++	/* The first pickup deliberately carries four descriptors. It must be rejected
++	 * without partially leaving fallback or leaking the accepted descriptors. */
++	CHECK(try_exit_fallback(display) == -1);
++	CHECK(is_fallback(display));
++	CHECK(get_data_fd(display) == -1 && get_audio_fd(display) == -1);
++	close_mock_peers(&daemon);
++	CHECK(count_open_fds() == fallback_baseline);
++
++	CHECK(try_exit_fallback(display) == 0);
++	CHECK(!is_fallback(display));
++	peers = get_mock_peers(&daemon);
++	CHECK(peers.ready >= 0 && peers.fence >= 0 &&
++	      peers.data >= 0 && peers.audio >= 0);
++	test_fd_order(display, &peers);
++	test_dmabuf_metadata(display);
++	test_output_framing(display, peers.data);
++	test_extended_input(display, peers.data);
++	test_render_fence(display, peers.fence);
++	force_fallback(display, &daemon, 1, &callback_count);
++	CHECK(count_open_fds() == fallback_baseline);
++
++	connected_baseline = count_open_fds();
++	for (int i = 0; i < RECONNECT_CYCLES; i++) {
++		CHECK(try_exit_fallback(display) == 0);
++		CHECK(!is_fallback(display));
++		CHECK(get_buf_count(display) == 2);
++		CHECK(get_data_fd(display) >= 0 && get_audio_fd(display) >= 0);
++		force_fallback(display, &daemon, i + 2, &callback_count);
++		CHECK(count_open_fds() == connected_baseline);
++	}
++
++	disconnect(display);
++	display = NULL;
++	CHECK(pthread_join(thread, NULL) == 0);
++	close_if_valid(&daemon.listen_fd);
++	close_mock_peers(&daemon);
++	CHECK(daemon.error == 0);
++	CHECK(unlink(socket_path) == 0);
++	CHECK(rmdir(directory) == 0);
++	pthread_mutex_destroy(&daemon.lock);
++	CHECK(count_open_fds() == initial_fds);
++
++	return EXIT_SUCCESS;
++}
+diff --git a/tests/meson.build b/tests/meson.build
+index f5f34b2..ade62da 100644
+--- a/tests/meson.build
++++ b/tests/meson.build
+@@ -349,6 +349,29 @@ tests_standalone = [
+ 	],
+ ]
+ 
++if get_option('backend-anland')
++	exe_anland_transport_test = executable(
++		'test-anland-transport',
++		[
++			'anland-transport-test.c',
++			'../libweston/backend-anland/vendor/display_producer.c',
++			'../libweston/backend-anland/vendor/socket_utils.c',
++		],
++		include_directories: [
++			common_inc,
++			include_directories('../libweston/backend-anland/vendor'),
++		],
++		dependencies: dep_threads,
++		install: false,
++	)
++
++	test(
++		'anland-transport',
++		exe_anland_transport_test,
++		timeout: 30,
++	)
++endif
++
+ if get_option('xwayland')
+ 	xcb_dep = dependency('xcb', required: false)
+ 	xcb_cursor_dep = dependency('xcb-cursor', required: false)
