@@ -8,3 +8,4 @@ build-Allow-libdisplay-info-0.3.0.patch
 0006-backend-anland-add-PipeWire-audio-bridge.patch
 0007-backend-anland-add-camera-resource-service.patch
 0008-tests-cover-Anland-5.13-transport-and-reconnects.patch
+0009-backend-anland-support-output-scaling.patch
