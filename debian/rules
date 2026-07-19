@@ -12,6 +12,7 @@ override_dh_auto_configure:
 		-Dbackend-wayland=false \
 		-Dbackend-x11=false \
 		-Dbackend-anland=true \
+		-Danland-pipewire=enabled \
 		-Dbackend-default=auto \
 		-Drenderer-gl=true \
 		-Dxwayland=true \
