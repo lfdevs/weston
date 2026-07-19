@@ -1,0 +1,451 @@
+From: lfdevs <lfdevs@lfdevs.com>
+Date: Sun, 19 Jul 2026 00:40:35 +0800
+Subject: backend-anland: handle extended input and runtime refresh
+
+Consume every message arriving on the Anland data socket so unknown
+frames cannot leave the Weston event loop spinning on unread data. Bound
+partial message waits, drain variable-length clipboard and text payloads,
+and receive then close unsupported resource descriptors.
+
+Handle live display refresh events by updating the Weston output mode
+and repaint cadence. Recognize the remaining Anland 5.13 input types,
+reject malformed framing, and move the transport back to fallback when
+an expected payload or descriptor message does not arrive.
+---
+ libweston/backend-anland/anland.c                  | 155 +++++++++++++++++++--
+ libweston/backend-anland/vendor/display_producer.c | 125 +++++++++++------
+ libweston/backend-anland/vendor/display_producer.h |  10 +-
+ 3 files changed, 237 insertions(+), 53 deletions(-)
+
+diff --git a/libweston/backend-anland/anland.c b/libweston/backend-anland/anland.c
+index 036400a..bff1566 100644
+--- a/libweston/backend-anland/anland.c
++++ b/libweston/backend-anland/anland.c
+@@ -7,6 +7,7 @@
+ #include <sys/time.h>
+ #include <sys/eventfd.h>
+ #include <stdbool.h>
++#include <unistd.h>
+ #include <linux/input.h>
+ 
+ #include <libweston/libweston.h>
+@@ -27,6 +28,9 @@
+ 
+ #define DEFAULT_SOCKET_PATH "/tmp/display_daemon.sock"
+ #define DEFAULT_REFRESH 120000
++#define EXTENDED_INPUT_TIMEOUT_MS 100
++#define MAX_EXTENDED_INPUT_SIZE (1024U * 1024U)
++#define MAX_RESOURCE_FDS 9
+ 
+ /* Cadence of the reconnect loop that polls try_exit_fallback() while no
+  * consumer is present. */
+@@ -111,6 +115,10 @@ to_anland_backend(struct weston_backend *base)
+ 	return container_of(base, struct anland_backend, base);
+ }
+ 
++static int
++anland_output_set_mode(struct anland_output *output, int width, int height,
++		       int refresh);
++
+ static void
+ anland_handle_pointer_motion(struct anland_backend *b, const struct InputEvent *ev)
+ {
+@@ -196,6 +204,8 @@ anland_handle_touch(struct anland_backend *b, const struct InputEvent *ev)
+ {
+ 	struct timespec ts;
+ 	struct weston_output *output;
++	struct weston_coord_global pos;
++	const struct weston_coord_global *pos_ptr = NULL;
+ 	int32_t type;
+ 
+ 	if (!b->touch_device)
+@@ -222,11 +232,14 @@ anland_handle_touch(struct anland_backend *b, const struct InputEvent *ev)
+ 		return;
+ 	}
+ 
+-	struct weston_coord_global pos =
+-		weston_coord_global_from_output_point(ev->touch.x, ev->touch.y,
+-						      output);
++	/* Weston requires touch-up events to carry no position. */
++	if (type != WL_TOUCH_UP) {
++		pos = weston_coord_global_from_output_point(ev->touch.x,
++						    ev->touch.y, output);
++		pos_ptr = &pos;
++	}
+ 
+-	notify_touch(b->touch_device, &ts, ev->touch.pointer_id, &pos, type);
++	notify_touch(b->touch_device, &ts, ev->touch.pointer_id, pos_ptr, type);
+ }
+ 
+ static void
+@@ -236,6 +249,101 @@ anland_handle_touch_frame(struct anland_backend *b)
+ 		notify_touch_frame(b->touch_device);
+ }
+ 
++static void
++anland_handle_display_refresh(struct anland_backend *b,
++			      const struct InputEvent *ev)
++{
++	struct weston_output *base;
++	uint32_t refresh = ev->display.refresh_mhz;
++
++	if (refresh < 1000 || refresh > 1000000) {
++		weston_log("anland: ignoring invalid display refresh %u mHz\n",
++			   refresh);
++		return;
++	}
++
++	if (b->refresh == (int)refresh)
++		return;
++
++	b->refresh = (int)refresh;
++	wl_list_for_each(base, &b->compositor->output_list, link) {
++		struct anland_output *output = to_anland_output(base);
++
++		if (!output || !base->current_mode)
++			continue;
++
++		if (anland_output_set_mode(output,
++					   base->current_mode->width,
++					   base->current_mode->height,
++					   b->refresh) == 0 && base->enabled)
++			weston_output_schedule_repaint(base);
++		break;
++	}
++}
++
++static int
++anland_drain_extended_data(struct anland_backend *b, uint32_t size)
++{
++	uint8_t buf[4096];
++
++	while (size > 0) {
++		size_t chunk = size < sizeof(buf) ? size : sizeof(buf);
++
++		if (poll_input_event_extend_data(b->display, buf, chunk,
++						 EXTENDED_INPUT_TIMEOUT_MS) != 1)
++			return -1;
++		size -= (uint32_t)chunk;
++	}
++
++	return 0;
++}
++
++static void
++anland_handle_extended_text(struct anland_backend *b, uint32_t size,
++			    const char *name)
++{
++	if (size > MAX_EXTENDED_INPUT_SIZE)
++		weston_log("anland: discarding oversized %s payload (%u bytes)\n",
++			   name, size);
++
++	if (anland_drain_extended_data(b, size) < 0)
++		weston_log("anland: failed to drain %s payload\n", name);
++}
++
++static void
++anland_handle_resource(struct anland_backend *b, const struct InputEvent *ev)
++{
++	uint32_t expected = ev->resource.fdnum;
++	int fds[MAX_RESOURCE_FDS];
++	int fd_count = 0;
++	int capacity;
++
++	if (expected == 0) {
++		weston_log("anland: ignoring resource %u with no fds\n",
++			   ev->resource.type);
++		return;
++	}
++
++	capacity = expected < MAX_RESOURCE_FDS ?
++		   (int)expected : MAX_RESOURCE_FDS;
++	if (poll_input_event_extend_fds(b->display, fds, capacity,
++					&fd_count,
++					EXTENDED_INPUT_TIMEOUT_MS) != 1)
++		return;
++
++	for (int i = 0; i < fd_count; i++)
++		close(fds[i]);
++
++	if (expected > MAX_RESOURCE_FDS || fd_count != (int)expected) {
++		weston_log("anland: rejected resource %u fd set (%d/%u)\n",
++			   ev->resource.type, fd_count, expected);
++		return;
++	}
++
++	weston_log("anland: resource %u is not enabled; closed %d fds\n",
++		   ev->resource.type, fd_count);
++}
++
+ static void
+ anland_process_input_event(struct anland_backend *b, const struct InputEvent *ev)
+ {
+@@ -258,6 +366,25 @@ anland_process_input_event(struct anland_backend *b, const struct InputEvent *ev
+ 	case INPUT_TYPE_TOUCH_FRAME:
+ 		anland_handle_touch_frame(b);
+ 		break;
++	case INPUT_TYPE_DISPLAY_REFRESH:
++		anland_handle_display_refresh(b, ev);
++		break;
++	case INPUT_TYPE_CLIPBOARD:
++		anland_handle_extended_text(b, ev->clipboard.size, "clipboard");
++		break;
++	case INPUT_TYPE_TEXT_INPUT:
++		anland_handle_extended_text(b, ev->text_input.size, "text input");
++		break;
++	case INPUT_TYPE_ACTION:
++		weston_log("anland: ignoring input action %u value %d\n",
++			   ev->input_action.action, ev->input_action.value);
++		break;
++	case INPUT_TYPE_RESOURCE:
++		anland_handle_resource(b, ev);
++		break;
++	default:
++		weston_log("anland: ignoring unknown input type %u\n", ev->type);
++		break;
+ 	}
+ }
+ 
+@@ -466,22 +593,29 @@ anland_output_switch_mode(struct weston_output *base,
+ }
+ 
+ static int
+-anland_output_resize(struct anland_output *output, int width, int height)
++anland_output_set_mode(struct anland_output *output, int width, int height,
++		       int refresh)
+ {
+ 	struct weston_mode mode = {
+ 		.width = width,
+ 		.height = height,
+-		.refresh = output->backend->refresh,
++		.refresh = refresh,
+ 	};
+ 
++	if (!output->base.enabled) {
++		weston_output_set_single_mode(&output->base, &mode);
++		return 0;
++	}
++
+ 	if (weston_output_mode_set_native(&output->base, &mode,
+ 					  output->base.current_scale) < 0) {
+-		weston_log("anland: failed to resize output to %dx%d\n",
+-			   width, height);
++		weston_log("anland: failed to set output mode %dx%d@%.3f Hz\n",
++			   width, height, refresh / 1000.0);
+ 		return -1;
+ 	}
+ 
+-	weston_log("anland: resized output to %dx%d\n", width, height);
++	weston_log("anland: set output mode %dx%d@%.3f Hz\n",
++		   width, height, refresh / 1000.0);
+ 	return 0;
+ }
+ 
+@@ -516,7 +650,8 @@ anland_output_import_dmabufs(struct anland_output *output)
+ 	if (output->base.current_mode->width != width ||
+ 	    output->base.current_mode->height != height) {
+ 		anland_output_release_renderbuffers(output);
+-		if (anland_output_resize(output, width, height) < 0)
++		if (anland_output_set_mode(output, width, height,
++					   output->backend->refresh) < 0)
+ 			return -1;
+ 	}
+ 
+diff --git a/libweston/backend-anland/vendor/display_producer.c b/libweston/backend-anland/vendor/display_producer.c
+index d9866a5..a3f3858 100644
+--- a/libweston/backend-anland/vendor/display_producer.c
++++ b/libweston/backend-anland/vendor/display_producer.c
+@@ -14,6 +14,7 @@
+ /* poll() timeout (ms) for the two reconnect handshake steps. Kept short so the
+  * caller's reconnect loop stays responsive when no consumer is present yet. */
+ #define HANDSHAKE_TIMEOUT_MS 100
++#define INPUT_MESSAGE_TIMEOUT_MS 100
+ 
+ struct display_ctx {
+     int      ctrl_fd;
+@@ -79,6 +80,51 @@ static void close_fds(int *fds, int count)
+         close(fds[i]);
+ }
+ 
++static int recv_all_timeout(int fd, void *buf, size_t len, int timeout_ms)
++{
++    uint8_t *p = buf;
++    size_t received = 0;
++
++    while (received < len) {
++        ssize_t n = recv(fd, p + received, len - received, MSG_DONTWAIT);
++        if (n > 0) {
++            received += (size_t)n;
++            continue;
++        }
++        if (n == 0)
++            return -1;
++        if (errno == EINTR)
++            continue;
++        if (errno != EAGAIN && errno != EWOULDBLOCK)
++            return -1;
++
++        struct pollfd pfd = { .fd = fd, .events = POLLIN };
++        int ret;
++        do {
++            ret = poll(&pfd, 1, timeout_ms);
++        } while (ret < 0 && errno == EINTR);
++        if (ret <= 0 || (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)))
++            return -1;
++    }
++
++    return 0;
++}
++
++static int discard_data_payload(display_ctx *ctx, uint32_t size)
++{
++    uint8_t buf[4096];
++
++    while (size > 0) {
++        size_t chunk = size < sizeof(buf) ? size : sizeof(buf);
++        if (recv_all_timeout(ctx->data_fd, buf, chunk,
++                             INPUT_MESSAGE_TIMEOUT_MS) < 0)
++            return -1;
++        size -= (uint32_t)chunk;
++    }
++
++    return 0;
++}
++
+ /* recvmsg() on SOCK_STREAM may return a short header even though the SCM_RIGHTS
+  * control message has already been delivered. Finish the fixed-size header with
+  * recv_all() while preserving ownership of the received descriptors. */
+@@ -347,39 +393,45 @@ int poll_input_event(display_ctx *ctx, struct InputEvent *event, int timeout_ms)
+     if (ctx->fallback)
+         return 0;
+ 
+-    struct pollfd pfd = { .fd = ctx->data_fd, .events = POLLIN };
+-    int ret = poll(&pfd, 1, timeout_ms);
+-    if (ret <= 0)
+-        return 0;
+-
+-    if (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
+-        enter_fallback(ctx);
+-        return -1;
+-    }
++    for (;;) {
++        struct pollfd pfd = { .fd = ctx->data_fd, .events = POLLIN };
++        int ret;
++        do {
++            ret = poll(&pfd, 1, timeout_ms);
++        } while (ret < 0 && errno == EINTR);
++        if (ret <= 0)
++            return 0;
++
++        if (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
++            enter_fallback(ctx);
++            return -1;
++        }
+ 
+-    uint8_t msg_buf[sizeof(struct data_msg) + sizeof(struct InputEvent)];
+-    ssize_t n = recv(ctx->data_fd, msg_buf, sizeof(msg_buf), MSG_PEEK);
+-    if (n < (ssize_t)sizeof(struct data_msg))
+-        return 0;
++        struct data_msg hdr;
++        if (recv_all_timeout(ctx->data_fd, &hdr, sizeof(hdr),
++                             INPUT_MESSAGE_TIMEOUT_MS) < 0) {
++            enter_fallback(ctx);
++            return -1;
++        }
+ 
+-    struct data_msg hdr;
+-    memcpy(&hdr, msg_buf, sizeof(hdr));
+-    if (hdr.type != DATA_MSG_INPUT_EVENT)
+-        return 0;
++        if (hdr.type != DATA_MSG_INPUT_EVENT) {
++            if (discard_data_payload(ctx, hdr.size) < 0) {
++                enter_fallback(ctx);
++                return -1;
++            }
++            timeout_ms = 0;
++            continue;
++        }
+ 
+-    if (hdr.size != sizeof(struct InputEvent)) {
+-        enter_fallback(ctx);
+-        return -1;
+-    }
++        if (hdr.size != sizeof(struct InputEvent) ||
++            recv_all_timeout(ctx->data_fd, event, sizeof(*event),
++                             INPUT_MESSAGE_TIMEOUT_MS) < 0) {
++            enter_fallback(ctx);
++            return -1;
++        }
+ 
+-    if (recv_all(ctx->data_fd, msg_buf,
+-                 sizeof(struct data_msg) + sizeof(struct InputEvent)) < 0) {
+-        enter_fallback(ctx);
+-        return -1;
++        return 1;
+     }
+-
+-    memcpy(event, msg_buf + sizeof(struct data_msg), sizeof(*event));
+-    return 1;
+ }
+ int poll_input_event_extend_fds(display_ctx *ctx, int *fds, int max_fds,
+                                 int *fd_count, int timeout_ms)
+@@ -390,8 +442,10 @@ int poll_input_event_extend_fds(display_ctx *ctx, int *fds, int max_fds,
+ 
+     struct pollfd pfd = { .fd = ctx->data_fd, .events = POLLIN };
+     int ret = poll(&pfd, 1, timeout_ms);
+-    if (ret <= 0)
+-        return 0;
++    if (ret <= 0) {
++        enter_fallback(ctx);
++        return -1;
++    }
+ 
+     if (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
+         enter_fallback(ctx);
+@@ -481,16 +535,7 @@ int poll_input_event_extend_data(display_ctx *ctx, void *payload, size_t size, i
+     if (!payload)
+         return -1;
+ 
+-    struct pollfd pfd = { .fd = ctx->data_fd, .events = POLLIN };
+-    int ret = poll(&pfd, 1, timeout_ms);
+-    if (ret <= 0)
+-        return 0;
+-
+-    if (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
+-        enter_fallback(ctx);
+-        return -1;
+-    }
+-    if (recv_all(ctx->data_fd, payload, size) < 0) {
++    if (recv_all_timeout(ctx->data_fd, payload, size, timeout_ms) < 0) {
+         enter_fallback(ctx);
+         return -1;
+     }
+diff --git a/libweston/backend-anland/vendor/display_producer.h b/libweston/backend-anland/vendor/display_producer.h
+index cc4a831..cd7e6d0 100644
+--- a/libweston/backend-anland/vendor/display_producer.h
++++ b/libweston/backend-anland/vendor/display_producer.h
+@@ -38,9 +38,13 @@ void set_render_fence(display_ctx *ctx, int fence_fd);
+  * the render fence, if any) on the dedicated fence channel. No-op in fallback. */
+ int  trigger_refresh(display_ctx *ctx);
+ 
+-/* Pull one pending input event. Returns 1 if an event was written, 0 if none was
+- * available, -1 on consumer loss. No-op (returns 0) in fallback. */
++/* Pull one pending input event. Non-input data messages are consumed and safely
++ * discarded so an unexpected header cannot leave the event loop spinning.
++ * Returns 1 if an event was written, 0 if none was available, -1 on consumer
++ * loss or malformed framing. No-op (returns 0) in fallback. */
+ int  poll_input_event(display_ctx *ctx, struct InputEvent *event, int timeout_ms);
++/* Read the exact variable payload announced by the immediately preceding input
++ * event. A timeout is a protocol failure and moves the context to fallback. */
+ int  poll_input_event_extend_data(display_ctx *ctx, void *payload,
+                                   size_t size, int timeout_ms);
+ 
+@@ -48,7 +52,7 @@ int  poll_input_event_extend_data(display_ctx *ctx, void *payload,
+  * message carrying the service's fds as SCM_RIGHTS). Call this right after
+  * poll_input_event() returns an INPUT_TYPE_RESOURCE event, using event.resource.fdnum
+  * as the expected count. Writes up to max_fds received fds into fds[] and the actual
+- * count into *fd_count. Returns 1 on success, 0 if nothing was pending, -1 on error
++ * count into *fd_count. Returns 1 on success, 0 in fallback, -1 on timeout/error
+  * (consumer loss). The caller owns the received fds and must close them. */
+ int  poll_input_event_extend_fds(display_ctx *ctx, int *fds, int max_fds,
+                                  int *fd_count, int timeout_ms);
