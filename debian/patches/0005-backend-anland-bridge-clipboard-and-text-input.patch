@@ -1,0 +1,1109 @@
+From: lfdevs <lfdevs@lfdevs.com>
+Date: Sun, 19 Jul 2026 00:54:44 +0800
+Subject: backend-anland: bridge clipboard and text input
+
+Bridge Weston selections to Anland with bounded asynchronous pipe reads
+and publish Android clipboard updates through a backend-owned data
+source. Keep the transfer off the compositor's blocking paths, cap
+clipboard contents at 1 MiB, and cache synchronized text to suppress
+feedback loops and restore it after consumer reconnects.
+
+Register a narrow text-backend plugin API and use it to commit validated
+UTF-8 to the active text-input-v1 client. Apply the same payload limits
+to incoming text and use timeout-bounded nonblocking sends for
+data-channel output events.
+---
+ frontend/text-backend-api.h                        |  22 +
+ frontend/text-backend.c                            |  30 +-
+ libweston/backend-anland/anland.c                  | 291 +++++++++++-
+ libweston/backend-anland/anland_clipboard.c        | 493 +++++++++++++++++++++
+ libweston/backend-anland/anland_clipboard.h        |  23 +
+ libweston/backend-anland/meson.build               |   1 +
+ libweston/backend-anland/vendor/display_producer.c |  36 +-
+ 7 files changed, 881 insertions(+), 15 deletions(-)
+ create mode 100644 frontend/text-backend-api.h
+ create mode 100644 libweston/backend-anland/anland_clipboard.c
+ create mode 100644 libweston/backend-anland/anland_clipboard.h
+
+diff --git a/frontend/text-backend-api.h b/frontend/text-backend-api.h
+new file mode 100644
+index 0000000..cca2b42
+--- /dev/null
++++ b/frontend/text-backend-api.h
+@@ -0,0 +1,22 @@
++#ifndef WESTON_TEXT_BACKEND_API_H
++#define WESTON_TEXT_BACKEND_API_H
++
++#include <stdbool.h>
++
++#include <libweston/plugin-registry.h>
++
++#define WESTON_TEXT_BACKEND_API_NAME "weston_text_backend_v1"
++
++struct weston_text_backend_api {
++	void *context;
++	bool (*commit_string)(void *context, const char *text);
++};
++
++static inline const struct weston_text_backend_api *
++weston_text_backend_get_api(struct weston_compositor *compositor)
++{
++	return weston_plugin_api_get(compositor, WESTON_TEXT_BACKEND_API_NAME,
++				     sizeof(struct weston_text_backend_api));
++}
++
++#endif
+diff --git a/frontend/text-backend.c b/frontend/text-backend.c
+index 73a1eda..846fd1e 100644
+--- a/frontend/text-backend.c
++++ b/frontend/text-backend.c
+@@ -40,6 +40,7 @@
+ #include "shared/helpers.h"
+ #include "shared/timespec-util.h"
+ #include "shared/xalloc.h"
++#include "frontend/text-backend-api.h"
+ 
+ struct text_input_manager;
+ struct input_method;
+@@ -69,6 +70,7 @@ struct text_input_manager {
+ 	struct text_input *current_text_input;
+ 
+ 	struct weston_compositor *ec;
++	struct weston_text_backend_api api;
+ };
+ 
+ struct input_method {
+@@ -466,10 +468,26 @@ text_input_manager_notifier_destroy(struct wl_listener *listener, void *data)
+ 	free(text_input_manager);
+ }
+ 
+-static void
++static bool
++text_backend_commit_string(void *data, const char *text)
++{
++	struct text_input_manager *manager = data;
++	struct text_input *text_input = manager->current_text_input;
++	uint32_t serial;
++
++	if (!text || !text_input || !text_input->resource)
++		return false;
++
++	serial = wl_display_next_serial(manager->ec->wl_display);
++	zwp_text_input_v1_send_commit_string(text_input->resource, serial, text);
++	return true;
++}
++
++static struct text_input_manager *
+ text_input_manager_create(struct weston_compositor *ec)
+ {
+ 	struct text_input_manager *text_input_manager;
++	int ret;
+ 
+ 	text_input_manager = xzalloc(sizeof *text_input_manager);
+ 
+@@ -484,6 +502,16 @@ text_input_manager_create(struct weston_compositor *ec)
+ 		text_input_manager_notifier_destroy;
+ 	wl_signal_add(&ec->destroy_signal,
+ 		      &text_input_manager->destroy_listener);
++
++	text_input_manager->api.context = text_input_manager;
++	text_input_manager->api.commit_string = text_backend_commit_string;
++	ret = weston_plugin_api_register(ec, WESTON_TEXT_BACKEND_API_NAME,
++					 &text_input_manager->api,
++					 sizeof(text_input_manager->api));
++	if (ret < 0)
++		weston_log("failed to register text backend API: %d\n", ret);
++
++	return text_input_manager;
+ }
+ 
+ static void
+diff --git a/libweston/backend-anland/anland.c b/libweston/backend-anland/anland.c
+index bff1566..b11f842 100644
+--- a/libweston/backend-anland/anland.c
++++ b/libweston/backend-anland/anland.c
+@@ -1,6 +1,7 @@
+ #include "config.h"
+ 
+ #include <assert.h>
++#include <limits.h>
+ #include <stdint.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -9,6 +10,8 @@
+ #include <stdbool.h>
+ #include <unistd.h>
+ #include <linux/input.h>
++#include <xkbcommon/xkbcommon.h>
++#include <xkbcommon/xkbcommon-keysyms.h>
+ 
+ #include <libweston/libweston.h>
+ #include <libweston/backend-anland.h>
+@@ -25,12 +28,15 @@
+ #include <libweston/windowed-output-api.h>
+ 
+ #include "display_producer.h"
++#include "anland_clipboard.h"
++#include "frontend/text-backend-api.h"
+ 
+ #define DEFAULT_SOCKET_PATH "/tmp/display_daemon.sock"
+ #define DEFAULT_REFRESH 120000
+ #define EXTENDED_INPUT_TIMEOUT_MS 100
+ #define MAX_EXTENDED_INPUT_SIZE (1024U * 1024U)
+ #define MAX_RESOURCE_FDS 9
++#define XKB_EVDEV_OFFSET 8
+ 
+ /* Cadence of the reconnect loop that polls try_exit_fallback() while no
+  * consumer is present. */
+@@ -61,6 +67,7 @@ struct anland_backend {
+ 
+ 	struct wl_event_source *buf_ready_source;
+ 	bool consumer_ready;
++	struct anland_clipboard *clipboard;
+ 
+ 	const struct pixel_format_info **formats;
+ 	unsigned int formats_count;
+@@ -298,16 +305,265 @@ anland_drain_extended_data(struct anland_backend *b, uint32_t size)
+ 	return 0;
+ }
+ 
+-static void
+-anland_handle_extended_text(struct anland_backend *b, uint32_t size,
+-			    const char *name)
++static bool
++anland_valid_utf8(const char *text, size_t size)
++{
++	const uint8_t *p = (const uint8_t *)text;
++	size_t i = 0;
++
++	while (i < size) {
++		uint8_t c = p[i++];
++
++		if (c < 0x80)
++			continue;
++		if (c >= 0xc2 && c <= 0xdf) {
++			if (i >= size || (p[i++] & 0xc0) != 0x80)
++				return false;
++			continue;
++		}
++		if (c >= 0xe0 && c <= 0xef) {
++			if (i + 1 >= size || (p[i + 1] & 0xc0) != 0x80 ||
++			    (c == 0xe0 && p[i] < 0xa0) ||
++			    (c == 0xed && p[i] >= 0xa0) ||
++			    (p[i] & 0xc0) != 0x80)
++				return false;
++			i += 2;
++			continue;
++		}
++		if (c >= 0xf0 && c <= 0xf4) {
++			if (i + 2 >= size || (p[i + 1] & 0xc0) != 0x80 ||
++			    (p[i + 2] & 0xc0) != 0x80 ||
++			    (c == 0xf0 && p[i] < 0x90) ||
++			    (c == 0xf4 && p[i] >= 0x90) ||
++			    (p[i] & 0xc0) != 0x80)
++				return false;
++			i += 3;
++			continue;
++		}
++		return false;
++	}
++
++	return true;
++}
++
++static char *
++anland_read_extended_text(struct anland_backend *b, uint32_t size,
++			  const char *name)
+ {
+-	if (size > MAX_EXTENDED_INPUT_SIZE)
++	char *text;
++
++	if (size > MAX_EXTENDED_INPUT_SIZE) {
+ 		weston_log("anland: discarding oversized %s payload (%u bytes)\n",
+ 			   name, size);
++		anland_drain_extended_data(b, size);
++		return NULL;
++	}
++
++	text = malloc((size_t)size + 1);
++	if (!text) {
++		anland_drain_extended_data(b, size);
++		return NULL;
++	}
++
++	if (poll_input_event_extend_data(b->display, text, size,
++					 EXTENDED_INPUT_TIMEOUT_MS) != 1) {
++		free(text);
++		return NULL;
++	}
++	text[size] = '\0';
++
++	if (memchr(text, '\0', size) || !anland_valid_utf8(text, size)) {
++		weston_log("anland: rejected invalid UTF-8 %s payload\n", name);
++		free(text);
++		return NULL;
++	}
++
++	return text;
++}
++
++static void
++anland_handle_clipboard(struct anland_backend *b, uint32_t size)
++{
++	char *text = anland_read_extended_text(b, size, "clipboard");
++
++	if (!text)
++		return;
++	anland_clipboard_set_from_consumer(b->clipboard, text, size);
++	free(text);
++}
++
++static uint32_t
++anland_utf8_next(const uint8_t **cursor)
++{
++	const uint8_t *p = *cursor;
++	uint32_t codepoint;
++
++	if (*p < 0x80) {
++		codepoint = *p++;
++	} else if (*p < 0xe0) {
++		codepoint = (uint32_t)(*p++ & 0x1f) << 6;
++		codepoint |= *p++ & 0x3f;
++	} else if (*p < 0xf0) {
++		codepoint = (uint32_t)(*p++ & 0x0f) << 12;
++		codepoint |= (uint32_t)(*p++ & 0x3f) << 6;
++		codepoint |= *p++ & 0x3f;
++	} else {
++		codepoint = (uint32_t)(*p++ & 0x07) << 18;
++		codepoint |= (uint32_t)(*p++ & 0x3f) << 12;
++		codepoint |= (uint32_t)(*p++ & 0x3f) << 6;
++		codepoint |= *p++ & 0x3f;
++	}
++
++	*cursor = p;
++	return codepoint;
++}
++
++static xkb_keysym_t
++anland_codepoint_to_keysym(uint32_t codepoint)
++{
++	switch (codepoint) {
++	case '\n':
++	case '\r':
++		return XKB_KEY_Return;
++	case '\t':
++		return XKB_KEY_Tab;
++	case '\b':
++		return XKB_KEY_BackSpace;
++	default:
++		return xkb_utf32_to_keysym(codepoint);
++	}
++}
++
++static bool
++anland_find_key(struct xkb_state *state, struct xkb_keymap *keymap,
++		xkb_keysym_t keysym, uint32_t *key)
++{
++	xkb_keycode_t code;
+ 
+-	if (anland_drain_extended_data(b, size) < 0)
+-		weston_log("anland: failed to drain %s payload\n", name);
++	for (code = xkb_keymap_min_keycode(keymap);
++	     code <= xkb_keymap_max_keycode(keymap); code++) {
++		if (code < XKB_EVDEV_OFFSET ||
++		    code - XKB_EVDEV_OFFSET > KEY_MAX)
++			continue;
++		if (xkb_state_key_get_one_sym(state, code) != keysym)
++			continue;
++
++		*key = code - XKB_EVDEV_OFFSET;
++		return true;
++	}
++
++	return false;
++}
++
++static bool
++anland_keysym_to_key(struct weston_keyboard *keyboard, xkb_keysym_t keysym,
++		     uint32_t *key, bool *needs_shift)
++{
++	struct xkb_keymap *keymap = keyboard->xkb_info->keymap;
++	struct xkb_state *shifted_state;
++	xkb_mod_mask_t depressed, latched, locked, shift_mask;
++	xkb_layout_index_t group;
++	bool found;
++
++	if (anland_find_key(keyboard->xkb_state.state, keymap, keysym, key)) {
++		*needs_shift = false;
++		return true;
++	}
++
++	if (keyboard->xkb_info->shift_mod == XKB_MOD_INVALID ||
++	    keyboard->xkb_info->shift_mod >= sizeof(shift_mask) * CHAR_BIT)
++		return false;
++
++	depressed = xkb_state_serialize_mods(keyboard->xkb_state.state,
++					     XKB_STATE_MODS_DEPRESSED);
++	latched = xkb_state_serialize_mods(keyboard->xkb_state.state,
++					   XKB_STATE_MODS_LATCHED);
++	locked = xkb_state_serialize_mods(keyboard->xkb_state.state,
++					  XKB_STATE_MODS_LOCKED);
++	group = xkb_state_serialize_layout(keyboard->xkb_state.state,
++					   XKB_STATE_LAYOUT_EFFECTIVE);
++	shift_mask = (xkb_mod_mask_t)1 << keyboard->xkb_info->shift_mod;
++
++	/* A held Shift already affects the state and cannot be pressed again. */
++	if (depressed & shift_mask)
++		return false;
++
++	shifted_state = xkb_state_new(keymap);
++	if (!shifted_state)
++		return false;
++	xkb_state_update_mask(shifted_state, depressed | shift_mask, latched,
++			      locked, 0, 0, group);
++	found = anland_find_key(shifted_state, keymap, keysym, key);
++	xkb_state_unref(shifted_state);
++	if (!found)
++		return false;
++
++	*needs_shift = true;
++	return true;
++}
++
++static bool
++anland_inject_text(struct anland_backend *b, const char *text, size_t size)
++{
++	struct weston_keyboard *keyboard = weston_seat_get_keyboard(&b->seat);
++	const uint8_t *cursor = (const uint8_t *)text;
++	const uint8_t *end = cursor + size;
++	bool injected = false;
++
++	if (!keyboard || !keyboard->focus || !keyboard->xkb_info ||
++	    !keyboard->xkb_state.state)
++		return false;
++
++	while (cursor < end) {
++		struct timespec ts;
++		uint32_t codepoint = anland_utf8_next(&cursor);
++		xkb_keysym_t keysym = anland_codepoint_to_keysym(codepoint);
++		uint32_t key;
++		bool needs_shift;
++
++		if (keysym == XKB_KEY_NoSymbol ||
++		    !anland_keysym_to_key(keyboard, keysym, &key, &needs_shift)) {
++			weston_log("anland: cannot synthesize text codepoint U+%04X\n",
++				   codepoint);
++			continue;
++		}
++
++		weston_compositor_get_time(&ts);
++		if (needs_shift)
++			notify_key(&b->seat, &ts, KEY_LEFTSHIFT,
++				   WL_KEYBOARD_KEY_STATE_PRESSED,
++				   STATE_UPDATE_AUTOMATIC);
++		notify_key(&b->seat, &ts, key, WL_KEYBOARD_KEY_STATE_PRESSED,
++			   STATE_UPDATE_AUTOMATIC);
++		notify_key(&b->seat, &ts, key, WL_KEYBOARD_KEY_STATE_RELEASED,
++			   STATE_UPDATE_AUTOMATIC);
++		if (needs_shift)
++			notify_key(&b->seat, &ts, KEY_LEFTSHIFT,
++				   WL_KEYBOARD_KEY_STATE_RELEASED,
++				   STATE_UPDATE_AUTOMATIC);
++		injected = true;
++	}
++
++	return injected;
++}
++
++static void
++anland_handle_text_input(struct anland_backend *b, uint32_t size)
++{
++	const struct weston_text_backend_api *api;
++	char *text = anland_read_extended_text(b, size, "text input");
++
++	if (!text)
++		return;
++
++	api = weston_text_backend_get_api(b->compositor);
++	if ((!api || !api->commit_string ||
++	     !api->commit_string(api->context, text)) &&
++	    !anland_inject_text(b, text, size))
++		weston_log("anland: no text input or focused keyboard for "
++			   "committed text\n");
++
++	free(text);
+ }
+ 
+ static void
+@@ -370,10 +626,10 @@ anland_process_input_event(struct anland_backend *b, const struct InputEvent *ev
+ 		anland_handle_display_refresh(b, ev);
+ 		break;
+ 	case INPUT_TYPE_CLIPBOARD:
+-		anland_handle_extended_text(b, ev->clipboard.size, "clipboard");
++		anland_handle_clipboard(b, ev->clipboard.size);
+ 		break;
+ 	case INPUT_TYPE_TEXT_INPUT:
+-		anland_handle_extended_text(b, ev->text_input.size, "text input");
++		anland_handle_text_input(b, ev->text_input.size);
+ 		break;
+ 	case INPUT_TYPE_ACTION:
+ 		weston_log("anland: ignoring input action %u value %d\n",
+@@ -493,6 +749,9 @@ anland_consumer_connected(struct anland_backend *b)
+ 	/* The dmabufs arrived with the handshake (try_exit_fallback received
+ 	 * them), so they are ready to import right away. */
+ 	anland_import_dmabufs(b);
++	anland_clipboard_consumer_connected(b->clipboard);
++	if (is_fallback(b->display))
++		return;
+ 
+ 	/* Stop the reconnect timer — we're back in business. */
+ 	if (b->reconnect_timer)
+@@ -634,14 +893,16 @@ anland_output_import_dmabufs(struct anland_output *output)
+ 	if (get_dmabuf_info_at(b->display, 0, &info) < 0)
+ 		return -1;
+ 
+-	width = info.width;
+-	height = info.height;
+-	if (width <= 0 || height <= 0)
++	if (info.width == 0 || info.height == 0 ||
++	    info.width > INT_MAX || info.height > INT_MAX)
+ 		return -1;
++	width = (int)info.width;
++	height = (int)info.height;
+ 
+ 	for (int i = 1; i < count; i++) {
+ 		if (get_dmabuf_info_at(b->display, i, &info) < 0 ||
+-		    info.width != width || info.height != height) {
++		    info.width != (uint32_t)width ||
++		    info.height != (uint32_t)height) {
+ 			weston_log("anland: inconsistent dmabuf dimensions\n");
+ 			return -1;
+ 		}
+@@ -1079,6 +1340,7 @@ anland_destroy(struct weston_backend *backend)
+ 			anland_head_destroy(base);
+ 	}
+ 
++	anland_clipboard_destroy(b->clipboard);
+ 	anland_input_destroy(b);
+ 
+ 	if (b->display)
+@@ -1134,6 +1396,9 @@ anland_backend_create(struct weston_compositor *compositor,
+ 	}
+ 
+ 	set_fallback_callback(b->display, anland_fallback_cb, b);
++	b->clipboard = anland_clipboard_create(&b->seat, b->display);
++	if (!b->clipboard)
++		weston_log("anland: failed to initialize clipboard bridge\n");
+ 
+ 	uint32_t sw, sh, sf, sr;
+ 	get_screen_info(b->display, &sw, &sh, &sf, &sr);
+@@ -1185,6 +1450,8 @@ anland_backend_create(struct weston_compositor *compositor,
+ 	return b;
+ 
+ err_display:
++	anland_clipboard_destroy(b->clipboard);
++	b->clipboard = NULL;
+ 	disconnect(b->display);
+ 	b->display = NULL;
+ err_input:
+diff --git a/libweston/backend-anland/anland_clipboard.c b/libweston/backend-anland/anland_clipboard.c
+new file mode 100644
+index 0000000..03cd856
+--- /dev/null
++++ b/libweston/backend-anland/anland_clipboard.c
+@@ -0,0 +1,493 @@
++#define _GNU_SOURCE
++
++#include "config.h"
++
++#include <errno.h>
++#include <fcntl.h>
++#include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++
++#include <libweston/libweston.h>
++
++#include "anland_clipboard.h"
++#include "shared/helpers.h"
++#include "vendor/display_producer.h"
++
++#define ANLAND_CLIPBOARD_LIMIT (1024U * 1024U)
++#define ANLAND_CLIPBOARD_TIMEOUT_MS 1000
++
++struct anland_clipboard;
++
++struct anland_clipboard_source {
++	struct weston_data_source base;
++	char *text;
++	size_t size;
++	int refcount;
++};
++
++struct anland_clipboard_writer {
++	struct anland_clipboard_source *source;
++	struct wl_event_source *event_source;
++	size_t offset;
++	int fd;
++};
++
++struct anland_clipboard_reader {
++	struct anland_clipboard *clipboard;
++	struct wl_event_source *fd_source;
++	struct wl_event_source *timeout_source;
++	char *data;
++	size_t size;
++	int fd;
++};
++
++struct anland_clipboard {
++	struct weston_seat *seat;
++	display_ctx *display;
++	struct wl_listener selection_listener;
++	struct anland_clipboard_source *source;
++	struct anland_clipboard_reader *reader;
++	char *last_sent;
++	size_t last_sent_size;
++	bool have_last_sent;
++};
++
++static void
++anland_clipboard_source_unref(struct anland_clipboard_source *source)
++{
++	char **mime_type;
++
++	if (--source->refcount > 0)
++		return;
++
++	wl_signal_emit(&source->base.destroy_signal, &source->base);
++	wl_array_for_each(mime_type, &source->base.mime_types)
++		free(*mime_type);
++	wl_array_release(&source->base.mime_types);
++	free(source->text);
++	free(source);
++}
++
++static int
++anland_clipboard_writer_handler(int fd, uint32_t mask, void *data)
++{
++	struct anland_clipboard_writer *writer = data;
++	struct anland_clipboard_source *source = writer->source;
++	ssize_t len;
++
++	if (mask & (WL_EVENT_HANGUP | WL_EVENT_ERROR))
++		goto done;
++
++	len = write(fd, source->text + writer->offset,
++		    source->size - writer->offset);
++	if (len > 0)
++		writer->offset += (size_t)len;
++	else if (len < 0 && (errno == EAGAIN || errno == EINTR))
++		return 1;
++	else
++		goto done;
++
++	if (writer->offset < source->size)
++		return 1;
++
++done:
++	wl_event_source_remove(writer->event_source);
++	close(writer->fd);
++	anland_clipboard_source_unref(source);
++	free(writer);
++	return 0;
++}
++
++static void
++anland_clipboard_source_accept(struct weston_data_source *base,
++			       uint32_t serial, const char *mime_type)
++{
++	(void)base;
++	(void)serial;
++	(void)mime_type;
++}
++
++static void
++anland_clipboard_source_send(struct weston_data_source *base,
++			     const char *mime_type, int32_t fd)
++{
++	struct anland_clipboard_source *source =
++		container_of(base, struct anland_clipboard_source, base);
++	struct wl_event_loop *loop;
++	struct anland_clipboard_writer *writer;
++	int flags;
++
++	if (strcmp(mime_type, "text/plain;charset=utf-8") != 0 &&
++	    strcmp(mime_type, "text/plain") != 0)
++		goto fail;
++
++	if (source->size == 0) {
++		close(fd);
++		return;
++	}
++
++	writer = zalloc(sizeof(*writer));
++	if (!writer)
++		goto fail;
++
++	flags = fcntl(fd, F_GETFL);
++	if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
++		free(writer);
++		goto fail;
++	}
++
++	loop = wl_display_get_event_loop(base->seat->compositor->wl_display);
++	writer->source = source;
++	writer->fd = fd;
++	writer->event_source =
++		wl_event_loop_add_fd(loop, fd, WL_EVENT_WRITABLE,
++				     anland_clipboard_writer_handler, writer);
++	if (!writer->event_source) {
++		free(writer);
++		goto fail;
++	}
++
++	source->refcount++;
++	return;
++
++fail:
++	close(fd);
++}
++
++static void
++anland_clipboard_source_cancel(struct weston_data_source *base)
++{
++	(void)base;
++}
++
++static bool
++anland_clipboard_add_mime(struct anland_clipboard_source *source,
++			  const char *name)
++{
++	char **mime_type = wl_array_add(&source->base.mime_types,
++					sizeof(*mime_type));
++
++	if (!mime_type)
++		return false;
++	*mime_type = strdup(name);
++	return *mime_type != NULL;
++}
++
++static struct anland_clipboard_source *
++anland_clipboard_source_create(struct weston_seat *seat,
++			       const char *text, size_t size)
++{
++	struct anland_clipboard_source *source = zalloc(sizeof(*source));
++
++	if (!source)
++		return NULL;
++
++	wl_signal_init(&source->base.destroy_signal);
++	wl_array_init(&source->base.mime_types);
++	source->base.seat = seat;
++	source->base.accept = anland_clipboard_source_accept;
++	source->base.send = anland_clipboard_source_send;
++	source->base.cancel = anland_clipboard_source_cancel;
++	source->refcount = 1;
++	source->text = malloc(size + 1);
++	if (!source->text)
++		goto fail;
++	memcpy(source->text, text, size);
++	source->text[size] = '\0';
++	source->size = size;
++
++	if (!anland_clipboard_add_mime(source, "text/plain;charset=utf-8") ||
++	    !anland_clipboard_add_mime(source, "text/plain"))
++		goto fail;
++
++	return source;
++
++fail:
++	anland_clipboard_source_unref(source);
++	return NULL;
++}
++
++static bool
++anland_clipboard_cache(struct anland_clipboard *clipboard,
++		       const char *text, size_t size)
++{
++	char *copy;
++
++	if (clipboard->have_last_sent && clipboard->last_sent_size == size &&
++	    (size == 0 || memcmp(clipboard->last_sent, text, size) == 0))
++		return true;
++
++	copy = malloc(size + 1);
++	if (!copy)
++		return false;
++	if (size > 0)
++		memcpy(copy, text, size);
++	copy[size] = '\0';
++
++	free(clipboard->last_sent);
++	clipboard->last_sent = copy;
++	clipboard->last_sent_size = size;
++	clipboard->have_last_sent = true;
++	return true;
++}
++
++static void
++anland_clipboard_send(struct anland_clipboard *clipboard,
++		      const char *text, size_t size)
++{
++	struct OutputEvent event = { .type = OUTPUT_TYPE_CLIPBOARD };
++	bool unchanged = clipboard->have_last_sent &&
++		clipboard->last_sent_size == size &&
++		(size == 0 || memcmp(clipboard->last_sent, text, size) == 0);
++
++	if (unchanged)
++		return;
++
++	anland_clipboard_cache(clipboard, text, size);
++
++	event.clipboard.size = (uint32_t)size;
++	push_output_event_with_length(clipboard->display, &event, text, size);
++}
++
++static void
++anland_clipboard_reader_destroy(struct anland_clipboard_reader *reader)
++{
++	if (reader->fd_source)
++		wl_event_source_remove(reader->fd_source);
++	if (reader->timeout_source)
++		wl_event_source_remove(reader->timeout_source);
++	close(reader->fd);
++	if (reader->clipboard->reader == reader)
++		reader->clipboard->reader = NULL;
++	free(reader->data);
++	free(reader);
++}
++
++static void
++anland_clipboard_reader_finish(struct anland_clipboard_reader *reader)
++{
++	anland_clipboard_send(reader->clipboard, reader->data, reader->size);
++	anland_clipboard_reader_destroy(reader);
++}
++
++static int
++anland_clipboard_reader_timeout(void *data)
++{
++	struct anland_clipboard_reader *reader = data;
++
++	weston_log("anland: clipboard owner timed out\n");
++	anland_clipboard_reader_destroy(reader);
++	return 0;
++}
++
++static int
++anland_clipboard_reader_handler(int fd, uint32_t mask, void *data)
++{
++	struct anland_clipboard_reader *reader = data;
++	char buf[4096];
++
++	for (;;) {
++		ssize_t len = read(fd, buf, sizeof(buf));
++
++		if (len > 0) {
++			char *new_data;
++
++			if (reader->size + (size_t)len > ANLAND_CLIPBOARD_LIMIT) {
++				weston_log("anland: clipboard owner exceeded 1 MiB\n");
++				anland_clipboard_reader_destroy(reader);
++				return 0;
++			}
++			new_data = realloc(reader->data, reader->size + (size_t)len);
++			if (!new_data) {
++				anland_clipboard_reader_destroy(reader);
++				return 0;
++			}
++			reader->data = new_data;
++			memcpy(reader->data + reader->size, buf, (size_t)len);
++			reader->size += (size_t)len;
++			wl_event_source_timer_update(reader->timeout_source,
++						     ANLAND_CLIPBOARD_TIMEOUT_MS);
++			continue;
++		}
++
++		if (len == 0) {
++			anland_clipboard_reader_finish(reader);
++			return 0;
++		}
++		if (errno == EINTR)
++			continue;
++		if (errno == EAGAIN && !(mask & (WL_EVENT_HANGUP | WL_EVENT_ERROR)))
++			return 1;
++
++		anland_clipboard_reader_destroy(reader);
++		return 0;
++	}
++}
++
++static const char *
++anland_clipboard_pick_mime(struct weston_data_source *source)
++{
++	const char **mime_type;
++	const char *plain = NULL;
++
++	wl_array_for_each(mime_type, &source->mime_types) {
++		if (strcmp(*mime_type, "text/plain;charset=utf-8") == 0)
++			return *mime_type;
++		if (strcmp(*mime_type, "text/plain") == 0)
++			plain = *mime_type;
++	}
++
++	return plain;
++}
++
++static void
++anland_clipboard_selection_changed(struct wl_listener *listener, void *data)
++{
++	struct anland_clipboard *clipboard =
++		container_of(listener, struct anland_clipboard,
++			     selection_listener);
++	struct weston_seat *seat = data;
++	struct weston_data_source *selection = seat->selection_data_source;
++	struct anland_clipboard_source *old_source = clipboard->source;
++	struct anland_clipboard_reader *reader;
++	struct wl_event_loop *loop;
++	const char *mime_type;
++	int pipefd[2];
++	int flags;
++
++	if (selection == (old_source ? &old_source->base : NULL))
++		return;
++
++	clipboard->source = NULL;
++	if (old_source)
++		anland_clipboard_source_unref(old_source);
++	if (clipboard->reader)
++		anland_clipboard_reader_destroy(clipboard->reader);
++
++	if (!selection) {
++		anland_clipboard_send(clipboard, "", 0);
++		return;
++	}
++
++	mime_type = anland_clipboard_pick_mime(selection);
++	if (!mime_type || pipe2(pipefd, O_CLOEXEC) < 0)
++		return;
++
++	flags = fcntl(pipefd[0], F_GETFL);
++	if (flags < 0 || fcntl(pipefd[0], F_SETFL, flags | O_NONBLOCK) < 0) {
++		close(pipefd[0]);
++		close(pipefd[1]);
++		return;
++	}
++
++	reader = zalloc(sizeof(*reader));
++	if (!reader) {
++		close(pipefd[0]);
++		close(pipefd[1]);
++		return;
++	}
++	reader->clipboard = clipboard;
++	reader->fd = pipefd[0];
++	loop = wl_display_get_event_loop(seat->compositor->wl_display);
++	reader->fd_source =
++		wl_event_loop_add_fd(loop, reader->fd, WL_EVENT_READABLE,
++				     anland_clipboard_reader_handler, reader);
++	reader->timeout_source = wl_event_loop_add_timer(
++		loop, anland_clipboard_reader_timeout, reader);
++	if (!reader->fd_source || !reader->timeout_source) {
++		if (reader->fd_source)
++			wl_event_source_remove(reader->fd_source);
++		if (reader->timeout_source)
++			wl_event_source_remove(reader->timeout_source);
++		close(reader->fd);
++		close(pipefd[1]);
++		free(reader);
++		return;
++	}
++
++	clipboard->reader = reader;
++	wl_event_source_timer_update(reader->timeout_source,
++				     ANLAND_CLIPBOARD_TIMEOUT_MS);
++	selection->send(selection, mime_type, pipefd[1]);
++}
++
++struct anland_clipboard *
++anland_clipboard_create(struct weston_seat *seat, display_ctx *display)
++{
++	struct anland_clipboard *clipboard = zalloc(sizeof(*clipboard));
++
++	if (!clipboard)
++		return NULL;
++
++	clipboard->seat = seat;
++	clipboard->display = display;
++	clipboard->selection_listener.notify =
++		anland_clipboard_selection_changed;
++	wl_signal_add(&seat->selection_signal, &clipboard->selection_listener);
++
++	return clipboard;
++}
++
++void
++anland_clipboard_destroy(struct anland_clipboard *clipboard)
++{
++	struct anland_clipboard_source *source;
++
++	if (!clipboard)
++		return;
++
++	wl_list_remove(&clipboard->selection_listener.link);
++	if (clipboard->reader)
++		anland_clipboard_reader_destroy(clipboard->reader);
++
++	source = clipboard->source;
++	clipboard->source = NULL;
++	if (source && clipboard->seat->selection_data_source == &source->base)
++		weston_seat_set_selection(clipboard->seat, NULL,
++			wl_display_next_serial(clipboard->seat->compositor->wl_display));
++	if (source)
++		anland_clipboard_source_unref(source);
++
++	free(clipboard->last_sent);
++	free(clipboard);
++}
++
++void
++anland_clipboard_set_from_consumer(struct anland_clipboard *clipboard,
++				   const char *text, size_t size)
++{
++	struct anland_clipboard_source *source;
++	struct anland_clipboard_source *old_source;
++	uint32_t serial;
++
++	if (!clipboard)
++		return;
++
++	source = anland_clipboard_source_create(clipboard->seat, text, size);
++	if (!source)
++		return;
++
++	old_source = clipboard->source;
++	clipboard->source = source;
++	anland_clipboard_cache(clipboard, text, size);
++	serial = wl_display_next_serial(clipboard->seat->compositor->wl_display);
++	weston_seat_set_selection(clipboard->seat, &source->base, serial);
++	if (old_source)
++		anland_clipboard_source_unref(old_source);
++}
++
++void
++anland_clipboard_consumer_connected(struct anland_clipboard *clipboard)
++{
++	struct OutputEvent event = { .type = OUTPUT_TYPE_CLIPBOARD };
++
++	if (!clipboard || !clipboard->have_last_sent)
++		return;
++
++	event.clipboard.size = (uint32_t)clipboard->last_sent_size;
++	push_output_event_with_length(clipboard->display, &event,
++				      clipboard->last_sent,
++				      clipboard->last_sent_size);
++}
+diff --git a/libweston/backend-anland/anland_clipboard.h b/libweston/backend-anland/anland_clipboard.h
+new file mode 100644
+index 0000000..cb92331
+--- /dev/null
++++ b/libweston/backend-anland/anland_clipboard.h
+@@ -0,0 +1,23 @@
++#ifndef WESTON_BACKEND_ANLAND_CLIPBOARD_H
++#define WESTON_BACKEND_ANLAND_CLIPBOARD_H
++
++#include <stddef.h>
++
++struct weston_seat;
++typedef struct display_ctx display_ctx;
++struct anland_clipboard;
++
++struct anland_clipboard *
++anland_clipboard_create(struct weston_seat *seat, display_ctx *display);
++
++void
++anland_clipboard_destroy(struct anland_clipboard *clipboard);
++
++void
++anland_clipboard_set_from_consumer(struct anland_clipboard *clipboard,
++				   const char *text, size_t size);
++
++void
++anland_clipboard_consumer_connected(struct anland_clipboard *clipboard);
++
++#endif
+diff --git a/libweston/backend-anland/meson.build b/libweston/backend-anland/meson.build
+index 668739b..69163ee 100644
+--- a/libweston/backend-anland/meson.build
++++ b/libweston/backend-anland/meson.build
+@@ -6,6 +6,7 @@ config_h.set('BUILD_ANLAND_COMPOSITOR', '1')
+ 
+ srcs_anland = [
+ 	'anland.c',
++	'anland_clipboard.c',
+ 	'vendor/display_producer.c',
+ 	'vendor/socket_utils.c',
+ 	presentation_time_server_protocol_h,
+diff --git a/libweston/backend-anland/vendor/display_producer.c b/libweston/backend-anland/vendor/display_producer.c
+index a3f3858..3b3c71f 100644
+--- a/libweston/backend-anland/vendor/display_producer.c
++++ b/libweston/backend-anland/vendor/display_producer.c
+@@ -110,6 +110,36 @@ static int recv_all_timeout(int fd, void *buf, size_t len, int timeout_ms)
+     return 0;
+ }
+ 
++static int send_all_timeout(int fd, const void *buf, size_t len,
++                            int timeout_ms)
++{
++    const uint8_t *p = buf;
++    size_t sent = 0;
++
++    while (sent < len) {
++        ssize_t n = send(fd, p + sent, len - sent,
++                         MSG_NOSIGNAL | MSG_DONTWAIT);
++        if (n > 0) {
++            sent += (size_t)n;
++            continue;
++        }
++        if (n < 0 && errno == EINTR)
++            continue;
++        if (n >= 0 || (errno != EAGAIN && errno != EWOULDBLOCK))
++            return -1;
++
++        struct pollfd pfd = { .fd = fd, .events = POLLOUT };
++        int ret;
++        do {
++            ret = poll(&pfd, 1, timeout_ms);
++        } while (ret < 0 && errno == EINTR);
++        if (ret <= 0 || (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)))
++            return -1;
++    }
++
++    return 0;
++}
++
+ static int discard_data_payload(display_ctx *ctx, uint32_t size)
+ {
+     uint8_t buf[4096];
+@@ -493,7 +523,8 @@ int push_output_event(display_ctx *ctx, const struct OutputEvent *event)
+     memcpy(msg, &hdr, sizeof(hdr));
+     memcpy(msg + sizeof(hdr), event, sizeof(*event));
+ 
+-    if (send_all(ctx->data_fd, msg, sizeof(msg)) < 0) {
++    if (send_all_timeout(ctx->data_fd, msg, sizeof(msg),
++                         INPUT_MESSAGE_TIMEOUT_MS) < 0) {
+         enter_fallback(ctx);
+         return -1;
+     }
+@@ -518,7 +549,8 @@ int push_output_event_with_length(display_ctx *ctx, const struct OutputEvent *ev
+     if (size > 0)
+         memcpy(msg + base_size, payload, size);
+ 
+-    if (send_all(ctx->data_fd, msg, base_size + size) < 0) {
++    if (send_all_timeout(ctx->data_fd, msg, base_size + size,
++                         INPUT_MESSAGE_TIMEOUT_MS) < 0) {
+         free(msg);
+         enter_fallback(ctx);
+         return -1;

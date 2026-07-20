@@ -1,0 +1,801 @@
+From: lfdevs <lfdevs@lfdevs.com>
+Date: Sun, 19 Jul 2026 00:25:49 +0800
+Subject: backend-anland: sync transport with Anland 5.13
+
+Update the vendored protocol definitions and producer transport to match
+the wire format shipped by Anland 5.13.
+
+Receive the five consumer descriptors in their new fixed order, parse
+the extended dmabuf metadata, and replace the refresh eventfd with the
+fence socket used for frame completion. Add output and extended-input
+helpers, track the audio descriptor, and make reconnect cleanup cover
+every owned fd and pending render fence.
+
+Also harden ancillary descriptor handling against short headers, EINTR,
+control-message truncation, and overlong Unix socket paths.
+---
+ libweston/backend-anland/vendor/display_producer.c | 288 ++++++++++++++++++---
+ libweston/backend-anland/vendor/display_producer.h |  37 ++-
+ libweston/backend-anland/vendor/protocol.h         | 104 ++++++++
+ libweston/backend-anland/vendor/socket_utils.c     |  79 ++++--
+ 4 files changed, 461 insertions(+), 47 deletions(-)
+
+diff --git a/libweston/backend-anland/vendor/display_producer.c b/libweston/backend-anland/vendor/display_producer.c
+index 396bdf5..d9866a5 100644
+--- a/libweston/backend-anland/vendor/display_producer.c
++++ b/libweston/backend-anland/vendor/display_producer.c
+@@ -7,7 +7,6 @@
+ #include <stdbool.h>
+ #include <stdlib.h>
+ #include <string.h>
+-#include <sys/eventfd.h>
+ #include <sys/mman.h>
+ #include <sys/socket.h>
+ #include <unistd.h>
+@@ -20,8 +19,10 @@ struct display_ctx {
+     int      ctrl_fd;
+     int      data_fd;
+     int      buf_ready_efd;
+-    int      refresh_done_efd;
++    int      fence_fd;        /* write end of the dedicated render-done fence channel */
+     int      shm_fd;
++    int      audio_fd;        /* local end of the bidirectional audio socketpair (hello slot 4) */
++    int      pending_render_fence; /* render-done fence for the in-flight frame */
+     volatile uint32_t *shm_ptr;
+     uint32_t screen_w, screen_h;
+     uint32_t pixel_format;
+@@ -37,7 +38,7 @@ struct display_ctx {
+ };
+ 
+ /*
+- * Release every consumer-side resource (dmabuf fds, the four picked-up fds and the
++ * Release every consumer-side resource (dmabuf fds, the five picked-up fds and the
+  * shm mapping), leaving the context holding only the daemon ctrl_fd. Does NOT touch
+  * the fallback flag or fire the fallback callback — callers decide that. Idempotent.
+  */
+@@ -53,7 +54,9 @@ static void release_consumer_resources(display_ctx *ctx)
+ 
+     if (ctx->data_fd >= 0)          { close(ctx->data_fd);          ctx->data_fd = -1; }
+     if (ctx->buf_ready_efd >= 0)    { close(ctx->buf_ready_efd);    ctx->buf_ready_efd = -1; }
+-    if (ctx->refresh_done_efd >= 0) { close(ctx->refresh_done_efd); ctx->refresh_done_efd = -1; }
++    if (ctx->fence_fd >= 0)         { close(ctx->fence_fd);         ctx->fence_fd = -1; }
++    if (ctx->audio_fd >= 0)         { close(ctx->audio_fd);         ctx->audio_fd = -1; }
++    if (ctx->pending_render_fence >= 0) { close(ctx->pending_render_fence); ctx->pending_render_fence = -1; }
+     if (ctx->shm_ptr)               { munmap((void *)ctx->shm_ptr, sizeof(uint32_t)); ctx->shm_ptr = NULL; }
+     if (ctx->shm_fd >= 0)           { close(ctx->shm_fd);           ctx->shm_fd = -1; }
+ }
+@@ -70,10 +73,31 @@ static void enter_fallback(display_ctx *ctx)
+         ctx->fallback_cb(ctx->fallback_userdata);
+ }
+ 
++static void close_fds(int *fds, int count)
++{
++    for (int i = 0; i < count; i++)
++        close(fds[i]);
++}
++
++/* recvmsg() on SOCK_STREAM may return a short header even though the SCM_RIGHTS
++ * control message has already been delivered. Finish the fixed-size header with
++ * recv_all() while preserving ownership of the received descriptors. */
++static int recv_fds_exact(int sock, void *data, size_t data_len,
++                          int *fds, int max_fds, int *fd_count)
++{
++    int n = recv_fds(sock, data, data_len, fds, max_fds, fd_count);
++    if (n < 0)
++        return -1;
++    if ((size_t)n < data_len &&
++        recv_all(sock, (uint8_t *)data + n, data_len - (size_t)n) < 0)
++        return -1;
++    return 0;
++}
++
+ /*
+  * Ask the daemon for the consumer-side fds and map the shm index. Polls ctrl_fd
+  * with a short timeout so it returns promptly when no consumer is up yet. On
+- * success the four fds and shm_ptr are installed on ctx; the caller releases them
++ * success the five fds and shm_ptr are installed on ctx; the caller releases them
+  * via release_consumer_resources() on any later failure. Returns 0 / -1.
+  */
+ static int pickup_fds(display_ctx *ctx)
+@@ -83,23 +107,28 @@ static int pickup_fds(display_ctx *ctx)
+         return -1;
+ 
+     struct pollfd pfd = { .fd = ctx->ctrl_fd, .events = POLLIN };
+-    if (poll(&pfd, 1, HANDSHAKE_TIMEOUT_MS) <= 0)
++    if (poll(&pfd, 1, HANDSHAKE_TIMEOUT_MS) <= 0 ||
++        (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)))
+         return -1;
+ 
+-    int fds[4];
++    int fds[5];
+     int fd_count = 0;
+     struct ctrl_msg resp;
+-    int n = recv_fds(ctx->ctrl_fd, &resp, sizeof(resp), fds, 4, &fd_count);
+-    if (n <= 0 || resp.type != CTRL_MSG_FDS_READY || fd_count < 4) {
+-        for (int i = 0; i < fd_count; i++)
+-            close(fds[i]);
++    if (recv_fds_exact(ctx->ctrl_fd, &resp, sizeof(resp),
++                       fds, 5, &fd_count) < 0 ||
++        resp.type != CTRL_MSG_FDS_READY || resp.size != 0 || fd_count != 5) {
++        close_fds(fds, fd_count);
+         return -1;
+     }
+ 
++    /* Slot order matches the consumer's send_hello_fds(): { buf_ready, fence, data, shm, audio }.
++     * fence_fd is the write end of the dedicated producer->consumer render-done channel;
++     * audio_fd is the full-duplex PCM socket (producer writes playback, reads mic). */
+     ctx->buf_ready_efd    = fds[0];
+-    ctx->refresh_done_efd = fds[1];
++    ctx->fence_fd         = fds[1];
+     ctx->data_fd          = fds[2];
+     ctx->shm_fd           = fds[3];
++    ctx->audio_fd         = fds[4];
+ 
+     ctx->shm_ptr = mmap(NULL, sizeof(uint32_t), PROT_READ, MAP_SHARED, ctx->shm_fd, 0);
+     if (ctx->shm_ptr == MAP_FAILED) {
+@@ -122,37 +151,46 @@ static int receive_dmabufs(display_ctx *ctx)
+     struct pollfd pfd = { .fd = ctx->data_fd, .events = POLLIN | POLLHUP | POLLERR };
+     if (poll(&pfd, 1, HANDSHAKE_TIMEOUT_MS) <= 0)
+         return -1;
+-    if (pfd.revents & (POLLHUP | POLLERR))
++    if (pfd.revents & (POLLHUP | POLLERR | POLLNVAL))
+         return -1;
+ 
+     struct data_msg dhdr;
+     int fds[MAX_BUFS];
+     int fd_count = 0;
+ 
+-    int n = recv_fds(ctx->data_fd, &dhdr, sizeof(dhdr), fds, MAX_BUFS, &fd_count);
+-    if (n < (int)sizeof(struct data_msg) || fd_count < 1)
++    if (recv_fds_exact(ctx->data_fd, &dhdr, sizeof(dhdr),
++                       fds, MAX_BUFS, &fd_count) < 0 || fd_count < 1) {
++        close_fds(fds, fd_count);
+         return -1;
++    }
+ 
+-    if (dhdr.type != DATA_MSG_BUFS_READY) {
+-        for (int i = 0; i < fd_count; i++)
+-            close(fds[i]);
++    if (dhdr.type != DATA_MSG_BUFS_READY || dhdr.size == 0 ||
++        dhdr.size % sizeof(struct buf_info) != 0) {
++        close_fds(fds, fd_count);
+         return -1;
+     }
+ 
+-    int count = dhdr.size / sizeof(struct buf_info);
+-    if (count != fd_count || count > MAX_BUFS) {
+-        for (int i = 0; i < fd_count; i++)
+-            close(fds[i]);
++    int count = (int)(dhdr.size / sizeof(struct buf_info));
++    if (count != fd_count || count < 1 || count > MAX_BUFS) {
++        close_fds(fds, fd_count);
+         return -1;
+     }
+ 
+     struct buf_info infos[MAX_BUFS];
+     if (recv_all(ctx->data_fd, infos, dhdr.size) < 0) {
+-        for (int i = 0; i < fd_count; i++)
+-            close(fds[i]);
++        close_fds(fds, fd_count);
+         return -1;
+     }
+ 
++    for (int i = 0; i < count; i++) {
++        if (infos[i].width == 0 || infos[i].height == 0 ||
++            (i > 0 && (infos[i].width != infos[0].width ||
++                       infos[i].height != infos[0].height))) {
++            close_fds(fds, fd_count);
++            return -1;
++        }
++    }
++
+     for (int i = 0; i < count; i++) {
+         ctx->dmabuf_fds[i] = fds[i];
+         ctx->dmabuf_infos[i] = infos[i];
+@@ -163,6 +201,10 @@ static int receive_dmabufs(display_ctx *ctx)
+ 
+ int connect_to_deamon(display_ctx **out, const char *socket_path)
+ {
++    if (!out || !socket_path)
++        return -1;
++
++    *out = NULL;
+     display_ctx *ctx = calloc(1, sizeof(*ctx));
+     if (!ctx)
+         return -1;
+@@ -170,8 +212,10 @@ int connect_to_deamon(display_ctx **out, const char *socket_path)
+     ctx->ctrl_fd = -1;
+     ctx->data_fd = -1;
+     ctx->buf_ready_efd = -1;
+-    ctx->refresh_done_efd = -1;
++    ctx->fence_fd = -1;
+     ctx->shm_fd = -1;
++    ctx->audio_fd = -1;
++    ctx->pending_render_fence = -1;
+     ctx->shm_ptr = NULL;
+     ctx->fallback = true; // stay in fallback until try_exit_fallback() succeeds
+     for (int i = 0; i < MAX_BUFS; i++)
+@@ -233,13 +277,68 @@ int get_screen_info(display_ctx *ctx, uint32_t *width, uint32_t *height, uint32_
+     return 0;
+ }
+ 
++/* Stash the render-done fence for the in-flight frame (created in doEndFrame).
++ * trigger_refresh sends it to the consumer. Closes any previous unconsumed stash. */
++void set_render_fence(display_ctx *ctx, int fence_fd)
++{
++    if (ctx->pending_render_fence >= 0)
++        close(ctx->pending_render_fence);
++    ctx->pending_render_fence = fence_fd;
++}
++
+ int trigger_refresh(display_ctx *ctx)
+ {
+-    if (ctx->fallback)
++    if (ctx->fallback) {
++        if (ctx->pending_render_fence >= 0) {
++            close(ctx->pending_render_fence);
++            ctx->pending_render_fence = -1;
++        }
+         return 0;
++    }
++
++    /* Send exactly one render-done message per frame on the dedicated fence channel
++     * (producer->consumer). The message itself is the "frame rendered" signal -- no
++     * separate eventfd, no cross-channel ordering. The render fence rides as
++     * SCM_RIGHTS ancillary data when we have one; otherwise a bare byte is sent so
++     * the consumer's per-frame recv always has exactly one message (it then queues
++     * with -1). The consumer hands the fence to queueBuffer -> SurfaceFlinger waits
++     * GPU-side. NON-BLOCKING: this runs on Weston's main thread, which must never block
++     * on our socket. In lockstep the consumer always drains, so the one-message
++     * buffer never fills; a momentary miss self-heals via the consumer's 5s
++     * poll->fallback rather than freezing the compositor. */
++    char b = 0;
++    struct iovec iov = { .iov_base = &b, .iov_len = 1 };
++    union {
++        char buf[CMSG_SPACE(sizeof(int))];
++        struct cmsghdr align;
++    } cmsg;
++    struct msghdr msg = {
++        .msg_iov = &iov,
++        .msg_iovlen = 1,
++    };
++    if (ctx->pending_render_fence >= 0) {
++        msg.msg_control = cmsg.buf;
++        msg.msg_controllen = sizeof(cmsg.buf);
++        struct cmsghdr *c = CMSG_FIRSTHDR(&msg);
++        c->cmsg_level = SOL_SOCKET;
++        c->cmsg_type = SCM_RIGHTS;
++        c->cmsg_len = CMSG_LEN(sizeof(int));
++        memcpy(CMSG_DATA(c), &ctx->pending_render_fence, sizeof(int));
++    }
++    ssize_t n;
++    do {
++        n = sendmsg(ctx->fence_fd, &msg, MSG_NOSIGNAL | MSG_DONTWAIT);
++    } while (n < 0 && errno == EINTR);
++
++    if (ctx->pending_render_fence >= 0) {
++        close(ctx->pending_render_fence);
++        ctx->pending_render_fence = -1;
++    }
+ 
+-    eventfd_t val = 1;
+-    eventfd_write(ctx->refresh_done_efd, val);
++    if (n != 1) {
++        enter_fallback(ctx);
++        return -1;
++    }
+     return 0;
+ }
+ 
+@@ -253,7 +352,7 @@ int poll_input_event(display_ctx *ctx, struct InputEvent *event, int timeout_ms)
+     if (ret <= 0)
+         return 0;
+ 
+-    if (pfd.revents & (POLLHUP | POLLERR)) {
++    if (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
+         enter_fallback(ctx);
+         return -1;
+     }
+@@ -268,13 +367,135 @@ int poll_input_event(display_ctx *ctx, struct InputEvent *event, int timeout_ms)
+     if (hdr.type != DATA_MSG_INPUT_EVENT)
+         return 0;
+ 
+-    if (recv_all(ctx->data_fd, msg_buf, sizeof(struct data_msg) + sizeof(struct InputEvent)) < 0)
++    if (hdr.size != sizeof(struct InputEvent)) {
++        enter_fallback(ctx);
+         return -1;
++    }
++
++    if (recv_all(ctx->data_fd, msg_buf,
++                 sizeof(struct data_msg) + sizeof(struct InputEvent)) < 0) {
++        enter_fallback(ctx);
++        return -1;
++    }
+ 
+     memcpy(event, msg_buf + sizeof(struct data_msg), sizeof(*event));
+     return 1;
+ }
++int poll_input_event_extend_fds(display_ctx *ctx, int *fds, int max_fds,
++                                int *fd_count, int timeout_ms)
++{
++    *fd_count = 0;
++    if (ctx->fallback)
++        return 0;
++
++    struct pollfd pfd = { .fd = ctx->data_fd, .events = POLLIN };
++    int ret = poll(&pfd, 1, timeout_ms);
++    if (ret <= 0)
++        return 0;
++
++    if (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
++        enter_fallback(ctx);
++        return -1;
++    }
+ 
++    struct data_msg hdr;
++    int got = 0;
++    if (recv_fds_exact(ctx->data_fd, &hdr, sizeof(hdr),
++                       fds, max_fds, &got) < 0) {
++        close_fds(fds, got);
++        enter_fallback(ctx);
++        return -1;
++    }
++    if (hdr.type != DATA_MSG_INPUT_EXTEND_FDS || hdr.size != 0 || got < 1) {
++        close_fds(fds, got);
++        enter_fallback(ctx);
++        return -1;
++    }
++    *fd_count = got;
++    return 1;
++}
++
++int push_resources_request(display_ctx *ctx, uint32_t service_type, const uint32_t *args)
++{
++    struct OutputEvent ev;
++    memset(&ev, 0, sizeof(ev));
++    ev.type = OUTPUT_TYPE_RESOURCES_REQUEST;
++    ev.resources_request.type = service_type;
++    if (args) {
++        ev.resources_request.args[0] = args[0];
++        ev.resources_request.args[1] = args[1];
++        ev.resources_request.args[2] = args[2];
++    }
++    return push_output_event(ctx, &ev);
++}
++
++int push_output_event(display_ctx *ctx, const struct OutputEvent *event)
++{
++    if (ctx->fallback)
++        return 0;
++
++    struct data_msg hdr = { .type = DATA_MSG_OUTPUT_EVENT, .size = sizeof(struct OutputEvent) };
++    uint8_t msg[sizeof(struct data_msg) + sizeof(struct OutputEvent)];
++    memcpy(msg, &hdr, sizeof(hdr));
++    memcpy(msg + sizeof(hdr), event, sizeof(*event));
++
++    if (send_all(ctx->data_fd, msg, sizeof(msg)) < 0) {
++        enter_fallback(ctx);
++        return -1;
++    }
++    return 0;
++}
++int push_output_event_with_length(display_ctx *ctx, const struct OutputEvent *event,
++                                  const void *payload, size_t size)
++{
++    if (ctx->fallback)
++        return 0;
++
++    const size_t base_size = sizeof(struct data_msg) + sizeof(struct OutputEvent);
++    if (size > SIZE_MAX - base_size || (size > 0 && !payload))
++        return -1;
++
++    struct data_msg hdr = { .type = DATA_MSG_OUTPUT_EVENT, .size = sizeof(struct OutputEvent) };
++    uint8_t *msg = malloc(base_size + size);
++    if (!msg)
++        return -1;
++    memcpy(msg, &hdr, sizeof(hdr));
++    memcpy(msg + sizeof(hdr), event, sizeof(*event));
++    if (size > 0)
++        memcpy(msg + base_size, payload, size);
++
++    if (send_all(ctx->data_fd, msg, base_size + size) < 0) {
++        free(msg);
++        enter_fallback(ctx);
++        return -1;
++    }
++    free(msg);
++    return 0;
++}
++int poll_input_event_extend_data(display_ctx *ctx, void *payload, size_t size, int timeout_ms)
++{
++    if (ctx->fallback)
++        return 0;
++    if (size == 0)
++        return 1;
++    if (!payload)
++        return -1;
++
++    struct pollfd pfd = { .fd = ctx->data_fd, .events = POLLIN };
++    int ret = poll(&pfd, 1, timeout_ms);
++    if (ret <= 0)
++        return 0;
++
++    if (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
++        enter_fallback(ctx);
++        return -1;
++    }
++    if (recv_all(ctx->data_fd, payload, size) < 0) {
++        enter_fallback(ctx);
++        return -1;
++    }
++    return 1;
++}
+ int set_fallback_callback(display_ctx *ctx, void (*on_fallback)(void *), void *userdata)
+ {
+     ctx->fallback_cb = on_fallback;
+@@ -315,6 +536,13 @@ int get_data_fd(display_ctx *ctx)
+     return ctx->data_fd;
+ }
+ 
++/* Current local end of the audio socketpair, or -1 in fallback. The value changes
++ * across reconnects, so callers must not cache it. */
++int get_audio_fd(display_ctx *ctx)
++{
++    return ctx->fallback ? -1 : ctx->audio_fd;
++}
++
+ int get_buffer_ready_fd(display_ctx *ctx)
+ {
+     return ctx->buf_ready_efd;
+diff --git a/libweston/backend-anland/vendor/display_producer.h b/libweston/backend-anland/vendor/display_producer.h
+index 32096f1..cc4a831 100644
+--- a/libweston/backend-anland/vendor/display_producer.h
++++ b/libweston/backend-anland/vendor/display_producer.h
+@@ -2,6 +2,7 @@
+ #define DISPLAY_PRODUCER_H
+ 
+ #include <stdbool.h>
++#include <stddef.h>
+ #include <stdint.h>
+ #include "protocol.h"
+ 
+@@ -27,13 +28,44 @@ void disconnect(display_ctx *ctx);
+ 
+ int  get_screen_info(display_ctx *ctx, uint32_t *width, uint32_t *height, uint32_t *format, uint32_t *refresh);
+ 
+-/* Signal the consumer that the current frame is done. No-op in fallback. */
++/* Stash the render-done fence (created in doEndFrame) for the current frame. The
++ * next trigger_refresh hands it to the consumer on the dedicated fence channel, so
++ * SurfaceFlinger waits on it GPU-side instead of the producer CPU-blocking.
++ * Takes ownership of fence_fd (-1 = none). */
++void set_render_fence(display_ctx *ctx, int fence_fd);
++
++/* Signal the consumer that the current frame is done by sending one message (with
++ * the render fence, if any) on the dedicated fence channel. No-op in fallback. */
+ int  trigger_refresh(display_ctx *ctx);
+ 
+ /* Pull one pending input event. Returns 1 if an event was written, 0 if none was
+  * available, -1 on consumer loss. No-op (returns 0) in fallback. */
+ int  poll_input_event(display_ctx *ctx, struct InputEvent *event, int timeout_ms);
++int  poll_input_event_extend_data(display_ctx *ctx, void *payload,
++                                  size_t size, int timeout_ms);
++
++/* Receive the fds that follow an INPUT_TYPE_RESOURCE event (a DATA_MSG_INPUT_EXTEND_FDS
++ * message carrying the service's fds as SCM_RIGHTS). Call this right after
++ * poll_input_event() returns an INPUT_TYPE_RESOURCE event, using event.resource.fdnum
++ * as the expected count. Writes up to max_fds received fds into fds[] and the actual
++ * count into *fd_count. Returns 1 on success, 0 if nothing was pending, -1 on error
++ * (consumer loss). The caller owns the received fds and must close them. */
++int  poll_input_event_extend_fds(display_ctx *ctx, int *fds, int max_fds,
++                                 int *fd_count, int timeout_ms);
++
++/* Ask the consumer for a service's resources (e.g. SERVICE_TYPE_CAMERA). Sends an
++ * OUTPUT_TYPE_RESOURCES_REQUEST; the consumer replies asynchronously with an
++ * INPUT_TYPE_RESOURCE event + fds on the data channel. args may be NULL (treated as
++ * three zeros). No-op (returns 0) in fallback. */
++int  push_resources_request(display_ctx *ctx, uint32_t service_type, const uint32_t *args);
+ 
++int  push_output_event(display_ctx *ctx, const struct OutputEvent *event);
++/* Send an output event followed immediately by its variable-length payload. The
++ * event's own size field must describe the trailing bytes; data_msg.size remains
++ * sizeof(struct OutputEvent), as required by the Anland 5.x wire protocol. */
++int  push_output_event_with_length(display_ctx *ctx,
++                                   const struct OutputEvent *event,
++                                   const void *payload, size_t size);
+ /* Register a callback invoked when the consumer is lost and the context drops
+  * back to fallback. */
+ int  set_fallback_callback(display_ctx *ctx, void (*on_fallback)(void *), void *userdata);
+@@ -48,6 +80,9 @@ bool is_fallback(display_ctx *ctx);
+ int  try_exit_fallback(display_ctx *ctx);
+ 
+ int  get_data_fd(display_ctx *ctx);
++/* Current local end of the audio socketpair, or -1 in fallback. Changes across
++ * reconnects; re-point the audio engine on each exit/enter fallback. */
++int  get_audio_fd(display_ctx *ctx);
+ int  get_buffer_ready_fd(display_ctx *ctx);
+ int  get_buf_count(display_ctx *ctx);
+ int  get_selected_idx(display_ctx *ctx);
+diff --git a/libweston/backend-anland/vendor/protocol.h b/libweston/backend-anland/vendor/protocol.h
+index 744179a..8db131b 100644
+--- a/libweston/backend-anland/vendor/protocol.h
++++ b/libweston/backend-anland/vendor/protocol.h
+@@ -13,6 +13,8 @@
+ #define DATA_MSG_BUF_READY       100
+ #define DATA_MSG_REFRESH_DONE    101
+ #define DATA_MSG_INPUT_EVENT     102
++#define DATA_MSG_OUTPUT_EVENT    103
++#define DATA_MSG_INPUT_EXTEND_FDS  104
+ #define DATA_MSG_BUFS_READY      200
+ 
+ #define MAX_BUFS 8
+@@ -38,6 +40,8 @@ struct screen_info {
+ 
+ struct buf_info {
+     uint32_t stride;
++    uint32_t width;      /* buffer logical width  (consumer-side native resolution) */
++    uint32_t height;     /* buffer logical height (consumer-side native resolution) */
+     uint32_t format;
+     uint64_t modifier;
+     uint32_t offset;
+@@ -49,11 +53,30 @@ struct buf_info {
+ #define INPUT_TYPE_POINTER_BUTTON 4
+ #define INPUT_TYPE_POINTER_AXIS   5
+ #define INPUT_TYPE_TOUCH_FRAME    6
++/* Not really input: the consumer reports its current display refresh rate over
++ * the same data channel so the producer can repace its RenderLoop at runtime.
++ * Deliberately reuses the InputEvent framing (DATA_MSG_INPUT_EVENT) so the
++ * producer's poll_input_event() drains it like any other event instead of
++ * stalling the stream on an unknown DATA_MSG_* header. */
++#define INPUT_TYPE_DISPLAY_REFRESH 7
++#define INPUT_TYPE_CLIPBOARD      8
++#define INPUT_TYPE_TEXT_INPUT      9
++#define INPUT_TYPE_ACTION 10
++#define INPUT_TYPE_RESOURCE 11
++
++#define SERVICE_TYPE_CAMERA 1
++
++#define INPUT_ACTION_DOWN    0
+ 
+ #define INPUT_ACTION_DOWN    0
+ #define INPUT_ACTION_UP      1
+ #define INPUT_ACTION_MOVE    2
+ 
++#define OUTPUT_TYPE_CLIPBOARD 1
++#define OUTPUT_TYPE_RESOURCES_REQUEST 2
++
++
++
+ struct InputEvent {
+     uint32_t type;
+     union {
+@@ -82,7 +105,88 @@ struct InputEvent {
+             float    value;
+             int32_t  discrete;
+         } pointer_axis;
++        struct {
++            uint32_t refresh_mhz; // current display refresh rate, milli-Hz
++        } display;
++        struct {
++            uint32_t size; //这个packet只是通知包 作为header真正数据会集中发送,这里通知随后数据的大小
++        } clipboard;
++        struct {
++            uint32_t size; //这个packet只是通知包 作为header真正数据会集中发送,这里通知随后数据的大小
++        } text_input;
++        struct {
++            uint32_t action;
++            int32_t value;
++        } input_action;
++        struct {
++            uint32_t type;
++            uint32_t fdnum;//fdnum是fd的数量,后续会有fdnum个fd跟随在这个结构体后面
++        } resource;
++        struct {
++            uint32_t padding[4];
++        };
++    };
++} __attribute__((packed));
++
++struct OutputEvent{
++    uint32_t type;
++    union {
++        struct {
++            uint32_t size; //这个packet只是通知包 作为header真正数据会集中发送,这里通知随后数据的大小
++        } clipboard;
++        struct {
++            uint32_t type;
++            uint32_t args[3]; //support 3 args
++        } resources_request;
++        struct
++        {
++            uint32_t padding[4];
++        };
++
+     };
+ } __attribute__((packed));
+ 
++/*
++ * Audio runs on its own dedicated bidirectional socketpair (hello fd slot 4),
++ * deliberately kept off the data channel so a burst of PCM never head-of-line
++ * blocks input/clipboard. The socket is full duplex: the producer writes desktop
++ * playback PCM that the consumer reads, and the consumer writes microphone PCM
++ * that the producer reads -- each side only ever reads what the other wrote.
++ * Every direction sends one AUDIO_MSG_FORMAT, then a stream of AUDIO_MSG_PCM.
++ *
++ * PCM is interleaved per frame. For stereo (channels == 2) the sample order
++ * within each frame is LEFT then RIGHT, i.e. channel positions FL, FR -- the
++ * producer's SPA channel map and the consumer's AAudio stereo layout must both
++ * honour this order so the left/right channels are never swapped.
++ *
++ * Audio quality is negotiated, not pinned: the consumer owns the real hardware,
++ * so on connect it opens its AAudio streams, reads back the rate/channels the
++ * device actually chose, and sends one AUDIO_MSG_FORMAT per direction (tagged with
++ * role) to the producer. The producer builds its PipeWire sink/source to match,
++ * so neither side resamples blindly and the PCM byte math lines up on both ends.
++ */
++#define AUDIO_MSG_FORMAT 1
++#define AUDIO_MSG_PCM    2
++
++/* PCM sample format codes for struct audio_format.format. */
++#define AUDIO_FORMAT_S16LE 0
++
++/* Which direction a struct audio_format describes. */
++#define AUDIO_ROLE_PLAYBACK 0   /* producer -> consumer (desktop sound -> speaker) */
++#define AUDIO_ROLE_CAPTURE  1   /* consumer -> producer (mic -> virtual source)    */
++
++struct audio_format {
++    uint32_t rate;       /* frames per second the device chose, e.g. 48000 / 44100 */
++    uint32_t channels;   /* interleaved; stereo is L,R (FL,FR) */
++    uint32_t format;     /* AUDIO_FORMAT_* */
++    uint32_t role;       /* AUDIO_ROLE_* -- which direction this describes */
++    uint32_t quantum;    /* requested buffer in frames (latency preset); 0 = engine default */
++} __attribute__((packed));
++
++struct audio_msg {
++    uint32_t type;       /* AUDIO_MSG_FORMAT | AUDIO_MSG_PCM */
++    uint32_t size;       /* payload bytes that follow this header */
++} __attribute__((packed));
++
++
+ #endif
+diff --git a/libweston/backend-anland/vendor/socket_utils.c b/libweston/backend-anland/vendor/socket_utils.c
+index 1b4ef31..eb8334b 100644
+--- a/libweston/backend-anland/vendor/socket_utils.c
++++ b/libweston/backend-anland/vendor/socket_utils.c
+@@ -2,6 +2,7 @@
+ 
+ #include <errno.h>
+ #include <stdint.h>
++#include <stdlib.h>
+ #include <string.h>
+ #include <sys/socket.h>
+ #include <sys/un.h>
+@@ -10,19 +11,26 @@
+ int send_fds(int sock, const void *data, size_t data_len,
+              const int *fds, int fd_count)
+ {
++    if (!data || data_len == 0 || !fds || fd_count <= 0) {
++        errno = EINVAL;
++        return -1;
++    }
++
+     struct iovec iov = {
+         .iov_base = (void *)data,
+         .iov_len  = data_len,
+     };
+ 
+-    char cmsg_buf[CMSG_SPACE(sizeof(int) * fd_count)];
+-    memset(cmsg_buf, 0, sizeof(cmsg_buf));
++    size_t cmsg_size = CMSG_SPACE(sizeof(int) * (size_t)fd_count);
++    char *cmsg_buf = calloc(1, cmsg_size);
++    if (!cmsg_buf)
++        return -1;
+ 
+     struct msghdr msg = {
+         .msg_iov        = &iov,
+         .msg_iovlen     = 1,
+         .msg_control    = cmsg_buf,
+-        .msg_controllen = sizeof(cmsg_buf),
++        .msg_controllen = cmsg_size,
+     };
+ 
+     struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+@@ -31,47 +39,86 @@ int send_fds(int sock, const void *data, size_t data_len,
+     cmsg->cmsg_len   = CMSG_LEN(sizeof(int) * fd_count);
+     memcpy(CMSG_DATA(cmsg), fds, sizeof(int) * fd_count);
+ 
+-    ssize_t n = sendmsg(sock, &msg, MSG_NOSIGNAL);
++    ssize_t n;
++    do {
++        n = sendmsg(sock, &msg, MSG_NOSIGNAL);
++    } while (n < 0 && errno == EINTR);
++    free(cmsg_buf);
+     return (n == (ssize_t)data_len) ? 0 : -1;
+ }
+ 
+ int recv_fds(int sock, void *data, size_t data_len,
+              int *fds, int fd_count, int *fds_received)
+ {
++    if (!data || data_len == 0 || !fds || fd_count <= 0 || !fds_received) {
++        errno = EINVAL;
++        return -1;
++    }
++
++    *fds_received = 0;
+     struct iovec iov = {
+         .iov_base = data,
+         .iov_len  = data_len,
+     };
+ 
+-    char cmsg_buf[CMSG_SPACE(sizeof(int) * fd_count)];
+-    memset(cmsg_buf, 0, sizeof(cmsg_buf));
++    size_t cmsg_size = CMSG_SPACE(sizeof(int) * (size_t)fd_count);
++    char *cmsg_buf = calloc(1, cmsg_size);
++    if (!cmsg_buf)
++        return -1;
+ 
+     struct msghdr msg = {
+         .msg_iov        = &iov,
+         .msg_iovlen     = 1,
+         .msg_control    = cmsg_buf,
+-        .msg_controllen = sizeof(cmsg_buf),
++        .msg_controllen = cmsg_size,
+     };
+ 
+-    ssize_t n = recvmsg(sock, &msg, 0);
+-    if (n <= 0)
++    ssize_t n;
++    do {
++        n = recvmsg(sock, &msg, MSG_CMSG_CLOEXEC);
++    } while (n < 0 && errno == EINTR);
++    if (n <= 0) {
++        free(cmsg_buf);
+         return -1;
++    }
+ 
+-    *fds_received = 0;
+-    struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+-    if (cmsg && cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
++    for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
++         cmsg; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
++        if (cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS)
++            continue;
+         int count = (cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+-        if (count > fd_count)
+-            count = fd_count;
+-        memcpy(fds, CMSG_DATA(cmsg), sizeof(int) * count);
+-        *fds_received = count;
++        int available = fd_count - *fds_received;
++        int copy_count = count < available ? count : available;
++        memcpy(fds + *fds_received, CMSG_DATA(cmsg),
++               sizeof(int) * (size_t)copy_count);
++        *fds_received += copy_count;
++        for (int i = copy_count; i < count; i++) {
++            int fd;
++            memcpy(&fd, (int *)CMSG_DATA(cmsg) + i, sizeof(fd));
++            close(fd);
++        }
+     }
+ 
++    if (msg.msg_flags & MSG_CTRUNC) {
++        for (int i = 0; i < *fds_received; i++)
++            close(fds[i]);
++        *fds_received = 0;
++        free(cmsg_buf);
++        errno = EMSGSIZE;
++        return -1;
++    }
++
++    free(cmsg_buf);
+     return (int)n;
+ }
+ 
+ int connect_unix(const char *path)
+ {
++    if (!path || strlen(path) >= sizeof(((struct sockaddr_un *)0)->sun_path)) {
++        errno = ENAMETOOLONG;
++        return -1;
++    }
++
+     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+     if (fd < 0)
+         return -1;

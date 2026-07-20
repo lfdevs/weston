@@ -1,0 +1,60 @@
+From: lfdevs <lfdevs@lfdevs.com>
+Date: Sun, 19 Jul 2026 23:53:01 +0800
+Subject: backend-anland: support output scaling
+
+Parse the standard output scale option for the Anland backend and apply it when configuring the output. This keeps physical buffer dimensions unchanged while allowing clients to use a scaled logical coordinate space.
+
+Document the Anland backend and its options in Weston's command-line help.
+---
+ frontend/main.c | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/frontend/main.c b/frontend/main.c
+index 87b1bb4..78872fb 100644
+--- a/frontend/main.c
++++ b/frontend/main.c
+@@ -691,6 +691,9 @@ usage(int error_code)
+ #if defined(BUILD_HEADLESS_COMPOSITOR)
+ 			"\t\t\t\theadless\n"
+ #endif
++#if defined(BUILD_ANLAND_COMPOSITOR)
++			"\t\t\t\tanland\n"
++#endif
+ #if defined(BUILD_PIPEWIRE_COMPOSITOR)
+ 			"\t\t\t\tpipewire\n"
+ #endif
+@@ -761,6 +764,16 @@ usage(int error_code)
+ 		"\n");
+ #endif
+ 
++#if defined(BUILD_ANLAND_COMPOSITOR)
++	fprintf(out,
++		"Options for anland:\n\n"
++		"  --width=WIDTH\t\tInitial output width\n"
++		"  --height=HEIGHT\tInitial output height\n"
++		"  --scale=SCALE\t\tScale factor of output\n"
++		"  --disp-sock=PATH\tDisplay daemon socket path\n"
++		"\n");
++#endif
++
+ #if defined(BUILD_PIPEWIRE_COMPOSITOR)
+ 	fprintf(out,
+ 		"Options for pipewire\n\n"
+@@ -4193,7 +4206,8 @@ anland_backend_output_configure(struct weston_output *output)
+ 		if (parsed_options->height > 0) height = parsed_options->height;
+ 	}
+ 
+-	weston_output_set_scale(output, 1);
++	wet_output_set_scale(output, section, 1,
++			     parsed_options ? parsed_options->scale : 0);
+ 	weston_output_set_transform(output, WL_OUTPUT_TRANSFORM_NORMAL);
+ 
+ 	return api->output_set_size(output, width, height);
+@@ -4216,6 +4230,7 @@ load_anland_backend(struct weston_compositor *c,
+ 	const struct weston_option options[] = {
+ 		{ WESTON_OPTION_INTEGER, "width", 0, &parsed_options->width },
+ 		{ WESTON_OPTION_INTEGER, "height", 0, &parsed_options->height },
++		{ WESTON_OPTION_INTEGER, "scale", 0, &parsed_options->scale },
+ 		{ WESTON_OPTION_STRING, "disp-sock", 0, &socket_path },
+ 	};
+ 
