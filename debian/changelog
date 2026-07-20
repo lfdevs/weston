@@ -1,3 +1,21 @@
+weston (14.0.2-91) unstable; urgency=medium
+
+  * Update the Anland backend for the Anland 5.13 protocol:
+    - Synchronize the transport ABI, descriptor ordering, dmabuf metadata,
+      frame-completion fences, and disconnect/reconnect handling.
+    - Import resized buffers, update output modes and refresh rates at runtime,
+      and pass native render fences to the Android consumer.
+    - Handle extended input safely, fix absolute-touch release events, bridge
+      clipboard and text input, and synthesize keyboard events for clients
+      without text-input protocol support.
+    - Add PipeWire audio and camera bridges with persistent nodes and resource
+      recovery across consumer and PipeWire reconnects.
+    - Support configurable integer output scaling.
+  * Add transport ABI, descriptor, fence, and repeated reconnect tests.
+  * Require PipeWire and SPA support when building the Debian package.
+
+ -- lfdevs <lfdevs@lfdevs.com>  Mon, 20 Jul 2026 9:53:00 +0800
+
 weston (14.0.2-90) unstable; urgency=medium
 
   * backend: add anland zero-copy display backend (ported from 15.0.90).
