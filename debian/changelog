@@ -1,3 +1,9 @@
+weston (14.0.2-92) unstable; urgency=medium
+
+  * Cherry pick upstream patch to not crash when Xwayland crashes
+
+ -- lfdevs <lfdevs@lfdevs.com>  Mon, 21 Jul 2026 15:21:00 +0800
+
 weston (14.0.2-91) unstable; urgency=medium
 
   * Update the Anland backend for the Anland 5.13 protocol:
