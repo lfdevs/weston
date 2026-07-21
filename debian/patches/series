@@ -9,3 +9,4 @@ build-Allow-libdisplay-info-0.3.0.patch
 0007-backend-anland-add-camera-resource-service.patch
 0008-tests-cover-Anland-5.13-transport-and-reconnects.patch
 0009-backend-anland-support-output-scaling.patch
+0010-xwm-Clean-up-windows-so-we-don-t-crash-when-Xwayland.patch
